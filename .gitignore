@@ -1,2 +1,11 @@
 .env.local
-
+engine/.venv/
+engine/openapi.json
+__pycache__/
+*.py[cod]
+web/node_modules/
+web/dist/
+*.tsbuildinfo
+web/vite.config.js
+web/vite.config.d.ts
+workspace/
