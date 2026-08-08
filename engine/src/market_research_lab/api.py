@@ -35,6 +35,15 @@ class ProjectCreateRequest(BaseModel):
         return _non_blank_name(value)
 
 
+class ProjectRenameRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def name_is_not_blank(cls, value: str) -> str:
+        return _non_blank_name(value)
+
+
 class ProjectResponse(BaseModel):
     id: str
     name: str
@@ -131,6 +140,14 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
     @app.get("/api/projects/{project_id}", response_model=ProjectResponse, tags=["projects"])
     def get_project(project_id: UUID) -> ProjectResponse:
         return _project_response(store.get_project(str(project_id)))
+
+    @app.patch("/api/projects/{project_id}", response_model=ProjectResponse, tags=["projects"])
+    def rename_project(project_id: UUID, request: ProjectRenameRequest) -> ProjectResponse:
+        return _project_response(store.rename_project(str(project_id), request.name.strip()))
+
+    @app.delete("/api/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["projects"])
+    def delete_project(project_id: UUID) -> None:
+        store.delete_project(str(project_id))
 
     @app.post(
         "/api/projects/{project_id}/definitions",

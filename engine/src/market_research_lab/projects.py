@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import tempfile
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -55,6 +56,18 @@ class ProjectStore:
         if not path.is_file():
             raise ProjectNotFoundError(project_id)
         return Project(**json.loads(path.read_text(encoding="utf-8")))
+
+    def rename_project(self, project_id: str, new_name: str) -> Project:
+        project = self.get_project(project_id)
+        updated_project = Project(id=project.id, name=new_name, created_at=project.created_at)
+        self._write_json(self._directory(project_id) / "project.json", asdict(updated_project))
+        return updated_project
+
+    def delete_project(self, project_id: str) -> None:
+        path = self._directory(project_id)
+        if not (path / "project.json").is_file():
+            raise ProjectNotFoundError(project_id)
+        shutil.rmtree(path)
 
     def list_projects(self) -> list[Project]:
         if not self.projects_root.exists():

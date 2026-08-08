@@ -35,4 +35,17 @@ export const api = {
         body: definition,
       }),
     ),
+  renameProject: (projectId: string, request: { name: string }) =>
+    dataOrThrow(
+      client.PATCH("/api/projects/{project_id}", {
+        params: { path: { project_id: projectId } },
+        body: request,
+      }),
+    ),
+  deleteProject: (projectId: string) =>
+    dataOrThrow(
+      client.DELETE("/api/projects/{project_id}", {
+        params: { path: { project_id: projectId } },
+      }),
+    ),
 };

@@ -38,6 +38,36 @@ function App() {
     setStatus(`Saved ${saved.revision} for ${selected.name}`);
   }
 
+  async function renameProject() {
+    if (!selected) return;
+    const newName = prompt("New project name:", selected.name);
+    if (!newName || newName.trim() === "" || newName === selected.name) return;
+    try {
+      const updated = await api.renameProject(selected.id, { name: newName });
+      setProjects((current) => current.map((p) => (p.id === updated.id ? updated : p)));
+      setSelected(updated);
+      setStatus(`Renamed project to ${updated.name}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Unable to rename project");
+    }
+  }
+
+  async function deleteProject() {
+    if (!selected) return;
+    if (!confirm(`Are you sure you want to delete project "${selected.name}"?`)) return;
+    try {
+      await api.deleteProject(selected.id);
+      setProjects((current) => {
+        const remaining = current.filter((p) => p.id !== selected.id);
+        setSelected(remaining.length > 0 ? remaining[0] : undefined);
+        return remaining;
+      });
+      setStatus(`Deleted project ${selected.name}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Unable to delete project");
+    }
+  }
+
   return (
     <main>
       <header>
@@ -74,7 +104,11 @@ function App() {
             <p className="eyebrow">{selected.name.toUpperCase()}</p>
             <h2>Project ready</h2>
             <p>Research, data coverage, Valuations, Indicators, Backtests, and Alerts will grow here in the next Epics.</p>
-            <button className="secondary" onClick={() => void saveStarterRevision()}>Save a starter Valuation revision</button>
+            <div className="form-row" style={{ marginTop: '1rem', gap: '0.5rem' }}>
+              <button className="secondary" onClick={() => void saveStarterRevision()}>Save a starter Valuation revision</button>
+              <button className="secondary" onClick={() => void renameProject()}>Rename Project</button>
+              <button className="secondary" onClick={() => void deleteProject()} style={{ color: 'var(--color-danger-fg)' }}>Delete Project</button>
+            </div>
           </> : <>
             <p className="eyebrow">READY WHEN YOU ARE</p>
             <h2>Create your first Project</h2>

@@ -57,6 +57,28 @@ def test_project_can_be_created_reopened_and_revised(tmp_path):
     assert status_path.with_name("manifest.json").exists()
 
 
+def test_project_can_be_renamed_and_deleted(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+
+    created = client.post("/api/projects", json={"name": "To be renamed"})
+    assert created.status_code == 201
+    project_id = created.json()["id"]
+
+    renamed = client.patch(f"/api/projects/{project_id}", json={"name": "Renamed project"})
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "Renamed project"
+    
+    reopened = client.get(f"/api/projects/{project_id}")
+    assert reopened.json()["name"] == "Renamed project"
+
+    deleted = client.delete(f"/api/projects/{project_id}")
+    assert deleted.status_code == 204
+
+    not_found = client.get(f"/api/projects/{project_id}")
+    assert not_found.status_code == 404
+    assert not (tmp_path / "projects" / project_id).exists()
+
+
 def test_validation_errors_have_a_stable_shape(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
 
