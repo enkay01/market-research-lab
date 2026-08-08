@@ -145,7 +145,9 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
     def rename_project(project_id: UUID, request: ProjectRenameRequest) -> ProjectResponse:
         return _project_response(store.rename_project(str(project_id), request.name.strip()))
 
-    @app.delete("/api/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["projects"])
+    @app.delete(
+        "/api/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["projects"]
+    )
     def delete_project(project_id: UUID) -> None:
         store.delete_project(str(project_id))
 
