@@ -110,10 +110,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/datasets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Dataset */
+        post: operations["import_dataset_api_datasets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/datasets/{dataset_version_id}/coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Coverage */
+        get: operations["get_coverage_api_datasets__dataset_version_id__coverage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** Body_import_dataset_api_datasets_post */
+        Body_import_dataset_api_datasets_post: {
+            /** Source */
+            source: string;
+            /** File */
+            file: string;
+        };
+        /** CoverageResponse */
+        CoverageResponse: {
+            /** Id */
+            id: string;
+            /** Source */
+            source: string;
+            /** Coverage Start */
+            coverage_start: string | null;
+            /** Coverage End */
+            coverage_end: string | null;
+            /** Row Count */
+            row_count: number;
+            /** Rejected Count */
+            rejected_count: number;
+            /** Warnings */
+            warnings: string[];
+            /** Files */
+            files: string[];
+        };
+        /** DatasetImportResponse */
+        DatasetImportResponse: {
+            /** Dataset Version Id */
+            dataset_version_id: string;
+        };
         /** DefinitionCreateRequest */
         DefinitionCreateRequest: {
             /** Kind */
@@ -497,6 +562,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_dataset_api_datasets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_dataset_api_datasets_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetImportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_coverage_api_datasets__dataset_version_id__coverage_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverageResponse"];
                 };
             };
             /** @description Validation Error */

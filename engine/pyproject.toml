@@ -4,7 +4,12 @@ version = "0.1.0"
 description = "A local-first workspace for market research."
 requires-python = ">=3.11"
 dependencies = [
+  "duckdb>=1.5.5",
   "fastapi>=0.115,<1",
+  "pandas>=3.0.5",
+  "pyarrow>=25.0.0",
+  "pydantic>=2.13.4",
+  "python-multipart>=0.0.32",
   "uvicorn[standard]>=0.30,<1",
 ]
 

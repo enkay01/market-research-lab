@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import shutil
+import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, File, Form, Request, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+from .market_data import IngestionRequest, MarketDataStore
 from .projects import Project, ProjectNotFoundError, ProjectStore
 
 
@@ -80,6 +84,21 @@ class RunResponse(BaseModel):
     status: str
 
 
+class DatasetImportResponse(BaseModel):
+    dataset_version_id: str
+
+
+class CoverageResponse(BaseModel):
+    id: str
+    source: str
+    coverage_start: str | None
+    coverage_end: str | None
+    row_count: int
+    rejected_count: int
+    warnings: list[str]
+    files: list[str]
+
+
 def _project_response(project: Project) -> ProjectResponse:
     return ProjectResponse(id=project.id, name=project.name, created_at=project.created_at)
 
@@ -97,7 +116,9 @@ def _repository_root() -> Path:
 
 def create_app(workspace_root: Path | None = None, static_dir: Path | None = None) -> FastAPI:
     repository_root = _repository_root()
-    store = ProjectStore(workspace_root or repository_root / "workspace")
+    workspace_root = workspace_root or repository_root / "workspace"
+    store = ProjectStore(workspace_root)
+    market_store = MarketDataStore(workspace_root)
     app = FastAPI(title="Market Research Lab", version="0.1.0")
 
     @app.exception_handler(ProjectNotFoundError)
@@ -192,6 +213,47 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
     )
     def create_run(project_id: UUID) -> RunResponse:
         return RunResponse(id=store.create_run(str(project_id)), status="pending")
+
+    @app.post(
+        "/api/datasets",
+        response_model=DatasetImportResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["datasets"],
+    )
+    def import_dataset(
+        source: str = Form(...), file: UploadFile = File(...)
+    ) -> DatasetImportResponse:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = Path(tmp.name)
+
+        request = IngestionRequest(
+            source=source, file_path=tmp_path, retrieval_time=datetime.now(UTC).isoformat()
+        )
+        try:
+            version = market_store.ingest(request)
+            return DatasetImportResponse(dataset_version_id=version.id)
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink()
+
+    @app.get(
+        "/api/datasets/{dataset_version_id}/coverage",
+        response_model=CoverageResponse,
+        tags=["datasets"],
+    )
+    def get_coverage(dataset_version_id: str) -> CoverageResponse:
+        coverage = market_store.coverage(dataset_version_id)
+        return CoverageResponse(
+            id=coverage.id,
+            source=coverage.source,
+            coverage_start=coverage.coverage_start,
+            coverage_end=coverage.coverage_end,
+            row_count=coverage.row_count,
+            rejected_count=coverage.rejected_count,
+            warnings=coverage.warnings,
+            files=coverage.files,
+        )
 
     built_interface = static_dir or repository_root / "web" / "dist"
     if built_interface.is_dir():

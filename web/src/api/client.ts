@@ -5,6 +5,7 @@ import type { components, paths } from "./schema";
 export type Project = components["schemas"]["ProjectResponse"];
 export type ProjectCreate = components["schemas"]["ProjectCreateRequest"];
 export type DefinitionCreate = components["schemas"]["DefinitionCreateRequest"];
+export type CoverageResponse = components["schemas"]["CoverageResponse"];
 
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) {
@@ -46,6 +47,25 @@ export const api = {
     dataOrThrow(
       client.DELETE("/api/projects/{project_id}", {
         params: { path: { project_id: projectId } },
+      }),
+    ),
+  importDataset: async (source: string, file: File) => {
+    const formData = new FormData();
+    formData.append("source", source);
+    formData.append("file", file);
+    const response = await fetch("/api/datasets", {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) {
+      throw new ApiError(response.status, "Failed to upload dataset");
+    }
+    return response.json() as Promise<components["schemas"]["DatasetImportResponse"]>;
+  },
+  getCoverage: (datasetVersionId: string) =>
+    dataOrThrow(
+      client.GET("/api/datasets/{dataset_version_id}/coverage", {
+        params: { path: { dataset_version_id: datasetVersionId } },
       }),
     ),
 };

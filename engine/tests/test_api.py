@@ -67,7 +67,7 @@ def test_project_can_be_renamed_and_deleted(tmp_path):
     renamed = client.patch(f"/api/projects/{project_id}", json={"name": "Renamed project"})
     assert renamed.status_code == 200
     assert renamed.json()["name"] == "Renamed project"
-    
+
     reopened = client.get(f"/api/projects/{project_id}")
     assert reopened.json()["name"] == "Renamed project"
 

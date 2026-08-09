@@ -1,7 +1,7 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useState, useRef } from "react";
 import { createRoot } from "react-dom/client";
 
-import { api, type Project } from "./api/client";
+import { api, type Project, type CoverageResponse } from "./api/client";
 import "./styles.css";
 
 function App() {
@@ -9,6 +9,8 @@ function App() {
   const [selected, setSelected] = useState<Project>();
   const [name, setName] = useState("");
   const [status, setStatus] = useState("Connecting to the local engine…");
+  const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     void Promise.all([api.health(), api.listProjects()])
@@ -36,6 +38,33 @@ function App() {
       definition: { method: "fcff_dcf", currency: "USD" },
     });
     setStatus(`Saved ${saved.revision} for ${selected.name}`);
+  }
+
+  async function handleImportDataset(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    const form = event.currentTarget;
+    const sourceInput = form.elements.namedItem("source") as HTMLInputElement;
+    const fileInput = form.elements.namedItem("file") as HTMLInputElement;
+    
+    if (!fileInput.files || fileInput.files.length === 0) return;
+    
+    const source = sourceInput.value;
+    const file = fileInput.files[0];
+    
+    setStatus(`Uploading dataset...`);
+    try {
+      const response = await api.importDataset(source, file);
+      setStatus(`Imported dataset version`);
+      
+      const newCoverage = await api.getCoverage(response.dataset_version_id);
+      setCoverage(newCoverage);
+      
+      sourceInput.value = "";
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Unable to upload dataset");
+    }
   }
 
   async function renameProject() {
@@ -109,6 +138,42 @@ function App() {
               <button className="secondary" onClick={() => void renameProject()}>Rename Project</button>
               <button className="secondary" onClick={() => void deleteProject()} style={{ color: 'var(--color-danger-fg)' }}>Delete Project</button>
             </div>
+            
+            <div style={{ marginTop: '2rem' }}>
+              <h3>Import Market Data</h3>
+              <form onSubmit={handleImportDataset} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
+                <div>
+                  <label htmlFor="source">Source</label>
+                  <input id="source" name="source" placeholder="e.g. Yahoo Finance" required style={{ width: '100%', marginTop: '0.25rem' }} />
+                </div>
+                <div>
+                  <label htmlFor="file">CSV File</label>
+                  <input id="file" name="file" type="file" accept=".csv" ref={fileInputRef} required style={{ width: '100%', marginTop: '0.25rem' }} />
+                </div>
+                <button type="submit" style={{ alignSelf: 'flex-start' }}>Import Data</button>
+              </form>
+            </div>
+
+            {coverage && (
+              <div style={{ marginTop: '2rem', padding: '1rem', backgroundColor: 'var(--color-bg-secondary)', borderRadius: '4px' }}>
+                <h3>Coverage Report</h3>
+                <ul style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <li><strong>Source:</strong> {coverage.source}</li>
+                  <li><strong>Coverage:</strong> {coverage.coverage_start || 'N/A'} to {coverage.coverage_end || 'N/A'}</li>
+                  <li><strong>Rows Imported:</strong> {coverage.row_count}</li>
+                  <li><strong>Rows Rejected:</strong> {coverage.rejected_count}</li>
+                  <li><strong>Files Stored:</strong> {coverage.files.join(", ")}</li>
+                </ul>
+                {coverage.warnings.length > 0 && (
+                  <div style={{ marginTop: '1rem' }}>
+                    <strong>Warnings:</strong>
+                    <ul style={{ color: 'var(--color-danger-fg)', fontSize: '0.9rem', marginTop: '0.5rem' }}>
+                      {coverage.warnings.map((w, i) => <li key={i}>{w}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
           </> : <>
             <p className="eyebrow">READY WHEN YOU ARE</p>
             <h2>Create your first Project</h2>
