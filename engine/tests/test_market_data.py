@@ -180,6 +180,23 @@ def test_all_rows_invalid_rejects_dataset_persistence_core_008():
             store.ingest(request)
 
 
+def test_malformed_json_preserves_parser_diagnostics():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        workspace = Path(tmpdir)
+        store = MarketDataStore(workspace)
+        path = workspace / "malformed.json"
+        path.write_text('{"symbol": "MSFT"', encoding="utf-8")
+
+        with pytest.raises(ValueError, match=r"^Failed to parse JSON file: .+"):
+            store.ingest(
+                IngestionRequest(
+                    source="invalid-source",
+                    file_path=path,
+                    retrieval_time="2026-01-01T00:00:00Z",
+                )
+            )
+
+
 def test_canonical_records():
     sec = Security(
         security_id="AAPL", symbol="AAPL", name="Apple Inc.", exchange="NASDAQ", currency="USD"

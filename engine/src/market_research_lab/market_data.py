@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -131,23 +132,41 @@ class MarketDataStore:
 
     def _read_dataframe(self, file_path: Path) -> pd.DataFrame:
         suffix = file_path.suffix.lower()
+        if suffix not in (".csv", ".json", ".parquet", ".pq"):
+            raise ValueError(
+                f"Unsupported file extension '{suffix}'. Supported formats: .csv, .json, .parquet"
+            )
+
         try:
             if suffix == ".csv":
                 return pd.read_csv(file_path, dtype=str)
-            elif suffix == ".json":
+            if suffix == ".json":
                 return pd.read_json(file_path, dtype=str)
-            elif suffix in (".parquet", ".pq"):
-                df = pd.read_parquet(file_path)
-                return df.astype(str)
-            else:
-                raise ValueError(
-                    f"Unsupported file extension '{suffix}'. Supported formats: .csv, .json, "
-                    ".parquet"
-                )
-        except ValueError:
-            raise
-        except Exception as e:
-            raise ValueError(f"Failed to parse {suffix.upper()} file: {e}")
+            return pd.read_parquet(file_path).astype(str)
+        except Exception as error:
+            format_name = suffix.removeprefix(".").upper()
+            raise ValueError(f"Failed to parse {format_name} file: {error}") from error
+
+    @staticmethod
+    def _is_missing(value: Any) -> bool:
+        return bool(pd.isna(value)) or (isinstance(value, str) and not value.strip())
+
+    @classmethod
+    def _required_text(cls, row: pd.Series, field: str) -> str:
+        value = row[field]
+        if cls._is_missing(value):
+            raise ValueError(f"{field.replace('_', ' ').capitalize()} is missing")
+        return str(value).strip()
+
+    @classmethod
+    def _required_number(cls, row: pd.Series, field: str) -> float:
+        value = row[field]
+        if cls._is_missing(value):
+            raise ValueError(f"{field.replace('_', ' ').capitalize()} is missing")
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError(f"{field.replace('_', ' ').capitalize()} must be finite")
+        return number
 
     @staticmethod
     def _has_complete_temporal_provenance(df: pd.DataFrame) -> bool:
@@ -273,39 +292,30 @@ class MarketDataStore:
             required = {"open", "high", "low", "close", "volume"}
             for col in list(required) + ["symbol", "date", "session_date"]:
                 if col in df_raw.columns:
-                    missing_count = int(df_raw[col].isna().sum() + (df_raw[col] == "").sum())
-                    missing_fields[col] = missing_count
+                    missing_fields[col] = int(df_raw[col].map(self._is_missing).sum())
 
             for i, row in df_raw.iterrows():
                 row_num = i + 1
                 try:
-                    sec_id = str(row.get("symbol", row.get("security_id", ""))).strip()
-                    if not sec_id or sec_id == "nan":
-                        raise ValueError("Symbol is missing")
-
-                    raw_date = row.get("date", row.get("session_date", ""))
-                    date_str = str(raw_date).strip() if pd.notna(raw_date) else ""
-                    if not date_str or date_str == "nan":
-                        raise ValueError("Date is missing")
+                    security_field = "symbol" if "symbol" in row else "security_id"
+                    sec_id = self._required_text(row, security_field)
+                    date_field = "date" if "date" in row else "session_date"
+                    date_str = self._required_text(row, date_field)
                     date = pd.to_datetime(date_str).strftime("%Y-%m-%d")
 
-                    open_px = float(row["open"])
-                    high_px = float(row["high"])
-                    low_px = float(row["low"])
-                    close_px = float(row["close"])
-                    volume = float(row["volume"])
+                    open_px = self._required_number(row, "open")
+                    high_px = self._required_number(row, "high")
+                    low_px = self._required_number(row, "low")
+                    close_px = self._required_number(row, "close")
+                    volume = self._required_number(row, "volume")
 
                     units = (
-                        str(row.get("units", row.get("unit", "USD"))).strip()
-                        if pd.notna(row.get("units", row.get("unit")))
+                        str(row["units"]).strip()
+                        if "units" in row and not self._is_missing(row["units"])
                         else "USD"
                     )
 
-                    if (
-                        has_available_at_col
-                        and pd.notna(row.get("available_at"))
-                        and str(row["available_at"]).strip() != ""
-                    ):
+                    if has_available_at_col and not self._is_missing(row["available_at"]):
                         available_at = str(row["available_at"]).strip()
                     else:
                         available_at = None
