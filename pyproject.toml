@@ -1,0 +1,6 @@
+[tool.uv.workspace]
+members = ["engine"]
+
+[tool.pytest.ini_options]
+testpaths = ["engine/tests"]
+pythonpath = ["engine/src"]

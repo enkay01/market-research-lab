@@ -169,8 +169,14 @@ export interface components {
             row_count: number;
             /** Rejected Count */
             rejected_count: number;
+            /** Missing Fields */
+            missing_fields: {
+                [key: string]: number;
+            };
             /** Warnings */
             warnings: string[];
+            /** Total Warnings */
+            total_warnings: number;
             /** Files */
             files: string[];
         };

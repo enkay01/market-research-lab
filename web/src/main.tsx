@@ -10,6 +10,8 @@ function App() {
   const [name, setName] = useState("");
   const [status, setStatus] = useState("Connecting to the local engine…");
   const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -52,6 +54,8 @@ function App() {
     const source = sourceInput.value;
     const file = fileInput.files[0];
     
+    setImportError(null);
+    setIsUploading(true);
     setStatus(`Uploading dataset...`);
     try {
       const response = await api.importDataset(source, file);
@@ -63,7 +67,11 @@ function App() {
       sourceInput.value = "";
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Unable to upload dataset");
+      const msg = error instanceof Error ? error.message : "Unable to upload dataset";
+      setImportError(msg);
+      setStatus("Upload failed");
+    } finally {
+      setIsUploading(false);
     }
   }
 
@@ -147,10 +155,17 @@ function App() {
                   <input id="source" name="source" placeholder="e.g. Yahoo Finance" required style={{ width: '100%', marginTop: '0.25rem' }} />
                 </div>
                 <div>
-                  <label htmlFor="file">CSV File</label>
-                  <input id="file" name="file" type="file" accept=".csv" ref={fileInputRef} required style={{ width: '100%', marginTop: '0.25rem' }} />
+                  <label htmlFor="file">Data File (CSV, JSON, Parquet)</label>
+                  <input id="file" name="file" type="file" accept=".csv,.json,.parquet,.pq" ref={fileInputRef} required style={{ width: '100%', marginTop: '0.25rem' }} />
                 </div>
-                <button type="submit" style={{ alignSelf: 'flex-start' }}>Import Data</button>
+                <button type="submit" disabled={isUploading} style={{ alignSelf: 'flex-start' }}>
+                  {isUploading ? "Uploading..." : "Import Data"}
+                </button>
+                {importError && (
+                  <div style={{ padding: '0.75rem 1rem', backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid var(--color-danger-fg, #ef4444)', borderRadius: '4px', color: 'var(--color-danger-fg, #ef4444)', fontSize: '0.9rem' }}>
+                    <strong>Upload Error:</strong> {importError}
+                  </div>
+                )}
               </form>
             </div>
 
@@ -163,10 +178,13 @@ function App() {
                   <li><strong>Rows Imported:</strong> {coverage.row_count}</li>
                   <li><strong>Rows Rejected:</strong> {coverage.rejected_count}</li>
                   <li><strong>Files Stored:</strong> {coverage.files.join(", ")}</li>
+                  {coverage.missing_fields && Object.keys(coverage.missing_fields).length > 0 && (
+                    <li><strong>Missing Fields:</strong> {Object.entries(coverage.missing_fields).map(([k, v]) => `${k}: ${v}`).join(", ")}</li>
+                  )}
                 </ul>
                 {coverage.warnings.length > 0 && (
                   <div style={{ marginTop: '1rem' }}>
-                    <strong>Warnings:</strong>
+                    <strong>Warnings ({coverage.total_warnings ?? coverage.warnings.length}):</strong>
                     <ul style={{ color: 'var(--color-danger-fg)', fontSize: '0.9rem', marginTop: '0.5rem' }}>
                       {coverage.warnings.map((w, i) => <li key={i}>{w}</li>)}
                     </ul>

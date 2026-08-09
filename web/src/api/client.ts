@@ -18,10 +18,19 @@ const client = createClient<paths>({ baseUrl: "" });
 async function dataOrThrow<T>(request: Promise<{ data?: T; error?: unknown; response: Response }>): Promise<T> {
   const { data, error, response } = await request;
   if (data !== undefined) return data;
-  const message =
-    typeof error === "object" && error && "message" in error && typeof error.message === "string"
-      ? error.message
-      : response.statusText;
+  let message = response.statusText || `Request failed with status ${response.status}`;
+  if (typeof error === "object" && error !== null) {
+    if ("message" in error && typeof (error as any).message === "string") {
+      message = (error as any).message;
+    } else if ("detail" in error) {
+      const detail = (error as any).detail;
+      if (typeof detail === "string") {
+        message = detail;
+      } else if (Array.isArray(detail)) {
+        message = detail.map((d: any) => (typeof d === "object" && d?.msg ? d.msg : JSON.stringify(d))).join("; ");
+      }
+    }
+  }
   throw new ApiError(response.status, message);
 }
 
@@ -49,18 +58,16 @@ export const api = {
         params: { path: { project_id: projectId } },
       }),
     ),
-  importDataset: async (source: string, file: File) => {
+  importDataset: (source: string, file: File) => {
     const formData = new FormData();
     formData.append("source", source);
     formData.append("file", file);
-    const response = await fetch("/api/datasets", {
-      method: "POST",
-      body: formData,
-    });
-    if (!response.ok) {
-      throw new ApiError(response.status, "Failed to upload dataset");
-    }
-    return response.json() as Promise<components["schemas"]["DatasetImportResponse"]>;
+    return dataOrThrow(
+      client.POST("/api/datasets", {
+        body: formData as unknown as components["schemas"]["Body_import_dataset_api_datasets_post"],
+        bodySerializer: (body) => body as unknown as FormData,
+      }),
+    );
   },
   getCoverage: (datasetVersionId: string) =>
     dataOrThrow(
