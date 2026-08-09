@@ -86,3 +86,97 @@ def test_validation_errors_have_a_stable_shape(tmp_path):
 
     assert response.status_code == 422
     assert response.json()["code"] == "validation_error"
+
+
+def test_dataset_history_as_of_excludes_future_observations(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+
+    csv_content = (
+        "symbol,date,open,high,low,close,volume,available_at\n"
+        "AAPL,2023-01-01,150.0,155.0,149.0,154.0,1000000,2023-01-01T16:00:00Z\n"
+        "AAPL,2023-01-02,154.0,158.0,153.0,157.0,1200000,2023-01-02T16:00:00Z\n"
+        "AAPL,2023-01-03,157.0,160.0,156.0,159.0,1100000,2023-01-03T16:00:00Z\n"
+    )
+
+    res = client.post(
+        "/api/datasets",
+        data={"source": "test_source"},
+        files={"file": ("history.csv", csv_content.encode("utf-8"), "text/csv")},
+    )
+    assert res.status_code == 201
+    dataset_version_id = res.json()["dataset_version_id"]
+
+    history_res = client.get(
+        f"/api/datasets/{dataset_version_id}/history",
+        params={"symbol": "AAPL", "as_of": "2023-01-02T18:00:00Z"},
+    )
+    assert history_res.status_code == 200
+    bars = history_res.json()
+    assert len(bars) == 2
+    assert [b["session_date"] for b in bars] == ["2023-01-01", "2023-01-02"]
+    assert bars[0]["security_id"] == "AAPL"
+    assert bars[0]["close"] == 154.0
+    assert bars[0]["units"] == "USD"
+
+
+def test_dataset_history_lacking_temporal_provenance_returns_400(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+
+    csv_content = (
+        "symbol,date,open,high,low,close,volume\n"
+        "AAPL,2023-01-01,150.0,155.0,149.0,154.0,1000000\n"
+    )
+
+    res = client.post(
+        "/api/datasets",
+        data={"source": "no_pit_source"},
+        files={"file": ("nopit.csv", csv_content.encode("utf-8"), "text/csv")},
+    )
+    assert res.status_code == 201
+    dataset_version_id = res.json()["dataset_version_id"]
+
+    cov_res = client.get(f"/api/datasets/{dataset_version_id}/coverage")
+    assert cov_res.status_code == 200
+    assert cov_res.json()["has_temporal_provenance"] is False
+
+    history_res = client.get(
+        f"/api/datasets/{dataset_version_id}/history",
+        params={"as_of": "2023-01-01T18:00:00Z"},
+    )
+    assert history_res.status_code == 400
+    err = history_res.json()
+    assert err["code"] == "point_in_time_data_required"
+    assert "Market observations lack required point-in-time eligibility timestamps" in err["message"]
+    assert err["details"] == {}
+
+
+def test_dataset_fundamentals_endpoint(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+
+    csv_content = (
+        "security_id,field,fiscal_period,value,unit,filed_at,available_at\n"
+        "AAPL,net_income,2022Q4,30000000000,USD,2023-01-15T00:00:00Z,2023-01-16T09:00:00Z\n"
+        "AAPL,net_income,2023Q1,24000000000,USD,2023-04-15T00:00:00Z,2023-04-16T09:00:00Z\n"
+    )
+
+    res = client.post(
+        "/api/datasets",
+        data={"source": "fundamentals_source"},
+        files={"file": ("fundamentals.csv", csv_content.encode("utf-8"), "text/csv")},
+    )
+    assert res.status_code == 201
+    dataset_version_id = res.json()["dataset_version_id"]
+
+    fund_res = client.get(
+        f"/api/datasets/{dataset_version_id}/fundamentals",
+        params={"symbol": "AAPL", "as_of": "2023-02-01T00:00:00Z"},
+    )
+    assert fund_res.status_code == 200
+    facts = fund_res.json()
+    assert len(facts) == 1
+    assert facts[0]["security_id"] == "AAPL"
+    assert facts[0]["field"] == "net_income"
+    assert facts[0]["fiscal_period"] == "2022Q4"
+    assert facts[0]["value"] == 30000000000.0
+    assert facts[0]["unit"] == "USD"
+    assert facts[0]["available_at"] == "2023-01-16T09:00:00Z"

@@ -161,6 +161,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/datasets/{dataset_version_id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Dataset History */
+        get: operations["get_dataset_history_api_datasets__dataset_version_id__history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/datasets/{dataset_version_id}/fundamentals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Dataset Fundamentals */
+        get: operations["get_dataset_fundamentals_api_datasets__dataset_version_id__fundamentals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -196,6 +230,39 @@ export interface components {
             total_warnings: number;
             /** Files */
             files: string[];
+            /**
+             * Has Temporal Provenance
+             * @default false
+             */
+            has_temporal_provenance: boolean;
+        };
+        /** DailyBarResponse */
+        DailyBarResponse: {
+            /** Security Id */
+            security_id: string;
+            /** Session Date */
+            session_date: string;
+            /** Open */
+            open: number;
+            /** High */
+            high: number;
+            /** Low */
+            low: number;
+            /** Close */
+            close: number;
+            /** Volume */
+            volume: number;
+            /** Source */
+            source: string;
+            /** Retrieval Time */
+            retrieval_time: string;
+            /** Available At */
+            available_at?: string | null;
+            /**
+             * Units
+             * @default USD
+             */
+            units: string;
         };
         /** DatasetImportResponse */
         DatasetImportResponse: {
@@ -235,6 +302,27 @@ export interface components {
             };
             /** Saved At */
             saved_at: string;
+        };
+        /** FundamentalFactResponse */
+        FundamentalFactResponse: {
+            /** Security Id */
+            security_id: string;
+            /** Field */
+            field: string;
+            /** Fiscal Period */
+            fiscal_period: string;
+            /** Value */
+            value: number | string;
+            /** Unit */
+            unit: string;
+            /** Filed At */
+            filed_at?: string | null;
+            /** Available At */
+            available_at?: string | null;
+            /** Source */
+            source: string;
+            /** Retrieval Time */
+            retrieval_time: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -684,6 +772,74 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_dataset_history_api_datasets__dataset_version_id__history_get: {
+        parameters: {
+            query?: {
+                symbol?: string | null;
+                as_of?: string | null;
+            };
+            header?: never;
+            path: {
+                dataset_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DailyBarResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_dataset_fundamentals_api_datasets__dataset_version_id__fundamentals_get: {
+        parameters: {
+            query?: {
+                symbol?: string | null;
+                as_of?: string | null;
+            };
+            header?: never;
+            path: {
+                dataset_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FundamentalFactResponse"][];
                 };
             };
             /** @description Validation Error */

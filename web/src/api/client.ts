@@ -8,7 +8,11 @@ export type DefinitionCreate = components["schemas"]["DefinitionCreateRequest"];
 export type CoverageResponse = components["schemas"]["CoverageResponse"];
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(
+    public readonly status: number,
+    message: string,
+    public readonly errorBody?: unknown,
+  ) {
     super(message);
   }
 }
@@ -31,7 +35,7 @@ async function dataOrThrow<T>(request: Promise<{ data?: T; error?: unknown; resp
       }
     }
   }
-  throw new ApiError(response.status, message);
+  throw new ApiError(response.status, message, error);
 }
 
 export const api = {
@@ -81,4 +85,22 @@ export const api = {
         params: { path: { dataset_version_id: datasetVersionId } },
       }),
     ) as Promise<Record<string, unknown>[]>,
+  getHistory: (datasetVersionId: string, params?: { as_of?: string; symbol?: string }) =>
+    dataOrThrow(
+      client.GET("/api/datasets/{dataset_version_id}/history", {
+        params: {
+          path: { dataset_version_id: datasetVersionId },
+          query: params,
+        },
+      }),
+    ),
+  getFundamentals: (datasetVersionId: string, params?: { as_of?: string; symbol?: string }) =>
+    dataOrThrow(
+      client.GET("/api/datasets/{dataset_version_id}/fundamentals", {
+        params: {
+          path: { dataset_version_id: datasetVersionId },
+          query: params,
+        },
+      }),
+    ),
 };

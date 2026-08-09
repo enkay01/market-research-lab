@@ -16,7 +16,12 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from .market_data import IngestionRequest, MarketDataStore
+from .market_data import (
+    CoverageReport,
+    InadequateTemporalProvenanceError,
+    IngestionRequest,
+    MarketDataStore,
+)
 from .projects import Project, ProjectNotFoundError, ProjectStore
 
 
@@ -88,6 +93,32 @@ class DatasetImportResponse(BaseModel):
     dataset_version_id: str
 
 
+class DailyBarResponse(BaseModel):
+    security_id: str
+    session_date: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    source: str
+    retrieval_time: str
+    available_at: str | None = None
+    units: str = "USD"
+
+
+class FundamentalFactResponse(BaseModel):
+    security_id: str
+    field: str
+    fiscal_period: str
+    value: float | str
+    unit: str
+    filed_at: str | None = None
+    available_at: str | None = None
+    source: str
+    retrieval_time: str
+
+
 class CoverageResponse(BaseModel):
     id: str
     source: str
@@ -99,6 +130,7 @@ class CoverageResponse(BaseModel):
     warnings: list[str]
     total_warnings: int
     files: list[str]
+    has_temporal_provenance: bool = False
 
 
 def _project_response(project: Project) -> ProjectResponse:
@@ -117,6 +149,7 @@ def _coverage_response(coverage: CoverageReport) -> CoverageResponse:
         warnings=coverage.warnings,
         total_warnings=coverage.total_warnings,
         files=coverage.files,
+        has_temporal_provenance=coverage.has_temporal_provenance,
     )
 
 
@@ -155,6 +188,19 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
                 code="validation_error",
                 message="The request is not valid.",
                 details={"errors": jsonable_encoder(error.errors())},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(InadequateTemporalProvenanceError)
+    async def inadequate_temporal_provenance(
+        _: Request, error: InadequateTemporalProvenanceError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="point_in_time_data_required",
+                message=str(error),
+                details={},
             ).model_dump(),
         )
 
@@ -297,6 +343,60 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
     )
     def get_dataset_preview(dataset_version_id: str, limit: int = 50) -> list[dict[str, Any]]:
         return market_store.preview(dataset_version_id, limit=limit)
+
+    @app.get(
+        "/api/datasets/{dataset_version_id}/history",
+        response_model=list[DailyBarResponse],
+        tags=["datasets"],
+    )
+    def get_dataset_history(
+        dataset_version_id: str,
+        symbol: str | None = None,
+        as_of: str | None = None,
+    ) -> list[DailyBarResponse]:
+        bars = market_store.history(dataset_version_id, symbol=symbol, as_of=as_of)
+        return [
+            DailyBarResponse(
+                security_id=b.security_id,
+                session_date=b.session_date,
+                open=b.open,
+                high=b.high,
+                low=b.low,
+                close=b.close,
+                volume=b.volume,
+                source=b.source,
+                retrieval_time=b.retrieval_time,
+                available_at=b.available_at,
+                units=b.units,
+            )
+            for b in bars
+        ]
+
+    @app.get(
+        "/api/datasets/{dataset_version_id}/fundamentals",
+        response_model=list[FundamentalFactResponse],
+        tags=["datasets"],
+    )
+    def get_dataset_fundamentals(
+        dataset_version_id: str,
+        symbol: str | None = None,
+        as_of: str | None = None,
+    ) -> list[FundamentalFactResponse]:
+        facts = market_store.fundamentals(dataset_version_id, symbol=symbol, as_of=as_of)
+        return [
+            FundamentalFactResponse(
+                security_id=f.security_id,
+                field=f.field,
+                fiscal_period=f.fiscal_period,
+                value=f.value,
+                unit=f.unit,
+                filed_at=f.filed_at,
+                available_at=f.available_at,
+                source=f.source,
+                retrieval_time=f.retrieval_time,
+            )
+            for f in facts
+        ]
 
     built_interface = static_dir or repository_root / "web" / "dist"
     if built_interface.is_dir():
