@@ -1,3 +1,7 @@
+import io
+
+import pandas as pd
+import pytest
 from fastapi.testclient import TestClient
 
 from market_research_lab.api import create_app
@@ -86,3 +90,36 @@ def test_validation_errors_have_a_stable_shape(tmp_path):
 
     assert response.status_code == 422
     assert response.json()["code"] == "validation_error"
+
+
+@pytest.mark.parametrize("filename", ["bars.json", "bars.parquet"])
+def test_dataset_upload_accepts_json_and_parquet(filename, tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    rows = [
+        {
+            "symbol": "MSFT",
+            "date": "2023-01-01",
+            "open": 240.0,
+            "high": 245.0,
+            "low": 239.0,
+            "close": 244.0,
+            "volume": 500000.0,
+        }
+    ]
+    if filename.endswith(".json"):
+        content = io.BytesIO(pd.DataFrame(rows).to_json(orient="records").encode())
+    else:
+        content = io.BytesIO()
+        pd.DataFrame(rows).to_parquet(content, index=False)
+        content.seek(0)
+
+    response = client.post(
+        "/api/datasets",
+        data={"source": "test-source"},
+        files={"file": (filename, content, "application/octet-stream")},
+    )
+
+    assert response.status_code == 201
+    coverage = client.get(f"/api/datasets/{response.json()['dataset_version_id']}/coverage")
+    assert coverage.status_code == 200
+    assert coverage.json()["row_count"] == 1
