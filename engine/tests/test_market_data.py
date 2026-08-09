@@ -61,19 +61,33 @@ def test_import_json_and_parquet_formats():
         ]
         json_path.write_text(json.dumps(data), encoding="utf-8")
 
-        req_json = IngestionRequest(source="json_src", file_path=json_path, retrieval_time="2026-01-01T00:00:00Z")
+        req_json = IngestionRequest(
+            source="json_src", file_path=json_path, retrieval_time="2026-01-01T00:00:00Z"
+        )
         ver_json = store.ingest(req_json)
         assert ver_json.source == "json_src"
         assert store.coverage(ver_json.id).row_count == 1
 
         # Parquet file
-        df_pq = pd.DataFrame([
-            {"symbol": "GOOGL", "date": "2023-01-01", "open": 90, "high": 92, "low": 89, "close": 91, "volume": 800000}
-        ])
+        df_pq = pd.DataFrame(
+            [
+                {
+                    "symbol": "GOOGL",
+                    "date": "2023-01-01",
+                    "open": 90,
+                    "high": 92,
+                    "low": 89,
+                    "close": 91,
+                    "volume": 800000,
+                }
+            ]
+        )
         pq_path = workspace / "data.parquet"
         df_pq.to_parquet(pq_path, index=False)
 
-        req_pq = IngestionRequest(source="pq_src", file_path=pq_path, retrieval_time="2026-01-01T00:00:00Z")
+        req_pq = IngestionRequest(
+            source="pq_src", file_path=pq_path, retrieval_time="2026-01-01T00:00:00Z"
+        )
         ver_pq = store.ingest(req_pq)
         assert ver_pq.source == "pq_src"
         assert store.coverage(ver_pq.id).row_count == 1
@@ -86,12 +100,12 @@ def test_all_rows_invalid_rejects_dataset_persistence_core_008():
 
         csv_path = workspace / "bad.csv"
         csv_path.write_text(
-            "symbol,date,open,high,low,close,volume\n"
-            ",bad_date,abc,def,ghi,jkl,mno\n",
+            "symbol,date,open,high,low,close,volume\n,bad_date,abc,def,ghi,jkl,mno\n",
             encoding="utf-8",
         )
 
-        request = IngestionRequest(source="bad_src", file_path=csv_path, retrieval_time="2026-01-01T00:00:00Z")
+        request = IngestionRequest(
+            source="bad_src", file_path=csv_path, retrieval_time="2026-01-01T00:00:00Z"
+        )
         with pytest.raises(ValueError, match="Import failed: 0 valid rows"):
             store.ingest(request)
-

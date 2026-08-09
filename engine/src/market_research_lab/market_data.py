@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -69,22 +70,40 @@ class MarketDataStore:
 
     def _read_dataframe(self, file_path: Path) -> pd.DataFrame:
         suffix = file_path.suffix.lower()
+        if suffix not in (".csv", ".json", ".parquet", ".pq"):
+            raise ValueError(
+                f"Unsupported file extension '{suffix}'. Supported formats: .csv, .json, .parquet"
+            )
+
         try:
             if suffix == ".csv":
-                return pd.read_csv(file_path, dtype=str)
-            elif suffix == ".json":
-                return pd.read_json(file_path, dtype=str)
-            elif suffix in (".parquet", ".pq"):
-                df = pd.read_parquet(file_path)
-                return df.astype(str)
-            else:
-                raise ValueError(
-                    f"Unsupported file extension '{suffix}'. Supported formats: .csv, .json, .parquet"
-                )
-        except ValueError:
-            raise
-        except Exception as e:
-            raise ValueError(f"Failed to parse {suffix.upper()} file: {e}")
+                return pd.read_csv(file_path)
+            if suffix == ".json":
+                return pd.read_json(file_path)
+            return pd.read_parquet(file_path)
+        except Exception as error:
+            raise ValueError(f"Failed to parse {suffix.upper()} file.") from error
+
+    @staticmethod
+    def _is_missing(value: Any) -> bool:
+        return bool(pd.isna(value)) or (isinstance(value, str) and not value.strip())
+
+    @classmethod
+    def _required_text(cls, row: pd.Series, field: str) -> str:
+        value = row[field]
+        if cls._is_missing(value):
+            raise ValueError(f"{field.replace('_', ' ').capitalize()} is missing")
+        return str(value).strip()
+
+    @classmethod
+    def _required_number(cls, row: pd.Series, field: str) -> float:
+        value = row[field]
+        if cls._is_missing(value):
+            raise ValueError(f"{field.replace('_', ' ').capitalize()} is missing")
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError(f"{field.replace('_', ' ').capitalize()} must be finite")
+        return number
 
     def ingest(self, request: IngestionRequest) -> DatasetVersion:
         df_raw = self._read_dataframe(request.file_path)
@@ -101,31 +120,29 @@ class MarketDataStore:
         missing_fields: dict[str, int] = {}
         for col in required:
             if col in df_raw.columns:
-                missing_count = int(df_raw[col].isna().sum() + (df_raw[col] == "").sum())
-                missing_fields[col] = missing_count
+                missing_fields[col] = int(df_raw[col].map(self._is_missing).sum())
 
-        for i, row in df_raw.iterrows():
-            row_num = i + 1
+        for row_num, (_, row) in enumerate(df_raw.iterrows(), start=1):
             try:
-                symbol = str(row["symbol"]).strip() if pd.notna(row["symbol"]) else ""
-                if not symbol:
-                    raise ValueError("Symbol is missing")
+                symbol = self._required_text(row, "symbol")
 
-                date_str = str(row["date"]).strip() if pd.notna(row["date"]) else ""
-                if not date_str:
-                    raise ValueError("Date is missing")
+                date_str = self._required_text(row, "date")
                 date = pd.to_datetime(date_str).strftime("%Y-%m-%d")
 
-                open_px = float(row["open"])
-                high_px = float(row["high"])
-                low_px = float(row["low"])
-                close_px = float(row["close"])
-                volume = float(row["volume"])
+                open_px = self._required_number(row, "open")
+                high_px = self._required_number(row, "high")
+                low_px = self._required_number(row, "low")
+                close_px = self._required_number(row, "close")
+                volume = self._required_number(row, "volume")
 
-                units = str(row.get("units", "USD")).strip() if "units" in row and pd.notna(row["units"]) else "USD"
+                units = (
+                    str(row["units"]).strip()
+                    if "units" in row and not self._is_missing(row["units"])
+                    else "USD"
+                )
 
                 # Distinguish market eligibility time from system retrieval time (DATA-005)
-                if "available_at" in row and pd.notna(row["available_at"]):
+                if "available_at" in row and not self._is_missing(row["available_at"]):
                     available_at = str(row["available_at"]).strip()
                 else:
                     available_at = f"{date}T16:00:00Z"
@@ -151,7 +168,9 @@ class MarketDataStore:
         # CORE-008: Preserve error and reject saving partial/empty DatasetVersion if all rows failed
         if not valid_rows:
             error_preview = "; ".join(warnings[:5]) if warnings else "No valid records present."
-            raise ValueError(f"Import failed: 0 valid rows out of {len(df_raw)}. Errors: {error_preview}")
+            raise ValueError(
+                f"Import failed: 0 valid rows out of {len(df_raw)}. Errors: {error_preview}"
+            )
 
         rejected_count = len(df_raw) - len(valid_rows)
         version_id = str(uuid4())
@@ -211,7 +230,8 @@ class MarketDataStore:
         with duckdb.connect(str(self.db_path)) as con:
             con.execute(
                 """
-                SELECT id, source, retrieval_time, coverage_start, coverage_end, files, validation_summary 
+                SELECT id, source, retrieval_time, coverage_start, coverage_end, files,
+                    validation_summary
                 FROM dataset_versions WHERE id = ?
                 """,
                 (dataset_version_id,),
@@ -220,7 +240,15 @@ class MarketDataStore:
             if not row:
                 raise ValueError(f"DatasetVersion {dataset_version_id} not found")
 
-            version_id, source, _retrieval_time, coverage_start, coverage_end, raw_files, raw_summary = row
+            (
+                version_id,
+                source,
+                _retrieval_time,
+                coverage_start,
+                coverage_end,
+                raw_files,
+                raw_summary,
+            ) = row
             summary = json.loads(raw_summary)
             files = json.loads(raw_files)
 
@@ -236,4 +264,3 @@ class MarketDataStore:
                 total_warnings=summary.get("total_warnings", len(summary.get("warnings", []))),
                 files=files,
             )
-
