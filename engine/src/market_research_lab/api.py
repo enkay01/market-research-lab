@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from fastapi import FastAPI, File, Form, Request, UploadFile, status
+from fastapi import FastAPI, File, Form, Query, Request, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -352,7 +352,7 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
     def get_dataset_history(
         dataset_version_id: str,
         symbol: str | None = None,
-        as_of: str | None = None,
+        as_of: datetime | None = Query(default=None, description="As-of decision timestamp (ISO 8601)"),
     ) -> list[DailyBarResponse]:
         bars = market_store.history(dataset_version_id, symbol=symbol, as_of=as_of)
         return [
@@ -380,7 +380,7 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
     def get_dataset_fundamentals(
         dataset_version_id: str,
         symbol: str | None = None,
-        as_of: str | None = None,
+        as_of: datetime | None = Query(default=None, description="As-of decision timestamp (ISO 8601)"),
     ) -> list[FundamentalFactResponse]:
         facts = market_store.fundamentals(dataset_version_id, symbol=symbol, as_of=as_of)
         return [

@@ -55,7 +55,28 @@ def test_import_csv_validates_and_creates_dataset_version():
         assert "available_at" in df_parquet.columns
         assert "units" in df_parquet.columns
         assert df_parquet["retrieval_time"].iloc[0] == retrieval_time
-        assert df_parquet["available_at"].iloc[0] == "2023-01-01T16:00:00Z"
+        assert df_parquet["available_at"].iloc[0] is None
+
+
+def test_row_level_missing_available_at_rejected_from_historical_query():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        workspace = Path(tmpdir)
+        store = MarketDataStore(workspace)
+
+        csv_path = workspace / "data_mixed_pit.csv"
+        csv_path.write_text(
+            "symbol,date,open,high,low,close,volume,available_at\n"
+            "AAPL,2023-01-01,150.0,155.0,149.0,154.0,1000000,2023-01-01T16:00:00Z\n"
+            "AAPL,2023-01-02,154.0,158.0,153.0,157.0,1200000,\n",
+            encoding="utf-8",
+        )
+
+        request = IngestionRequest(source="mixed_pit_src", file_path=csv_path, retrieval_time="2023-01-03T00:00:00Z")
+        version = store.ingest(request)
+
+        # One row is missing available_at
+        with pytest.raises(InadequateTemporalProvenanceError, match="Market observations lack required point-in-time eligibility timestamps"):
+            store.history(version.id, as_of="2023-01-02T18:00:00Z")
 
 
 def test_import_json_and_parquet_formats():

@@ -789,6 +789,7 @@ export interface operations {
         parameters: {
             query?: {
                 symbol?: string | null;
+                /** @description As-of decision timestamp (ISO 8601) */
                 as_of?: string | null;
             };
             header?: never;
@@ -823,6 +824,7 @@ export interface operations {
         parameters: {
             query?: {
                 symbol?: string | null;
+                /** @description As-of decision timestamp (ISO 8601) */
                 as_of?: string | null;
             };
             header?: never;

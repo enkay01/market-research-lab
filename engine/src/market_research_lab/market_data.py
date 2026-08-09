@@ -248,10 +248,10 @@ class MarketDataStore:
 
                     units = str(row.get("units", row.get("unit", "USD"))).strip() if pd.notna(row.get("units", row.get("unit"))) else "USD"
 
-                    if has_available_at_col and pd.notna(row["available_at"]) and str(row["available_at"]).strip() != "":
+                    if has_available_at_col and pd.notna(row.get("available_at")) and str(row["available_at"]).strip() != "":
                         available_at = str(row["available_at"]).strip()
                     else:
-                        available_at = f"{date}T16:00:00Z"
+                        available_at = None
 
                     valid_rows.append(
                         {
@@ -399,18 +399,15 @@ class MarketDataStore:
         df = pd.concat(dfs, ignore_index=True)
         return df, has_prov
 
-    def history(
+    def _filter_by_as_of_and_symbol(
         self,
-        dataset_version_id: str,
-        *,
-        symbol: str | None = None,
-        as_of: str | datetime | None = None,
-        as_dataframe: bool = False,
-    ) -> list[DailyBar] | pd.DataFrame:
-        df, has_prov = self._load_dataset_df(dataset_version_id)
-
+        df: pd.DataFrame,
+        has_provenance: bool,
+        as_of: datetime | str | None,
+        symbol: str | None,
+    ) -> pd.DataFrame:
         if as_of is not None:
-            if not has_prov or "available_at" not in df.columns or df["available_at"].isna().all() or (df["available_at"].astype(str).str.strip() == "").all():
+            if not has_provenance or "available_at" not in df.columns or df["available_at"].isna().any() or (df["available_at"].astype(str).str.strip() == "").any():
                 raise InadequateTemporalProvenanceError(
                     "Market observations lack required point-in-time eligibility timestamps ('available_at') for historical use."
                 )
@@ -424,6 +421,20 @@ class MarketDataStore:
                 df = df[df["security_id"] == symbol]
             elif "symbol" in df.columns:
                 df = df[df["symbol"] == symbol]
+
+        return df
+
+    def history(
+        self,
+        dataset_version_id: str,
+        *,
+        symbol: str | None = None,
+        as_of: str | datetime | None = None,
+        as_dataframe: bool = False,
+    ) -> list[DailyBar] | pd.DataFrame:
+        df, has_prov = self._load_dataset_df(dataset_version_id)
+
+        df = self._filter_by_as_of_and_symbol(df, has_prov, as_of, symbol)
 
         if as_dataframe:
             return df.reset_index(drop=True)
@@ -457,21 +468,7 @@ class MarketDataStore:
     ) -> list[FundamentalFact] | pd.DataFrame:
         df, has_prov = self._load_dataset_df(dataset_version_id)
 
-        if as_of is not None:
-            if not has_prov or "available_at" not in df.columns or df["available_at"].isna().all() or (df["available_at"].astype(str).str.strip() == "").all():
-                raise InadequateTemporalProvenanceError(
-                    "Market observations lack required point-in-time eligibility timestamps ('available_at') for historical use."
-                )
-
-            as_of_utc = pd.to_datetime(as_of, utc=True)
-            available_at_utc = pd.to_datetime(df["available_at"], utc=True)
-            df = df[available_at_utc <= as_of_utc]
-
-        if symbol is not None and not df.empty:
-            if "security_id" in df.columns:
-                df = df[df["security_id"] == symbol]
-            elif "symbol" in df.columns:
-                df = df[df["symbol"] == symbol]
+        df = self._filter_by_as_of_and_symbol(df, has_prov, as_of, symbol)
 
         if as_dataframe:
             return df.reset_index(drop=True)

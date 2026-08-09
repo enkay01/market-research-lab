@@ -89,9 +89,31 @@ function App() {
     if (!coverage) return;
     setPitError(null);
     try {
-      const historyRows = await api.getHistory(coverage.id, { as_of: asOf.trim() || undefined });
-      setPreviewRows(historyRows as unknown as Record<string, unknown>[]);
+      const isFundamentals = previewRows.length > 0 && "field" in previewRows[0];
+      const params = { as_of: asOf.trim() || undefined };
+      
+      let fetchedRows;
+      if (isFundamentals) {
+        fetchedRows = await api.getFundamentals(coverage.id, params);
+      } else {
+        fetchedRows = await api.getHistory(coverage.id, params);
+      }
+      
+      const formattedRows: Record<string, unknown>[] = fetchedRows.map(row => {
+        const result: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(row)) {
+          result[key] = value;
+        }
+        return result;
+      });
+      setPreviewRows(formattedRows);
     } catch (error) {
+      if (error instanceof ApiError && error.status === 400) {
+        if (error.message.includes("point_in_time_data_required") || error.message.includes("Point in time")) {
+          setPitError("Temporal provenance lacking: Point-in-time data (As-Of) is required for this dataset.");
+          return;
+        }
+      }
       if (error instanceof ApiError && error.errorBody && typeof error.errorBody === "object") {
         const body = error.errorBody as { code?: string; message?: string };
         if (body.code && body.message) {

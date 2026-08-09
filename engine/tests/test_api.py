@@ -149,6 +149,14 @@ def test_dataset_history_lacking_temporal_provenance_returns_400(tmp_path):
     assert "Market observations lack required point-in-time eligibility timestamps" in err["message"]
     assert err["details"] == {}
 
+    fund_res = client.get(
+        f"/api/datasets/{dataset_version_id}/fundamentals",
+        params={"as_of": "2023-01-01T18:00:00Z"},
+    )
+    assert fund_res.status_code == 400
+    err2 = fund_res.json()
+    assert err2["code"] == "point_in_time_data_required"
+    assert "Market observations lack required point-in-time eligibility timestamps" in err2["message"]
 
 def test_dataset_fundamentals_endpoint(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
@@ -180,3 +188,21 @@ def test_dataset_fundamentals_endpoint(tmp_path):
     assert facts[0]["value"] == 30000000000.0
     assert facts[0]["unit"] == "USD"
     assert facts[0]["available_at"] == "2023-01-16T09:00:00Z"
+
+
+def test_invalid_as_of_format_returns_422(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    
+    res = client.get(
+        "/api/datasets/dummy-id/history",
+        params={"as_of": "not-a-date"}
+    )
+    assert res.status_code == 422
+    assert res.json()["code"] == "validation_error"
+
+    res = client.get(
+        "/api/datasets/dummy-id/fundamentals",
+        params={"as_of": "invalid-timestamp"}
+    )
+    assert res.status_code == 422
+    assert res.json()["code"] == "validation_error"
