@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from fastapi import FastAPI, File, Form, Query, Request, UploadFile, status
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -276,10 +276,18 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
         status_code=status.HTTP_201_CREATED,
         tags=["runs"],
     )
-    def create_run(project_id: UUID, dataset_version_id: str | None = Query(default=None)) -> RunResponse:
-        if dataset_version_id:
-            if not market_store.coverage(dataset_version_id).has_temporal_provenance:
-                raise InadequateTemporalProvenanceError("Market dataset version lacks required point-in-time eligibility timestamps ('available_at') for historical run execution.")
+    def create_run(
+        project_id: UUID,
+        dataset_version_id: str | None = Query(default=None),
+        historical: bool = Query(default=False),
+    ) -> RunResponse:
+        if historical and dataset_version_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="A historical Run requires a Dataset Version.",
+            )
+        if historical and dataset_version_id is not None:
+            market_store.ensure_historical_eligibility(dataset_version_id)
         return RunResponse(id=store.create_run(str(project_id)), status="pending")
 
     @app.post(
@@ -308,7 +316,9 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 content=ErrorResponse(
                     code="validation_error",
-                    message=f"Unsupported file format '{ext}'. Allowed formats: .csv, .json, .parquet",
+                    message=(
+                        f"Unsupported file format '{ext}'. Allowed formats: .csv, .json, .parquet"
+                    ),
                 ).model_dump(),
             )
 
@@ -325,9 +335,7 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
         except ValueError as err:
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                content=ErrorResponse(
-                    code="import_error", message=str(err)
-                ).model_dump(),
+                content=ErrorResponse(code="import_error", message=str(err)).model_dump(),
             )
         finally:
             if tmp_path.exists():
@@ -357,25 +365,12 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
     def get_dataset_history(
         dataset_version_id: str,
         symbol: str | None = None,
-        as_of: datetime | None = Query(default=None, description="As-of decision timestamp (ISO 8601)"),
+        as_of: datetime | None = Query(
+            default=None, description="As-of decision timestamp (ISO 8601)"
+        ),
     ) -> list[DailyBarResponse]:
         bars = market_store.history(dataset_version_id, symbol=symbol, as_of=as_of)
-        return [
-            DailyBarResponse(
-                security_id=b.security_id,
-                session_date=b.session_date,
-                open=b.open,
-                high=b.high,
-                low=b.low,
-                close=b.close,
-                volume=b.volume,
-                source=b.source,
-                retrieval_time=b.retrieval_time,
-                available_at=b.available_at,
-                units=b.units,
-            )
-            for b in bars
-        ]
+        return [DailyBarResponse.model_validate(bar, from_attributes=True) for bar in bars]
 
     @app.get(
         "/api/datasets/{dataset_version_id}/fundamentals",
@@ -385,22 +380,13 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
     def get_dataset_fundamentals(
         dataset_version_id: str,
         symbol: str | None = None,
-        as_of: datetime | None = Query(default=None, description="As-of decision timestamp (ISO 8601)"),
+        as_of: datetime | None = Query(
+            default=None, description="As-of decision timestamp (ISO 8601)"
+        ),
     ) -> list[FundamentalFactResponse]:
         facts = market_store.fundamentals(dataset_version_id, symbol=symbol, as_of=as_of)
         return [
-            FundamentalFactResponse(
-                security_id=f.security_id,
-                field=f.field,
-                fiscal_period=f.fiscal_period,
-                value=f.value,
-                unit=f.unit,
-                filed_at=f.filed_at,
-                available_at=f.available_at,
-                source=f.source,
-                retrieval_time=f.retrieval_time,
-            )
-            for f in facts
+            FundamentalFactResponse.model_validate(fact, from_attributes=True) for fact in facts
         ]
 
     built_interface = static_dir or repository_root / "web" / "dist"

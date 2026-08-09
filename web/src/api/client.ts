@@ -6,6 +6,8 @@ export type Project = components["schemas"]["ProjectResponse"];
 export type ProjectCreate = components["schemas"]["ProjectCreateRequest"];
 export type DefinitionCreate = components["schemas"]["DefinitionCreateRequest"];
 export type CoverageResponse = components["schemas"]["CoverageResponse"];
+export type DailyBarResponse = components["schemas"]["DailyBarResponse"];
+export type FundamentalFactResponse = components["schemas"]["FundamentalFactResponse"];
 
 export class ApiError extends Error {
   constructor(

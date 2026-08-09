@@ -16,7 +16,11 @@ import pandas as pd
 class InadequateTemporalProvenanceError(ValueError):
     """Raised when market observations lack required point-in-time eligibility timestamps."""
 
-    pass
+
+TEMPORAL_PROVENANCE_ERROR_MESSAGE = (
+    "Market observations lack required point-in-time eligibility timestamps "
+    "('available_at') for historical use."
+)
 
 
 @dataclass(frozen=True)
@@ -137,22 +141,42 @@ class MarketDataStore:
                 return df.astype(str)
             else:
                 raise ValueError(
-                    f"Unsupported file extension '{suffix}'. Supported formats: .csv, .json, .parquet"
+                    f"Unsupported file extension '{suffix}'. Supported formats: .csv, .json, "
+                    ".parquet"
                 )
         except ValueError:
             raise
         except Exception as e:
             raise ValueError(f"Failed to parse {suffix.upper()} file: {e}")
 
+    @staticmethod
+    def _has_complete_temporal_provenance(df: pd.DataFrame) -> bool:
+        if df.empty or "available_at" not in df.columns:
+            return False
+
+        available_at = df["available_at"]
+        if available_at.isna().any() or (available_at.astype(str).str.strip() == "").any():
+            return False
+
+        try:
+            pd.to_datetime(available_at, utc=True, errors="raise")
+        except (TypeError, ValueError):
+            return False
+
+        return True
+
+    def _eligible_timestamps_for_historical_use(
+        self, df: pd.DataFrame, has_provenance: bool
+    ) -> pd.Series:
+        if not has_provenance or not self._has_complete_temporal_provenance(df):
+            raise InadequateTemporalProvenanceError(TEMPORAL_PROVENANCE_ERROR_MESSAGE)
+
+        return pd.to_datetime(df["available_at"], utc=True, errors="raise")
+
     def ingest(self, request: IngestionRequest) -> DatasetVersion:
         df_raw = self._read_dataframe(request.file_path)
 
         has_available_at_col = "available_at" in df_raw.columns
-        has_temporal_provenance = False
-        if has_available_at_col:
-            non_empty = df_raw["available_at"].dropna().astype(str).str.strip()
-            if not non_empty.empty and (non_empty != "").any():
-                has_temporal_provenance = True
 
         # Check format: Fundamental facts or Daily bars
         is_fundamental = {"field", "fiscal_period", "value"}.issubset(set(df_raw.columns))
@@ -168,7 +192,16 @@ class MarketDataStore:
         missing_fields: dict[str, int] = {}
 
         if is_fundamental:
-            check_cols = ["security_id", "symbol", "field", "fiscal_period", "value", "unit", "filed_at", "available_at"]
+            check_cols = [
+                "security_id",
+                "symbol",
+                "field",
+                "fiscal_period",
+                "value",
+                "unit",
+                "filed_at",
+                "available_at",
+            ]
             for col in check_cols:
                 if col in df_raw.columns:
                     missing_count = int(df_raw[col].isna().sum() + (df_raw[col] == "").sum())
@@ -198,10 +231,24 @@ class MarketDataStore:
                     except (ValueError, TypeError):
                         val = str(raw_val).strip()
 
-                    unit = str(row.get("unit", row.get("units", "USD"))).strip() if pd.notna(row.get("unit", row.get("units"))) else "USD"
-                    filed_at = str(row["filed_at"]).strip() if "filed_at" in row and pd.notna(row["filed_at"]) and str(row["filed_at"]).strip() != "" else None
+                    unit = (
+                        str(row.get("unit", row.get("units", "USD"))).strip()
+                        if pd.notna(row.get("unit", row.get("units")))
+                        else "USD"
+                    )
+                    filed_at = (
+                        str(row["filed_at"]).strip()
+                        if "filed_at" in row
+                        and pd.notna(row["filed_at"])
+                        and str(row["filed_at"]).strip() != ""
+                        else None
+                    )
 
-                    if has_available_at_col and pd.notna(row["available_at"]) and str(row["available_at"]).strip() != "":
+                    if (
+                        has_available_at_col
+                        and pd.notna(row["available_at"])
+                        and str(row["available_at"]).strip() != ""
+                    ):
                         available_at = str(row["available_at"]).strip()
                     else:
                         available_at = None
@@ -248,9 +295,17 @@ class MarketDataStore:
                     close_px = float(row["close"])
                     volume = float(row["volume"])
 
-                    units = str(row.get("units", row.get("unit", "USD"))).strip() if pd.notna(row.get("units", row.get("unit"))) else "USD"
+                    units = (
+                        str(row.get("units", row.get("unit", "USD"))).strip()
+                        if pd.notna(row.get("units", row.get("unit")))
+                        else "USD"
+                    )
 
-                    if has_available_at_col and pd.notna(row.get("available_at")) and str(row["available_at"]).strip() != "":
+                    if (
+                        has_available_at_col
+                        and pd.notna(row.get("available_at"))
+                        and str(row["available_at"]).strip() != ""
+                    ):
                         available_at = str(row["available_at"]).strip()
                     else:
                         available_at = None
@@ -275,13 +330,16 @@ class MarketDataStore:
 
         if not valid_rows:
             error_preview = "; ".join(warnings[:5]) if warnings else "No valid records present."
-            raise ValueError(f"Import failed: 0 valid rows out of {len(df_raw)}. Errors: {error_preview}")
+            raise ValueError(
+                f"Import failed: 0 valid rows out of {len(df_raw)}. Errors: {error_preview}"
+            )
 
         rejected_count = len(df_raw) - len(valid_rows)
         version_id = str(uuid4())
         files = []
 
         df_valid = pd.DataFrame(valid_rows)
+        has_temporal_provenance = self._has_complete_temporal_provenance(df_valid)
         if "session_date" in df_valid.columns:
             coverage_start = df_valid["session_date"].min()
             coverage_end = df_valid["session_date"].max()
@@ -344,7 +402,8 @@ class MarketDataStore:
         with duckdb.connect(str(self.db_path)) as con:
             con.execute(
                 """
-                SELECT id, source, retrieval_time, coverage_start, coverage_end, files, validation_summary 
+                SELECT id, source, retrieval_time, coverage_start, coverage_end,
+                       files, validation_summary
                 FROM dataset_versions WHERE id = ?
                 """,
                 (dataset_version_id,),
@@ -353,7 +412,15 @@ class MarketDataStore:
             if not row:
                 raise ValueError(f"DatasetVersion {dataset_version_id} not found")
 
-            version_id, source, _retrieval_time, coverage_start, coverage_end, raw_files, raw_summary = row
+            (
+                version_id,
+                source,
+                _retrieval_time,
+                coverage_start,
+                coverage_end,
+                raw_files,
+                raw_summary,
+            ) = row
             summary = json.loads(raw_summary)
             files = json.loads(raw_files)
 
@@ -411,13 +478,8 @@ class MarketDataStore:
         symbol: str | None,
     ) -> pd.DataFrame:
         if as_of is not None:
-            if not has_provenance or "available_at" not in df.columns or df["available_at"].isna().any() or (df["available_at"].astype(str).str.strip() == "").any():
-                raise InadequateTemporalProvenanceError(
-                    "Market observations lack required point-in-time eligibility timestamps ('available_at') for historical use."
-                )
-
             as_of_utc = pd.to_datetime(as_of, utc=True)
-            available_at_utc = pd.to_datetime(df["available_at"], utc=True)
+            available_at_utc = self._eligible_timestamps_for_historical_use(df, has_provenance)
             df = df[available_at_utc <= as_of_utc]
 
         if symbol is not None and not df.empty:
@@ -427,6 +489,10 @@ class MarketDataStore:
                 df = df[df["symbol"] == symbol]
 
         return df
+
+    def ensure_historical_eligibility(self, dataset_version_id: str) -> None:
+        df, has_provenance = self._load_dataset_df(dataset_version_id)
+        self._eligible_timestamps_for_historical_use(df, has_provenance)
 
     def history(
         self,
@@ -456,7 +522,10 @@ class MarketDataStore:
                     volume=float(row["volume"]),
                     source=str(row.get("source", "")),
                     retrieval_time=str(row.get("retrieval_time", "")),
-                    available_at=str(row["available_at"]) if pd.notna(row.get("available_at")) and str(row.get("available_at")).strip() != "" else None,
+                    available_at=str(row["available_at"])
+                    if pd.notna(row.get("available_at"))
+                    and str(row.get("available_at")).strip() != ""
+                    else None,
                     units=str(row.get("units", "USD")),
                 )
             )
@@ -492,8 +561,13 @@ class MarketDataStore:
                     fiscal_period=str(row["fiscal_period"]),
                     value=val,
                     unit=str(row.get("unit", "USD")),
-                    filed_at=str(row["filed_at"]) if pd.notna(row.get("filed_at")) and str(row.get("filed_at")).strip() != "" else None,
-                    available_at=str(row["available_at"]) if pd.notna(row.get("available_at")) and str(row.get("available_at")).strip() != "" else None,
+                    filed_at=str(row["filed_at"])
+                    if pd.notna(row.get("filed_at")) and str(row.get("filed_at")).strip() != ""
+                    else None,
+                    available_at=str(row["available_at"])
+                    if pd.notna(row.get("available_at"))
+                    and str(row.get("available_at")).strip() != ""
+                    else None,
                     source=str(row.get("source", "")),
                     retrieval_time=str(row.get("retrieval_time", "")),
                 )

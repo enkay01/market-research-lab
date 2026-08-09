@@ -2,6 +2,7 @@ import json
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -71,11 +72,41 @@ def test_row_level_missing_available_at_rejected_from_historical_query():
             encoding="utf-8",
         )
 
-        request = IngestionRequest(source="mixed_pit_src", file_path=csv_path, retrieval_time="2023-01-03T00:00:00Z")
+        request = IngestionRequest(
+            source="mixed_pit_src", file_path=csv_path, retrieval_time="2023-01-03T00:00:00Z"
+        )
         version = store.ingest(request)
 
         # One row is missing available_at
-        with pytest.raises(InadequateTemporalProvenanceError, match="Market observations lack required point-in-time eligibility timestamps"):
+        with pytest.raises(
+            InadequateTemporalProvenanceError,
+            match="Market observations lack required point-in-time eligibility timestamps",
+        ):
+            store.history(version.id, as_of="2023-01-02T18:00:00Z")
+
+
+def test_invalid_available_at_is_inadequate_for_historical_use():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        workspace = Path(tmpdir)
+        store = MarketDataStore(workspace)
+
+        csv_path = workspace / "data_invalid_pit.csv"
+        csv_path.write_text(
+            "symbol,date,open,high,low,close,volume,available_at\n"
+            "AAPL,2023-01-01,150.0,155.0,149.0,154.0,1000000,not-a-timestamp\n",
+            encoding="utf-8",
+        )
+
+        version = store.ingest(
+            IngestionRequest(
+                source="invalid_pit_src",
+                file_path=csv_path,
+                retrieval_time="2023-01-03T00:00:00Z",
+            )
+        )
+
+        assert store.coverage(version.id).has_temporal_provenance is False
+        with pytest.raises(InadequateTemporalProvenanceError):
             store.history(version.id, as_of="2023-01-02T18:00:00Z")
 
 
@@ -87,23 +118,45 @@ def test_import_json_and_parquet_formats():
         # JSON file
         json_path = workspace / "data.json"
         data = [
-            {"symbol": "MSFT", "date": "2023-01-01", "open": 240, "high": 245, "low": 239, "close": 244, "volume": 500000}
+            {
+                "symbol": "MSFT",
+                "date": "2023-01-01",
+                "open": 240,
+                "high": 245,
+                "low": 239,
+                "close": 244,
+                "volume": 500000,
+            }
         ]
         json_path.write_text(json.dumps(data), encoding="utf-8")
 
-        req_json = IngestionRequest(source="json_src", file_path=json_path, retrieval_time="2026-01-01T00:00:00Z")
+        req_json = IngestionRequest(
+            source="json_src", file_path=json_path, retrieval_time="2026-01-01T00:00:00Z"
+        )
         ver_json = store.ingest(req_json)
         assert ver_json.source == "json_src"
         assert store.coverage(ver_json.id).row_count == 1
 
         # Parquet file
-        df_pq = pd.DataFrame([
-            {"symbol": "GOOGL", "date": "2023-01-01", "open": 90, "high": 92, "low": 89, "close": 91, "volume": 800000}
-        ])
+        df_pq = pd.DataFrame(
+            [
+                {
+                    "symbol": "GOOGL",
+                    "date": "2023-01-01",
+                    "open": 90,
+                    "high": 92,
+                    "low": 89,
+                    "close": 91,
+                    "volume": 800000,
+                }
+            ]
+        )
         pq_path = workspace / "data.parquet"
         df_pq.to_parquet(pq_path, index=False)
 
-        req_pq = IngestionRequest(source="pq_src", file_path=pq_path, retrieval_time="2026-01-01T00:00:00Z")
+        req_pq = IngestionRequest(
+            source="pq_src", file_path=pq_path, retrieval_time="2026-01-01T00:00:00Z"
+        )
         ver_pq = store.ingest(req_pq)
         assert ver_pq.source == "pq_src"
         assert store.coverage(ver_pq.id).row_count == 1
@@ -116,18 +169,21 @@ def test_all_rows_invalid_rejects_dataset_persistence_core_008():
 
         csv_path = workspace / "bad.csv"
         csv_path.write_text(
-            "symbol,date,open,high,low,close,volume\n"
-            ",bad_date,abc,def,ghi,jkl,mno\n",
+            "symbol,date,open,high,low,close,volume\n,bad_date,abc,def,ghi,jkl,mno\n",
             encoding="utf-8",
         )
 
-        request = IngestionRequest(source="bad_src", file_path=csv_path, retrieval_time="2026-01-01T00:00:00Z")
+        request = IngestionRequest(
+            source="bad_src", file_path=csv_path, retrieval_time="2026-01-01T00:00:00Z"
+        )
         with pytest.raises(ValueError, match="Import failed: 0 valid rows"):
             store.ingest(request)
 
 
 def test_canonical_records():
-    sec = Security(security_id="AAPL", symbol="AAPL", name="Apple Inc.", exchange="NASDAQ", currency="USD")
+    sec = Security(
+        security_id="AAPL", symbol="AAPL", name="Apple Inc.", exchange="NASDAQ", currency="USD"
+    )
     assert sec.security_id == "AAPL"
     assert sec.symbol == "AAPL"
     assert sec.name == "Apple Inc."
@@ -193,11 +249,13 @@ def test_as_of_query_excludes_future_observations():
             encoding="utf-8",
         )
 
-        request = IngestionRequest(source="test_src", file_path=csv_path, retrieval_time="2023-01-04T00:00:00Z")
+        request = IngestionRequest(
+            source="test_src", file_path=csv_path, retrieval_time="2023-01-04T00:00:00Z"
+        )
         version = store.ingest(request)
         assert store.coverage(version.id).has_temporal_provenance is True
 
-        # Query as-of 2023-01-02T18:00:00Z should exclude 2023-01-03 bar (available at 2023-01-03T16:00:00Z)
+        # The later-eligible bar must not appear in the earlier as-of query.
         bars = store.history(version.id, as_of="2023-01-02T18:00:00Z")
         assert len(bars) == 2
         dates = [b.session_date for b in bars]
@@ -221,12 +279,17 @@ def test_data_lacking_temporal_provenance_rejected_from_historical_query():
             encoding="utf-8",
         )
 
-        request = IngestionRequest(source="no_pit_src", file_path=csv_path, retrieval_time="2023-01-02T00:00:00Z")
+        request = IngestionRequest(
+            source="no_pit_src", file_path=csv_path, retrieval_time="2023-01-02T00:00:00Z"
+        )
         version = store.ingest(request)
         assert store.coverage(version.id).has_temporal_provenance is False
 
         # Querying with as_of specified must raise InadequateTemporalProvenanceError
-        with pytest.raises(InadequateTemporalProvenanceError, match="Market observations lack required point-in-time eligibility timestamps"):
+        with pytest.raises(
+            InadequateTemporalProvenanceError,
+            match="Market observations lack required point-in-time eligibility timestamps",
+        ):
             store.history(version.id, as_of="2023-01-01T18:00:00Z")
 
         # Querying with as_of=None should succeed (for current research per DATA-009)
@@ -284,7 +347,9 @@ def test_fundamentals_query():
             encoding="utf-8",
         )
 
-        request = IngestionRequest(source="sec_edgar", file_path=csv_path, retrieval_time="2023-04-16T10:00:00Z")
+        request = IngestionRequest(
+            source="sec_edgar", file_path=csv_path, retrieval_time="2023-04-16T10:00:00Z"
+        )
         version = store.ingest(request)
         assert store.coverage(version.id).has_temporal_provenance is True
 

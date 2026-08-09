@@ -123,8 +123,7 @@ def test_dataset_history_lacking_temporal_provenance_returns_400(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
 
     csv_content = (
-        "symbol,date,open,high,low,close,volume\n"
-        "AAPL,2023-01-01,150.0,155.0,149.0,154.0,1000000\n"
+        "symbol,date,open,high,low,close,volume\nAAPL,2023-01-01,150.0,155.0,149.0,154.0,1000000\n"
     )
 
     res = client.post(
@@ -146,7 +145,9 @@ def test_dataset_history_lacking_temporal_provenance_returns_400(tmp_path):
     assert history_res.status_code == 400
     err = history_res.json()
     assert err["code"] == "point_in_time_data_required"
-    assert "Market observations lack required point-in-time eligibility timestamps" in err["message"]
+    assert (
+        "Market observations lack required point-in-time eligibility timestamps" in err["message"]
+    )
     assert err["details"] == {}
 
     fund_res = client.get(
@@ -156,7 +157,69 @@ def test_dataset_history_lacking_temporal_provenance_returns_400(tmp_path):
     assert fund_res.status_code == 400
     err2 = fund_res.json()
     assert err2["code"] == "point_in_time_data_required"
-    assert "Market observations lack required point-in-time eligibility timestamps" in err2["message"]
+    assert (
+        "Market observations lack required point-in-time eligibility timestamps" in err2["message"]
+    )
+
+
+def test_invalid_available_at_returns_stable_point_in_time_error(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    csv_content = (
+        "symbol,date,open,high,low,close,volume,available_at\n"
+        "AAPL,2023-01-01,150.0,155.0,149.0,154.0,1000000,not-a-timestamp\n"
+    )
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "invalid_pit_source"},
+        files={"file": ("invalid.csv", csv_content.encode("utf-8"), "text/csv")},
+    )
+
+    response = client.get(
+        f"/api/datasets/{imported.json()['dataset_version_id']}/history",
+        params={"as_of": "2023-01-02T18:00:00Z"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "point_in_time_data_required"
+
+
+def test_historical_run_rejects_partial_temporal_provenance(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Historical analysis"}).json()
+    csv_content = (
+        "symbol,date,open,high,low,close,volume,available_at\n"
+        "AAPL,2023-01-01,150.0,155.0,149.0,154.0,1000000,2023-01-01T16:00:00Z\n"
+        "AAPL,2023-01-02,154.0,158.0,153.0,157.0,1200000,\n"
+    )
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "mixed_pit_source"},
+        files={"file": ("mixed.csv", csv_content.encode("utf-8"), "text/csv")},
+    )
+    dataset_version_id = imported.json()["dataset_version_id"]
+
+    current_run = client.post(
+        f"/api/projects/{project['id']}/runs",
+        params={"dataset_version_id": dataset_version_id},
+    )
+    assert current_run.status_code == 201
+
+    historical_run = client.post(
+        f"/api/projects/{project['id']}/runs",
+        params={"dataset_version_id": dataset_version_id, "historical": True},
+    )
+    assert historical_run.status_code == 400
+    assert historical_run.json()["code"] == "point_in_time_data_required"
+
+
+def test_historical_run_requires_a_dataset_version(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Historical analysis"}).json()
+
+    response = client.post(f"/api/projects/{project['id']}/runs", params={"historical": True})
+
+    assert response.status_code == 422
+
 
 def test_dataset_fundamentals_endpoint(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
@@ -192,17 +255,11 @@ def test_dataset_fundamentals_endpoint(tmp_path):
 
 def test_invalid_as_of_format_returns_422(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
-    
-    res = client.get(
-        "/api/datasets/dummy-id/history",
-        params={"as_of": "not-a-date"}
-    )
+
+    res = client.get("/api/datasets/dummy-id/history", params={"as_of": "not-a-date"})
     assert res.status_code == 422
     assert res.json()["code"] == "validation_error"
 
-    res = client.get(
-        "/api/datasets/dummy-id/fundamentals",
-        params={"as_of": "invalid-timestamp"}
-    )
+    res = client.get("/api/datasets/dummy-id/fundamentals", params={"as_of": "invalid-timestamp"})
     assert res.status_code == 422
     assert res.json()["code"] == "validation_error"

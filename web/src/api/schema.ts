@@ -664,6 +664,7 @@ export interface operations {
         parameters: {
             query?: {
                 dataset_version_id?: string | null;
+                historical?: boolean;
             };
             header?: never;
             path: {

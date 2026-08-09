@@ -1,8 +1,27 @@
 import { FormEvent, useEffect, useState, useRef } from "react";
 import { createRoot } from "react-dom/client";
 
-import { api, ApiError, type Project, type CoverageResponse } from "./api/client";
+import {
+  api,
+  ApiError,
+  type CoverageResponse,
+  type DailyBarResponse,
+  type FundamentalFactResponse,
+  type Project,
+} from "./api/client";
 import "./styles.css";
+
+type PreviewRow = Record<string, unknown>;
+
+function toPreviewRows(rows: Array<DailyBarResponse | FundamentalFactResponse>): PreviewRow[] {
+  return rows.map((row) => ({ ...row }));
+}
+
+function isErrorBody(value: unknown): value is { code?: string; message?: string } {
+  if (typeof value !== "object" || value === null) return false;
+  if ("code" in value && typeof value.code !== "string") return false;
+  return !("message" in value) || typeof value.message === "string";
+}
 
 function App() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -10,7 +29,7 @@ function App() {
   const [name, setName] = useState("");
   const [status, setStatus] = useState("Connecting to the local engine…");
   const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
-  const [previewRows, setPreviewRows] = useState<Record<string, unknown>[]>([]);
+  const [previewRows, setPreviewRows] = useState<PreviewRow[]>([]);
   const [importError, setImportError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [asOf, setAsOf] = useState("");
@@ -92,16 +111,14 @@ function App() {
       const isFundamentals = coverage?.is_fundamentals ?? false;
       const params = { as_of: asOf.trim() || undefined };
       
-      let fetchedRows;
-      if (isFundamentals) {
-        fetchedRows = await api.getFundamentals(coverage.id, params);
-      } else {
-        fetchedRows = await api.getHistory(coverage.id, params);
-      }
-      
-      setPreviewRows(fetchedRows as unknown as Record<string, unknown>[]);
-    } catch (error: any) {
-      const errorBody = error instanceof ApiError && error.errorBody && typeof error.errorBody === "object" ? (error.errorBody as { code?: string; message?: string }) : null;
+      const fetchedRows = isFundamentals
+        ? await api.getFundamentals(coverage.id, params)
+        : await api.getHistory(coverage.id, params);
+
+      setPreviewRows(toPreviewRows(fetchedRows));
+    } catch (error: unknown) {
+      const errorBody =
+        error instanceof ApiError && isErrorBody(error.errorBody) ? error.errorBody : null;
       const message = error instanceof ApiError && errorBody?.message ? String(errorBody.message) : (error instanceof Error ? error.message : "Point-in-time data required");
 
       const isPitError = 
