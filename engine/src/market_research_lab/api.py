@@ -95,12 +95,29 @@ class CoverageResponse(BaseModel):
     coverage_end: str | None
     row_count: int
     rejected_count: int
+    missing_fields: dict[str, int]
     warnings: list[str]
+    total_warnings: int
     files: list[str]
 
 
 def _project_response(project: Project) -> ProjectResponse:
     return ProjectResponse(id=project.id, name=project.name, created_at=project.created_at)
+
+
+def _coverage_response(coverage: CoverageReport) -> CoverageResponse:
+    return CoverageResponse(
+        id=coverage.id,
+        source=coverage.source,
+        coverage_start=coverage.coverage_start,
+        coverage_end=coverage.coverage_end,
+        row_count=coverage.row_count,
+        rejected_count=coverage.rejected_count,
+        missing_fields=coverage.missing_fields,
+        warnings=coverage.warnings,
+        total_warnings=coverage.total_warnings,
+        files=coverage.files,
+    )
 
 
 def _non_blank_name(value: str) -> str:
@@ -222,17 +239,45 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
     )
     def import_dataset(
         source: str = Form(...), file: UploadFile = File(...)
-    ) -> DatasetImportResponse:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+    ) -> DatasetImportResponse | JSONResponse:
+        # CORE-003: Interface level validation before internal module consumption
+        clean_source = source.strip()
+        if not clean_source:
+            return JSONResponse(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                content=ErrorResponse(
+                    code="validation_error", message="Source cannot be blank."
+                ).model_dump(),
+            )
+
+        filename = file.filename or ""
+        ext = Path(filename).suffix.lower()
+        if ext not in (".csv", ".json", ".parquet", ".pq"):
+            return JSONResponse(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                content=ErrorResponse(
+                    code="validation_error",
+                    message=f"Unsupported file format '{ext}'. Allowed formats: .csv, .json, .parquet",
+                ).model_dump(),
+            )
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
             shutil.copyfileobj(file.file, tmp)
             tmp_path = Path(tmp.name)
 
         request = IngestionRequest(
-            source=source, file_path=tmp_path, retrieval_time=datetime.now(UTC).isoformat()
+            source=clean_source, file_path=tmp_path, retrieval_time=datetime.now(UTC).isoformat()
         )
         try:
             version = market_store.ingest(request)
             return DatasetImportResponse(dataset_version_id=version.id)
+        except ValueError as err:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content=ErrorResponse(
+                    code="import_error", message=str(err)
+                ).model_dump(),
+            )
         finally:
             if tmp_path.exists():
                 tmp_path.unlink()
@@ -243,17 +288,15 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
         tags=["datasets"],
     )
     def get_coverage(dataset_version_id: str) -> CoverageResponse:
-        coverage = market_store.coverage(dataset_version_id)
-        return CoverageResponse(
-            id=coverage.id,
-            source=coverage.source,
-            coverage_start=coverage.coverage_start,
-            coverage_end=coverage.coverage_end,
-            row_count=coverage.row_count,
-            rejected_count=coverage.rejected_count,
-            warnings=coverage.warnings,
-            files=coverage.files,
-        )
+        return _coverage_response(market_store.coverage(dataset_version_id))
+
+    @app.get(
+        "/api/datasets/{dataset_version_id}/preview",
+        response_model=list[dict[str, Any]],
+        tags=["datasets"],
+    )
+    def get_dataset_preview(dataset_version_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        return market_store.preview(dataset_version_id, limit=limit)
 
     built_interface = static_dir or repository_root / "web" / "dist"
     if built_interface.is_dir():
