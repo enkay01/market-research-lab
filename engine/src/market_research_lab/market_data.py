@@ -82,7 +82,8 @@ class MarketDataStore:
                 return pd.read_json(file_path)
             return pd.read_parquet(file_path)
         except Exception as error:
-            raise ValueError(f"Failed to parse {suffix.upper()} file.") from error
+            format_name = suffix.removeprefix(".").upper()
+            raise ValueError(f"Failed to parse {format_name} file: {error}") from error
 
     @staticmethod
     def _is_missing(value: Any) -> bool:

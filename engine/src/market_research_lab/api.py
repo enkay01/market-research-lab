@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from .market_data import IngestionRequest, MarketDataStore
+from .market_data import CoverageReport, IngestionRequest, MarketDataStore
 from .projects import Project, ProjectNotFoundError, ProjectStore
 
 
@@ -257,7 +257,9 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 content=ErrorResponse(
                     code="validation_error",
-                    message=f"Unsupported file format '{ext}'. Allowed formats: .csv, .json, .parquet",
+                    message=(
+                        f"Unsupported file format '{ext}'. Allowed formats: .csv, .json, .parquet"
+                    ),
                 ).model_dump(),
             )
 
@@ -274,9 +276,7 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
         except ValueError as err:
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                content=ErrorResponse(
-                    code="import_error", message=str(err)
-                ).model_dump(),
+                content=ErrorResponse(code="import_error", message=str(err)).model_dump(),
             )
         finally:
             if tmp_path.exists():

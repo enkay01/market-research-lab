@@ -2,6 +2,7 @@ import json
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -57,7 +58,15 @@ def test_import_json_and_parquet_formats():
         # JSON file
         json_path = workspace / "data.json"
         data = [
-            {"symbol": "MSFT", "date": "2023-01-01", "open": 240, "high": 245, "low": 239, "close": 244, "volume": 500000}
+            {
+                "symbol": "MSFT",
+                "date": "2023-01-01",
+                "open": 240,
+                "high": 245,
+                "low": 239,
+                "close": 244,
+                "volume": 500000,
+            }
         ]
         json_path.write_text(json.dumps(data), encoding="utf-8")
 
@@ -109,3 +118,20 @@ def test_all_rows_invalid_rejects_dataset_persistence_core_008():
         )
         with pytest.raises(ValueError, match="Import failed: 0 valid rows"):
             store.ingest(request)
+
+
+def test_malformed_json_preserves_parser_diagnostics():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        workspace = Path(tmpdir)
+        store = MarketDataStore(workspace)
+        path = workspace / "malformed.json"
+        path.write_text('{"symbol": "MSFT"', encoding="utf-8")
+
+        with pytest.raises(ValueError, match=r"^Failed to parse JSON file: .+"):
+            store.ingest(
+                IngestionRequest(
+                    source="invalid-source",
+                    file_path=path,
+                    retrieval_time="2026-01-01T00:00:00Z",
+                )
+            )
