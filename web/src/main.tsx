@@ -10,6 +10,7 @@ function App() {
   const [name, setName] = useState("");
   const [status, setStatus] = useState("Connecting to the local engine…");
   const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
+  const [previewRows, setPreviewRows] = useState<Record<string, unknown>[]>([]);
   const [importError, setImportError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -61,8 +62,12 @@ function App() {
       const response = await api.importDataset(source, file);
       setStatus(`Imported dataset version`);
       
-      const newCoverage = await api.getCoverage(response.dataset_version_id);
+      const [newCoverage, rows] = await Promise.all([
+        api.getCoverage(response.dataset_version_id),
+        api.getPreview(response.dataset_version_id),
+      ]);
       setCoverage(newCoverage);
+      setPreviewRows(rows);
       
       sourceInput.value = "";
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -188,6 +193,31 @@ function App() {
                     <ul style={{ color: 'var(--color-danger-fg)', fontSize: '0.9rem', marginTop: '0.5rem' }}>
                       {coverage.warnings.map((w, i) => <li key={i}>{w}</li>)}
                     </ul>
+                  </div>
+                )}
+                {previewRows.length > 0 && (
+                  <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--color-border)', paddingTop: '1rem' }}>
+                    <h4>Data Preview (Top {previewRows.length} Rows)</h4>
+                    <div style={{ overflowX: 'auto', marginTop: '0.5rem' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
+                            {Object.keys(previewRows[0]).map((col) => (
+                              <th key={col} style={{ padding: '0.5rem 0.75rem', fontWeight: 600 }}>{col}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {previewRows.map((row, idx) => (
+                            <tr key={idx} style={{ borderBottom: '1px solid var(--color-border-subtle, #333)' }}>
+                              {Object.keys(previewRows[0]).map((col) => (
+                                <td key={col} style={{ padding: '0.4rem 0.75rem' }}>{String(row[col] ?? '')}</td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
               </div>

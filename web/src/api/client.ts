@@ -75,4 +75,10 @@ export const api = {
         params: { path: { dataset_version_id: datasetVersionId } },
       }),
     ),
+  getPreview: (datasetVersionId: string) =>
+    dataOrThrow(
+      client.GET("/api/datasets/{dataset_version_id}/preview", {
+        params: { path: { dataset_version_id: datasetVersionId } },
+      }),
+    ) as Promise<Record<string, unknown>[]>,
 };

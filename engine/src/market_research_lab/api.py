@@ -290,6 +290,14 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
     def get_coverage(dataset_version_id: str) -> CoverageResponse:
         return _coverage_response(market_store.coverage(dataset_version_id))
 
+    @app.get(
+        "/api/datasets/{dataset_version_id}/preview",
+        response_model=list[dict[str, Any]],
+        tags=["datasets"],
+    )
+    def get_dataset_preview(dataset_version_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        return market_store.preview(dataset_version_id, limit=limit)
+
     built_interface = static_dir or repository_root / "web" / "dist"
     if built_interface.is_dir():
         app.mount("/", StaticFiles(directory=built_interface, html=True), name="interface")
