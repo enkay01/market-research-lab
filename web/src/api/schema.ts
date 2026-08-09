@@ -93,6 +93,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/definitions/{kind}/{name}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Save Draft As Revision */
+        post: operations["save_draft_as_revision_api_projects__project_id__definitions__kind___name__revisions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/runs": {
         parameters: {
             query?: never;
@@ -104,6 +121,57 @@ export interface paths {
         put?: never;
         /** Create Run */
         post: operations["create_run_api_projects__project_id__runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run */
+        get: operations["get_run_api_projects__project_id__runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/runs/{run_id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Complete Run */
+        post: operations["complete_run_api_projects__project_id__runs__run_id__complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/runs/{run_id}/fail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fail Run */
+        post: operations["fail_run_api_projects__project_id__runs__run_id__fail_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -127,6 +195,15 @@ export interface components {
         };
         /** DefinitionResponse */
         DefinitionResponse: {
+            /** Revision */
+            revision: string;
+        };
+        /** DefinitionRevisionReferenceRequest */
+        DefinitionRevisionReferenceRequest: {
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
             /** Revision */
             revision: string;
         };
@@ -176,6 +253,49 @@ export interface components {
             name: string;
             /** Created At */
             created_at: string;
+        };
+        /** RunCreateRequest */
+        RunCreateRequest: {
+            /** Definition Revisions */
+            definition_revisions?: components["schemas"]["DefinitionRevisionReferenceRequest"][];
+            /** Dataset Versions */
+            dataset_versions?: string[];
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            };
+        };
+        /** RunDetailResponse */
+        RunDetailResponse: {
+            /** Id */
+            id: string;
+            /** Status */
+            status: string;
+            /** Error */
+            error?: string | null;
+            /** Definition Revisions */
+            definition_revisions: components["schemas"]["DefinitionRevisionReferenceRequest"][];
+            /** Dataset Versions */
+            dataset_versions: string[];
+            /** Parameters */
+            parameters: {
+                [key: string]: unknown;
+            };
+            /** Software Revision */
+            software_revision: string;
+            /** Environment */
+            environment: {
+                [key: string]: string;
+            };
+            /** Logs */
+            logs: string;
+            /** Artifacts */
+            artifacts: string[];
+        };
+        /** RunFailureRequest */
+        RunFailureRequest: {
+            /** Error */
+            error: string;
         };
         /** RunResponse */
         RunResponse: {
@@ -479,12 +599,14 @@ export interface operations {
             };
         };
     };
-    create_run_api_projects__project_id__runs_post: {
+    save_draft_as_revision_api_projects__project_id__definitions__kind___name__revisions_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 project_id: string;
+                kind: string;
+                name: string;
             };
             cookie?: never;
         };
@@ -496,7 +618,142 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/json": components["schemas"]["DefinitionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_run_api_projects__project_id__runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/json": components["schemas"]["RunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_api_projects__project_id__runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    complete_run_api_projects__project_id__runs__run_id__complete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fail_run_api_projects__project_id__runs__run_id__fail_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunFailureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDetailResponse"];
                 };
             };
             /** @description Validation Error */
