@@ -131,6 +131,7 @@ class CoverageResponse(BaseModel):
     total_warnings: int
     files: list[str]
     has_temporal_provenance: bool = False
+    is_fundamentals: bool = False
 
 
 def _project_response(project: Project) -> ProjectResponse:
@@ -150,6 +151,7 @@ def _coverage_response(coverage: CoverageReport) -> CoverageResponse:
         total_warnings=coverage.total_warnings,
         files=coverage.files,
         has_temporal_provenance=coverage.has_temporal_provenance,
+        is_fundamentals=coverage.is_fundamentals,
     )
 
 
@@ -274,7 +276,10 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
         status_code=status.HTTP_201_CREATED,
         tags=["runs"],
     )
-    def create_run(project_id: UUID) -> RunResponse:
+    def create_run(project_id: UUID, dataset_version_id: str | None = Query(default=None)) -> RunResponse:
+        if dataset_version_id:
+            if not market_store.coverage(dataset_version_id).has_temporal_provenance:
+                raise InadequateTemporalProvenanceError("Market dataset version lacks required point-in-time eligibility timestamps ('available_at') for historical run execution.")
         return RunResponse(id=store.create_run(str(project_id)), status="pending")
 
     @app.post(

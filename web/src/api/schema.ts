@@ -235,6 +235,11 @@ export interface components {
              * @default false
              */
             has_temporal_provenance: boolean;
+            /**
+             * Is Fundamentals
+             * @default false
+             */
+            is_fundamentals: boolean;
         };
         /** DailyBarResponse */
         DailyBarResponse: {
@@ -657,7 +662,9 @@ export interface operations {
     };
     create_run_api_projects__project_id__runs_post: {
         parameters: {
-            query?: never;
+            query?: {
+                dataset_version_id?: string | null;
+            };
             header?: never;
             path: {
                 project_id: string;

@@ -59,6 +59,7 @@ class CorporateAction:
     source: str
     retrieval_time: str = ""
     available_at: str | None = None
+    units: str = "USD"
 
 
 @dataclass(frozen=True)
@@ -98,6 +99,7 @@ class CoverageReport:
     total_warnings: int
     files: list[str]
     has_temporal_provenance: bool = False
+    is_fundamentals: bool = False
 
 
 class MarketDataStore:
@@ -302,6 +304,7 @@ class MarketDataStore:
             "total_warnings": len(warnings),
             "warnings": warnings[:100],
             "has_temporal_provenance": has_temporal_provenance,
+            "is_fundamentals": is_fundamental,
         }
 
         version = DatasetVersion(
@@ -366,6 +369,7 @@ class MarketDataStore:
                 total_warnings=summary.get("total_warnings", len(summary.get("warnings", []))),
                 files=files,
                 has_temporal_provenance=summary.get("has_temporal_provenance", False),
+                is_fundamentals=summary.get("is_fundamentals", False),
             )
 
     def preview(self, dataset_version_id: str, limit: int = 50) -> list[dict[str, Any]]:

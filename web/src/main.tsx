@@ -89,7 +89,7 @@ function App() {
     if (!coverage) return;
     setPitError(null);
     try {
-      const isFundamentals = previewRows.length > 0 && "field" in previewRows[0];
+      const isFundamentals = coverage?.is_fundamentals ?? false;
       const params = { as_of: asOf.trim() || undefined };
       
       let fetchedRows;
@@ -99,27 +99,24 @@ function App() {
         fetchedRows = await api.getHistory(coverage.id, params);
       }
       
-      const formattedRows: Record<string, unknown>[] = fetchedRows.map(row => {
-        const result: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(row)) {
-          result[key] = value;
-        }
-        return result;
-      });
-      setPreviewRows(formattedRows);
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 400) {
-        if (error.message.includes("point_in_time_data_required") || error.message.includes("Point in time")) {
-          setPitError("Temporal provenance lacking: Point-in-time data (As-Of) is required for this dataset.");
-          return;
-        }
+      setPreviewRows(fetchedRows as unknown as Record<string, unknown>[]);
+    } catch (error: any) {
+      const errorBody = error instanceof ApiError && error.errorBody && typeof error.errorBody === "object" ? (error.errorBody as { code?: string; message?: string }) : null;
+      const message = error instanceof ApiError && errorBody?.message ? String(errorBody.message) : (error instanceof Error ? error.message : "Point-in-time data required");
+
+      const isPitError = 
+        (error instanceof ApiError && (errorBody?.code === "point_in_time_data_required" || error.status === 400)) ||
+        (error instanceof Error && error.message.includes("point_in_time_data_required")) ||
+        (error instanceof Error && error.message.toLowerCase().includes("point-in-time"));
+
+      if (isPitError) {
+        setPitError(message);
+        return;
       }
-      if (error instanceof ApiError && error.errorBody && typeof error.errorBody === "object") {
-        const body = error.errorBody as { code?: string; message?: string };
-        if (body.code && body.message) {
-          setPitError(`Error: ${body.code} - ${body.message}`);
-          return;
-        }
+
+      if (errorBody?.code && errorBody?.message) {
+        setPitError(`Error: ${errorBody.code} - ${errorBody.message}`);
+        return;
       }
       const msg = error instanceof Error ? error.message : "Unable to filter history";
       setPitError(`Error: ${msg}`);
