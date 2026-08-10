@@ -9,14 +9,19 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from fastapi import FastAPI, File, Form, Request, UploadFile, status
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from .market_data import CoverageReport, IngestionRequest, MarketDataStore
+from .market_data import (
+    CoverageReport,
+    InadequateTemporalProvenanceError,
+    IngestionRequest,
+    MarketDataStore,
+)
 from .projects import Project, ProjectNotFoundError, ProjectStore
 
 
@@ -88,6 +93,32 @@ class DatasetImportResponse(BaseModel):
     dataset_version_id: str
 
 
+class DailyBarResponse(BaseModel):
+    security_id: str
+    session_date: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    source: str
+    retrieval_time: str
+    available_at: str | None = None
+    units: str = "USD"
+
+
+class FundamentalFactResponse(BaseModel):
+    security_id: str
+    field: str
+    fiscal_period: str
+    value: float | str
+    unit: str
+    filed_at: str | None = None
+    available_at: str | None = None
+    source: str
+    retrieval_time: str
+
+
 class CoverageResponse(BaseModel):
     id: str
     source: str
@@ -99,6 +130,8 @@ class CoverageResponse(BaseModel):
     warnings: list[str]
     total_warnings: int
     files: list[str]
+    has_temporal_provenance: bool = False
+    is_fundamentals: bool = False
 
 
 def _project_response(project: Project) -> ProjectResponse:
@@ -117,6 +150,8 @@ def _coverage_response(coverage: CoverageReport) -> CoverageResponse:
         warnings=coverage.warnings,
         total_warnings=coverage.total_warnings,
         files=coverage.files,
+        has_temporal_provenance=coverage.has_temporal_provenance,
+        is_fundamentals=coverage.is_fundamentals,
     )
 
 
@@ -155,6 +190,19 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
                 code="validation_error",
                 message="The request is not valid.",
                 details={"errors": jsonable_encoder(error.errors())},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(InadequateTemporalProvenanceError)
+    async def inadequate_temporal_provenance(
+        _: Request, error: InadequateTemporalProvenanceError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="point_in_time_data_required",
+                message=str(error),
+                details={},
             ).model_dump(),
         )
 
@@ -228,7 +276,18 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
         status_code=status.HTTP_201_CREATED,
         tags=["runs"],
     )
-    def create_run(project_id: UUID) -> RunResponse:
+    def create_run(
+        project_id: UUID,
+        dataset_version_id: str | None = Query(default=None),
+        historical: bool = Query(default=False),
+    ) -> RunResponse:
+        if historical and dataset_version_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="A historical Run requires a Dataset Version.",
+            )
+        if historical and dataset_version_id is not None:
+            market_store.ensure_historical_eligibility(dataset_version_id)
         return RunResponse(id=store.create_run(str(project_id)), status="pending")
 
     @app.post(
@@ -297,6 +356,38 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
     )
     def get_dataset_preview(dataset_version_id: str, limit: int = 50) -> list[dict[str, Any]]:
         return market_store.preview(dataset_version_id, limit=limit)
+
+    @app.get(
+        "/api/datasets/{dataset_version_id}/history",
+        response_model=list[DailyBarResponse],
+        tags=["datasets"],
+    )
+    def get_dataset_history(
+        dataset_version_id: str,
+        symbol: str | None = None,
+        as_of: datetime | None = Query(
+            default=None, description="As-of decision timestamp (ISO 8601)"
+        ),
+    ) -> list[DailyBarResponse]:
+        bars = market_store.history(dataset_version_id, symbol=symbol, as_of=as_of)
+        return [DailyBarResponse.model_validate(bar, from_attributes=True) for bar in bars]
+
+    @app.get(
+        "/api/datasets/{dataset_version_id}/fundamentals",
+        response_model=list[FundamentalFactResponse],
+        tags=["datasets"],
+    )
+    def get_dataset_fundamentals(
+        dataset_version_id: str,
+        symbol: str | None = None,
+        as_of: datetime | None = Query(
+            default=None, description="As-of decision timestamp (ISO 8601)"
+        ),
+    ) -> list[FundamentalFactResponse]:
+        facts = market_store.fundamentals(dataset_version_id, symbol=symbol, as_of=as_of)
+        return [
+            FundamentalFactResponse.model_validate(fact, from_attributes=True) for fact in facts
+        ]
 
     built_interface = static_dir or repository_root / "web" / "dist"
     if built_interface.is_dir():

@@ -1,8 +1,27 @@
 import { FormEvent, useEffect, useState, useRef } from "react";
 import { createRoot } from "react-dom/client";
 
-import { api, type Project, type CoverageResponse } from "./api/client";
+import {
+  api,
+  ApiError,
+  type CoverageResponse,
+  type DailyBarResponse,
+  type FundamentalFactResponse,
+  type Project,
+} from "./api/client";
 import "./styles.css";
+
+type PreviewRow = Record<string, unknown>;
+
+function toPreviewRows(rows: Array<DailyBarResponse | FundamentalFactResponse>): PreviewRow[] {
+  return rows.map((row) => ({ ...row }));
+}
+
+function isErrorBody(value: unknown): value is { code?: string; message?: string } {
+  if (typeof value !== "object" || value === null) return false;
+  if ("code" in value && typeof value.code !== "string") return false;
+  return !("message" in value) || typeof value.message === "string";
+}
 
 function App() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -10,9 +29,11 @@ function App() {
   const [name, setName] = useState("");
   const [status, setStatus] = useState("Connecting to the local engine…");
   const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
-  const [previewRows, setPreviewRows] = useState<Record<string, unknown>[]>([]);
+  const [previewRows, setPreviewRows] = useState<PreviewRow[]>([]);
   const [importError, setImportError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [asOf, setAsOf] = useState("");
+  const [pitError, setPitError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -56,6 +77,8 @@ function App() {
     const file = fileInput.files[0];
     
     setImportError(null);
+    setPitError(null);
+    setAsOf("");
     setIsUploading(true);
     setStatus(`Uploading dataset...`);
     try {
@@ -77,6 +100,43 @@ function App() {
       setStatus("Upload failed");
     } finally {
       setIsUploading(false);
+    }
+  }
+
+  async function handlePitFilter(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!coverage) return;
+    setPitError(null);
+    try {
+      const isFundamentals = coverage?.is_fundamentals ?? false;
+      const params = { as_of: asOf.trim() || undefined };
+      
+      const fetchedRows = isFundamentals
+        ? await api.getFundamentals(coverage.id, params)
+        : await api.getHistory(coverage.id, params);
+
+      setPreviewRows(toPreviewRows(fetchedRows));
+    } catch (error: unknown) {
+      const errorBody =
+        error instanceof ApiError && isErrorBody(error.errorBody) ? error.errorBody : null;
+      const message = error instanceof ApiError && errorBody?.message ? String(errorBody.message) : (error instanceof Error ? error.message : "Point-in-time data required");
+
+      const isPitError = 
+        (error instanceof ApiError && (errorBody?.code === "point_in_time_data_required" || error.status === 400)) ||
+        (error instanceof Error && error.message.includes("point_in_time_data_required")) ||
+        (error instanceof Error && error.message.toLowerCase().includes("point-in-time"));
+
+      if (isPitError) {
+        setPitError(message);
+        return;
+      }
+
+      if (errorBody?.code && errorBody?.message) {
+        setPitError(`Error: ${errorBody.code} - ${errorBody.message}`);
+        return;
+      }
+      const msg = error instanceof Error ? error.message : "Unable to filter history";
+      setPitError(`Error: ${msg}`);
     }
   }
 
@@ -182,6 +242,14 @@ function App() {
                   <li><strong>Coverage:</strong> {coverage.coverage_start || 'N/A'} to {coverage.coverage_end || 'N/A'}</li>
                   <li><strong>Rows Imported:</strong> {coverage.row_count}</li>
                   <li><strong>Rows Rejected:</strong> {coverage.rejected_count}</li>
+                  <li>
+                    <strong>Temporal Provenance:</strong>{" "}
+                    {coverage.has_temporal_provenance ? (
+                      <span style={{ color: "#22c55e", fontWeight: 600 }}>Present</span>
+                    ) : (
+                      <span style={{ color: "#ef4444", fontWeight: 600 }}>Lacking</span>
+                    )}
+                  </li>
                   <li><strong>Files Stored:</strong> {coverage.files.join(", ")}</li>
                   {coverage.missing_fields && Object.keys(coverage.missing_fields).length > 0 && (
                     <li><strong>Missing Fields:</strong> {Object.entries(coverage.missing_fields).map(([k, v]) => `${k}: ${v}`).join(", ")}</li>
@@ -195,6 +263,42 @@ function App() {
                     </ul>
                   </div>
                 )}
+
+                <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--color-border)', paddingTop: '1rem' }}>
+                  <h4>Point-in-Time Query (As-Of)</h4>
+                  <form onSubmit={handlePitFilter} style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end', marginTop: '0.5rem' }}>
+                    <div style={{ flex: 1 }}>
+                      <label htmlFor="as-of-input" style={{ fontSize: '0.85rem', fontWeight: 500 }}>
+                        As-Of Timestamp
+                      </label>
+                      <input
+                        id="as-of-input"
+                        type="text"
+                        placeholder="e.g. 2023-01-01T16:00:00Z"
+                        value={asOf}
+                        onChange={(e) => setAsOf(e.target.value)}
+                        style={{ width: '100%', marginTop: '0.25rem' }}
+                      />
+                    </div>
+                    <button type="submit">Filter As-Of</button>
+                  </form>
+                  {pitError && (
+                    <div
+                      style={{
+                        marginTop: '0.75rem',
+                        padding: '0.75rem 1rem',
+                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        border: '1px solid var(--color-danger-fg, #ef4444)',
+                        borderRadius: '4px',
+                        color: 'var(--color-danger-fg, #ef4444)',
+                        fontSize: '0.9rem',
+                      }}
+                    >
+                      {pitError}
+                    </div>
+                  )}
+                </div>
+
                 {previewRows.length > 0 && (
                   <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--color-border)', paddingTop: '1rem' }}>
                     <h4>Data Preview (Top {previewRows.length} Rows)</h4>
@@ -234,3 +338,4 @@ function App() {
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
+
