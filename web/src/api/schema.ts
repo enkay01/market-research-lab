@@ -195,6 +195,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/datasets/{dataset_version_id}/corporate-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Dataset Corporate Actions */
+        get: operations["get_dataset_corporate_actions_api_datasets__dataset_version_id__corporate_actions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -205,6 +222,28 @@ export interface components {
             source: string;
             /** File */
             file: string;
+        };
+        /** CorporateActionResponse */
+        CorporateActionResponse: {
+            /** Security Id */
+            security_id: string;
+            /** Type */
+            type: string;
+            /** Effective Date */
+            effective_date: string;
+            /** Value */
+            value: number;
+            /** Source */
+            source: string;
+            /** Retrieval Time */
+            retrieval_time: string;
+            /** Available At */
+            available_at?: string | null;
+            /**
+             * Units
+             * @default USD
+             */
+            units: string;
         };
         /** CoverageResponse */
         CoverageResponse: {
@@ -240,6 +279,16 @@ export interface components {
              * @default false
              */
             is_fundamentals: boolean;
+            /**
+             * Is Corporate Actions
+             * @default false
+             */
+            is_corporate_actions: boolean;
+            /**
+             * Dataset Type
+             * @default daily_bars
+             */
+            dataset_type: string;
         };
         /** DailyBarResponse */
         DailyBarResponse: {
@@ -268,6 +317,14 @@ export interface components {
              * @default USD
              */
             units: string;
+            /** Adjusted Open */
+            adjusted_open?: number | null;
+            /** Adjusted High */
+            adjusted_high?: number | null;
+            /** Adjusted Low */
+            adjusted_low?: number | null;
+            /** Adjusted Close */
+            adjusted_close?: number | null;
         };
         /** DatasetImportResponse */
         DatasetImportResponse: {
@@ -850,6 +907,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FundamentalFactResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_dataset_corporate_actions_api_datasets__dataset_version_id__corporate_actions_get: {
+        parameters: {
+            query?: {
+                symbol?: string | null;
+                /** @description As-of decision timestamp (ISO 8601) */
+                as_of?: string | null;
+            };
+            header?: never;
+            path: {
+                dataset_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CorporateActionResponse"][];
                 };
             };
             /** @description Validation Error */

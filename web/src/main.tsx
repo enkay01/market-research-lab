@@ -5,6 +5,7 @@ import {
   api,
   ApiError,
   type CoverageResponse,
+  type CorporateActionResponse,
   type DailyBarResponse,
   type FundamentalFactResponse,
   type Project,
@@ -13,7 +14,9 @@ import "./styles.css";
 
 type PreviewRow = Record<string, unknown>;
 
-function toPreviewRows(rows: Array<DailyBarResponse | FundamentalFactResponse>): PreviewRow[] {
+function toPreviewRows(
+  rows: Array<DailyBarResponse | CorporateActionResponse | FundamentalFactResponse>,
+): PreviewRow[] {
   return rows.map((row) => ({ ...row }));
 }
 
@@ -109,11 +112,14 @@ function App() {
     setPitError(null);
     try {
       const isFundamentals = coverage?.is_fundamentals ?? false;
+      const isCorporateActions = coverage?.is_corporate_actions ?? false;
       const params = { as_of: asOf.trim() || undefined };
       
       const fetchedRows = isFundamentals
         ? await api.getFundamentals(coverage.id, params)
-        : await api.getHistory(coverage.id, params);
+        : isCorporateActions
+          ? await api.getCorporateActions(coverage.id, params)
+          : await api.getHistory(coverage.id, params);
 
       setPreviewRows(toPreviewRows(fetchedRows));
     } catch (error: unknown) {
@@ -242,6 +248,7 @@ function App() {
                   <li><strong>Coverage:</strong> {coverage.coverage_start || 'N/A'} to {coverage.coverage_end || 'N/A'}</li>
                   <li><strong>Rows Imported:</strong> {coverage.row_count}</li>
                   <li><strong>Rows Rejected:</strong> {coverage.rejected_count}</li>
+                  <li><strong>Dataset Type:</strong> {coverage.dataset_type}</li>
                   <li>
                     <strong>Temporal Provenance:</strong>{" "}
                     {coverage.has_temporal_provenance ? (

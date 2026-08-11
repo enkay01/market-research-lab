@@ -105,6 +105,21 @@ class DailyBarResponse(BaseModel):
     retrieval_time: str
     available_at: str | None = None
     units: str = "USD"
+    adjusted_open: float | None = None
+    adjusted_high: float | None = None
+    adjusted_low: float | None = None
+    adjusted_close: float | None = None
+
+
+class CorporateActionResponse(BaseModel):
+    security_id: str
+    type: str
+    effective_date: str
+    value: float
+    source: str
+    retrieval_time: str
+    available_at: str | None = None
+    units: str = "USD"
 
 
 class FundamentalFactResponse(BaseModel):
@@ -132,6 +147,8 @@ class CoverageResponse(BaseModel):
     files: list[str]
     has_temporal_provenance: bool = False
     is_fundamentals: bool = False
+    is_corporate_actions: bool = False
+    dataset_type: str = "daily_bars"
 
 
 def _project_response(project: Project) -> ProjectResponse:
@@ -152,6 +169,8 @@ def _coverage_response(coverage: CoverageReport) -> CoverageResponse:
         files=coverage.files,
         has_temporal_provenance=coverage.has_temporal_provenance,
         is_fundamentals=coverage.is_fundamentals,
+        is_corporate_actions=coverage.is_corporate_actions,
+        dataset_type=coverage.dataset_type,
     )
 
 
@@ -387,6 +406,26 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
         facts = market_store.fundamentals(dataset_version_id, symbol=symbol, as_of=as_of)
         return [
             FundamentalFactResponse.model_validate(fact, from_attributes=True) for fact in facts
+        ]
+
+    @app.get(
+        "/api/datasets/{dataset_version_id}/corporate-actions",
+        response_model=list[CorporateActionResponse],
+        tags=["datasets"],
+    )
+    def get_dataset_corporate_actions(
+        dataset_version_id: str,
+        symbol: str | None = None,
+        as_of: datetime | None = Query(
+            default=None, description="As-of decision timestamp (ISO 8601)"
+        ),
+    ) -> list[CorporateActionResponse]:
+        actions = market_store.corporate_actions(
+            dataset_version_id, symbol=symbol, as_of=as_of
+        )
+        return [
+            CorporateActionResponse.model_validate(action, from_attributes=True)
+            for action in actions
         ]
 
     built_interface = static_dir or repository_root / "web" / "dist"

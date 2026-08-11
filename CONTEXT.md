@@ -20,6 +20,10 @@ _Avoid_: Feed, data dump
 An immutable identification of the exact Market Dataset state used by an analysis or simulation.
 _Avoid_: Latest data, current data
 
+**CorporateAction**:
+A dated split, dividend, or other issuer action for a Security, including its effective date, value, units, source, retrieval time, and eligibility time.
+_Avoid_: Adjustment, event
+
 **Research Thesis**:
 An explicit investment case for or against a Security, including supporting evidence, assumptions, risks, and catalysts.
 _Avoid_: Note, opinion
