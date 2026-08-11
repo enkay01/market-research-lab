@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+from .configuration import load_provider_credentials
 from .market_data import (
     CoverageReport,
     InadequateTemporalProvenanceError,
@@ -23,6 +24,8 @@ from .market_data import (
     MarketDataStore,
 )
 from .projects import Project, ProjectNotFoundError, ProjectStore
+from .provider_routes import register_provider_download_route
+from .providers import JsonFetcher
 
 
 class ErrorResponse(BaseModel):
@@ -104,6 +107,7 @@ class DailyBarResponse(BaseModel):
     source: str
     retrieval_time: str
     available_at: str | None = None
+    eligibility_provenance: str | None = None
     units: str = "USD"
     adjusted_open: float | None = None
     adjusted_high: float | None = None
@@ -119,6 +123,7 @@ class CorporateActionResponse(BaseModel):
     source: str
     retrieval_time: str
     available_at: str | None = None
+    eligibility_provenance: str | None = None
     units: str = "USD"
 
 
@@ -130,6 +135,9 @@ class FundamentalFactResponse(BaseModel):
     unit: str
     filed_at: str | None = None
     available_at: str | None = None
+    period_start: str | None = None
+    period_end: str | None = None
+    eligibility_provenance: str | None = None
     source: str
     retrieval_time: str
 
@@ -185,12 +193,27 @@ def _repository_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def create_app(workspace_root: Path | None = None, static_dir: Path | None = None) -> FastAPI:
+def create_app(
+    workspace_root: Path | None = None,
+    static_dir: Path | None = None,
+    provider_fetch_json: JsonFetcher | None = None,
+) -> FastAPI:
     repository_root = _repository_root()
     workspace_root = workspace_root or repository_root / "workspace"
     store = ProjectStore(workspace_root)
     market_store = MarketDataStore(workspace_root)
     app = FastAPI(title="Market Research Lab", version="0.1.0")
+    env_file = (
+        repository_root / ".env.local"
+        if workspace_root == repository_root / "workspace"
+        else workspace_root / ".env.local"
+    )
+    register_provider_download_route(
+        app,
+        market_store=market_store,
+        credentials=load_provider_credentials(env_file),
+        provider_fetch_json=provider_fetch_json,
+    )
 
     @app.exception_handler(ProjectNotFoundError)
     async def project_not_found(_: Request, error: ProjectNotFoundError) -> JSONResponse:
@@ -420,9 +443,7 @@ def create_app(workspace_root: Path | None = None, static_dir: Path | None = Non
             default=None, description="As-of decision timestamp (ISO 8601)"
         ),
     ) -> list[CorporateActionResponse]:
-        actions = market_store.corporate_actions(
-            dataset_version_id, symbol=symbol, as_of=as_of
-        )
+        actions = market_store.corporate_actions(dataset_version_id, symbol=symbol, as_of=as_of)
         return [
             CorporateActionResponse.model_validate(action, from_attributes=True)
             for action in actions

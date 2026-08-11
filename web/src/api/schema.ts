@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/datasets/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Download Dataset */
+        post: operations["download_dataset_api_datasets_download_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -239,6 +256,8 @@ export interface components {
             retrieval_time: string;
             /** Available At */
             available_at?: string | null;
+            /** Eligibility Provenance */
+            eligibility_provenance?: string | null;
             /**
              * Units
              * @default USD
@@ -312,6 +331,8 @@ export interface components {
             retrieval_time: string;
             /** Available At */
             available_at?: string | null;
+            /** Eligibility Provenance */
+            eligibility_provenance?: string | null;
             /**
              * Units
              * @default USD
@@ -381,6 +402,12 @@ export interface components {
             filed_at?: string | null;
             /** Available At */
             available_at?: string | null;
+            /** Period Start */
+            period_start?: string | null;
+            /** Period End */
+            period_end?: string | null;
+            /** Eligibility Provenance */
+            eligibility_provenance?: string | null;
             /** Source */
             source: string;
             /** Retrieval Time */
@@ -415,6 +442,29 @@ export interface components {
             /** Created At */
             created_at: string;
         };
+        /** ProviderDownloadRequest */
+        ProviderDownloadRequest: {
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "tiingo" | "sec_edgar";
+            /** Symbols */
+            symbols?: string[];
+            /** Ciks */
+            ciks?: string[];
+            /** Start Date */
+            start_date?: string | null;
+            /** End Date */
+            end_date?: string | null;
+        };
+        /** ProviderDownloadResponse */
+        ProviderDownloadResponse: {
+            /** Dataset Version Id */
+            dataset_version_id: string;
+            /** Dataset Version Ids */
+            dataset_version_ids: string[];
+        };
         /** RunResponse */
         RunResponse: {
             /** Id */
@@ -444,6 +494,39 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    download_dataset_api_datasets_download_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderDownloadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderDownloadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     health_api_health_get: {
         parameters: {
             query?: never;
