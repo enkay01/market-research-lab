@@ -298,8 +298,9 @@ export function ResearchView({ project }: ResearchViewProps) {
   }
 
   return (
-    <Layout
-      height="fill"
+    <>
+      <Layout
+        height="fill"
       header={
         <LayoutHeader hasDivider padding={2}>
           <HStack justify="between" align="center" style={{ width: "100%" }}>
@@ -700,7 +701,7 @@ export function ResearchView({ project }: ResearchViewProps) {
           )}
         </LayoutPanel>
       }
-    >
+    />
       {/* Add Security Dialog */}
       <Dialog
         isOpen={isAddDialogOpen}
@@ -795,6 +796,6 @@ export function ResearchView({ project }: ResearchViewProps) {
           </HStack>
         </VStack>
       </Dialog>
-    </Layout>
+    </>
   );
 }

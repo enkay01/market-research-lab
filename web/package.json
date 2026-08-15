@@ -21,6 +21,7 @@
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "openapi-typescript": "latest",
+    "playwright": "^1.62.1",
     "typescript": "latest"
   }
 }
