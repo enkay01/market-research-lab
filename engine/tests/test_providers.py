@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import JsonValue
 
-from market_research_lab.json_types import JsonValue
 from market_research_lab.providers import (
     ProviderDownloadError,
-    SecEdgarDownloadOptions,
-    TiingoDownloadOptions,
+    SecEdgarDownloadRequest,
+    TiingoDownloadRequest,
     download_sec_edgar,
     download_tiingo,
 )
@@ -37,14 +37,15 @@ def test_tiingo_payload_maps_prices_and_corporate_actions() -> None:
         ]
 
     result = download_tiingo(
-        TiingoDownloadOptions(
+        TiingoDownloadRequest(
+            provider="tiingo",
             symbols=["aapl"],
             start_date="2023-06-01",
             end_date="2023-06-30",
-            retrieval_time="2023-07-01T00:00:00Z",
-            token="secret-token",
-            fetch_json=fetch_json,
-        )
+        ),
+        token="secret-token",
+        retrieval_time="2023-07-01T00:00:00Z",
+        fetch_json=fetch_json,
     )
 
     assert result.securities[0].security_id == "AAPL"
@@ -101,12 +102,10 @@ def test_sec_companyfacts_maps_facts_to_filing_eligibility() -> None:
         }
 
     result = download_sec_edgar(
-        SecEdgarDownloadOptions(
-            ciks=["320193"],
-            retrieval_time="2023-05-01T00:00:00Z",
-            user_agent="Market Research Lab test@example.com",
-            fetch_json=fetch_json,
-        )
+        SecEdgarDownloadRequest(provider="sec_edgar", ciks=["320193"]),
+        user_agent="Market Research Lab test@example.com",
+        retrieval_time="2023-05-01T00:00:00Z",
+        fetch_json=fetch_json,
     )
 
     assert result.securities[0].security_id == "CIK0000320193"
@@ -123,14 +122,10 @@ def test_sec_companyfacts_maps_facts_to_filing_eligibility() -> None:
 def test_provider_requires_local_credentials() -> None:
     with pytest.raises(ProviderDownloadError, match="TIINGO_API_TOKEN"):
         download_tiingo(
-            TiingoDownloadOptions(
-                symbols=["AAPL"],
-                start_date=None,
-                end_date=None,
-                retrieval_time="2023-07-01T00:00:00Z",
-                token=None,
-                fetch_json=lambda _url, _headers: [],
-            )
+            TiingoDownloadRequest(provider="tiingo", symbols=["AAPL"]),
+            token=None,
+            retrieval_time="2023-07-01T00:00:00Z",
+            fetch_json=lambda _url, _headers: [],
         )
 
 
@@ -166,12 +161,10 @@ def test_sec_missing_acceptance_time_is_preserved_as_ineligible() -> None:
         }
 
     result = download_sec_edgar(
-        SecEdgarDownloadOptions(
-            ciks=["1"],
-            retrieval_time="2023-05-01T00:00:00Z",
-            user_agent="Market Research Lab test@example.com",
-            fetch_json=fetch_json,
-        )
+        SecEdgarDownloadRequest(provider="sec_edgar", ciks=["1"]),
+        user_agent="Market Research Lab test@example.com",
+        retrieval_time="2023-05-01T00:00:00Z",
+        fetch_json=fetch_json,
     )
 
     fact = result.fundamental_facts[0]

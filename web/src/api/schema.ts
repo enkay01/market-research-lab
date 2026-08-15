@@ -448,22 +448,6 @@ export interface components {
             /** Created At */
             created_at: string;
         };
-        /** ProviderDownloadRequest */
-        ProviderDownloadRequest: {
-            /**
-             * Provider
-             * @enum {string}
-             */
-            provider: "tiingo" | "sec_edgar";
-            /** Symbols */
-            symbols?: string[];
-            /** Ciks */
-            ciks?: string[];
-            /** Start Date */
-            start_date?: string | null;
-            /** End Date */
-            end_date?: string | null;
-        };
         /** ProviderDownloadResponse */
         ProviderDownloadResponse: {
             /** Dataset Version Id */
@@ -477,6 +461,34 @@ export interface components {
             id: string;
             /** Status */
             status: string;
+        };
+        /** SecEdgarDownloadRequest */
+        SecEdgarDownloadRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            provider: "sec_edgar";
+            /** Ciks */
+            ciks: string[];
+            /** Start Date */
+            start_date?: string | null;
+            /** End Date */
+            end_date?: string | null;
+        };
+        /** TiingoDownloadRequest */
+        TiingoDownloadRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            provider: "tiingo";
+            /** Symbols */
+            symbols: string[];
+            /** Start Date */
+            start_date?: string | null;
+            /** End Date */
+            end_date?: string | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -509,7 +521,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ProviderDownloadRequest"];
+                "application/json": components["schemas"]["TiingoDownloadRequest"] | components["schemas"]["SecEdgarDownloadRequest"];
             };
         };
         responses: {

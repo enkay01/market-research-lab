@@ -12,8 +12,7 @@ from uuid import uuid4
 
 import duckdb
 import pandas as pd
-
-from .json_types import JsonObject
+from pydantic import JsonValue
 
 
 class InadequateTemporalProvenanceError(ValueError):
@@ -109,7 +108,7 @@ class ValidationSummary:
     is_corporate_actions: bool
     dataset_type: str
 
-    def to_json(self) -> JsonObject:
+    def to_json(self) -> dict[str, JsonValue]:
         return {
             "row_count": self.row_count,
             "rejected_count": self.rejected_count,
@@ -172,12 +171,6 @@ class LoadedDataset:
     dataframe: pd.DataFrame
     has_provenance: bool
     dataset_type: str
-
-
-@dataclass(frozen=True)
-class MarketDataQuery:
-    symbol: str | None = None
-    as_of: datetime | str | None = None
 
 
 @dataclass(frozen=True)
@@ -383,7 +376,7 @@ class MarketDataStore:
             raise ValueError(f"Missing required columns: {sorted(missing_cols)}")
 
         warnings: list[str] = []
-        valid_rows: list[JsonObject] = []
+        valid_rows: list[dict[str, JsonValue]] = []
         missing_fields: dict[str, int] = {}
 
         if dataset_type == DATASET_TYPE_FUNDAMENTALS:
@@ -658,7 +651,7 @@ class MarketDataStore:
     def ingest_records(
         self,
         request: IngestionRequest,
-        rows: list[JsonObject],
+        rows: list[dict[str, JsonValue]],
         *,
         warnings: list[str] | None = None,
     ) -> DatasetVersion:
@@ -814,7 +807,7 @@ class MarketDataStore:
                 dataset_type=summary.dataset_type,
             )
 
-    def preview(self, dataset_version_id: str, limit: int = 50) -> list[JsonObject]:
+    def preview(self, dataset_version_id: str, limit: int = 50) -> list[dict[str, JsonValue]]:
         loaded = self._load_dataset_df(dataset_version_id)
         return loaded.dataframe.head(limit).to_dict(orient="records")
 
@@ -846,11 +839,15 @@ class MarketDataStore:
         )
 
     def _filter_by_as_of_and_symbol(
-        self, loaded: LoadedDataset, query: MarketDataQuery
+        self,
+        loaded: LoadedDataset,
+        *,
+        symbol: str | None,
+        as_of: datetime | str | None,
     ) -> pd.DataFrame:
         dataframe = loaded.dataframe
-        if query.as_of is not None:
-            as_of_utc = pd.to_datetime(query.as_of, utc=True)
+        if as_of is not None:
+            as_of_utc = pd.to_datetime(as_of, utc=True)
             available_at_utc = self._eligible_timestamps_for_historical_use(
                 dataframe,
                 has_provenance=loaded.has_provenance,
@@ -858,11 +855,11 @@ class MarketDataStore:
             )
             dataframe = dataframe[available_at_utc <= as_of_utc]
 
-        if query.symbol is not None and not dataframe.empty:
+        if symbol is not None and not dataframe.empty:
             if "security_id" in dataframe.columns:
-                dataframe = dataframe[dataframe["security_id"] == query.symbol]
+                dataframe = dataframe[dataframe["security_id"] == symbol]
             elif "symbol" in dataframe.columns:
-                dataframe = dataframe[dataframe["symbol"] == query.symbol]
+                dataframe = dataframe[dataframe["symbol"] == symbol]
 
         return dataframe
 
@@ -883,7 +880,7 @@ class MarketDataStore:
         as_dataframe: bool = False,
     ) -> list[DailyBar] | pd.DataFrame:
         loaded = self._load_dataset_df(dataset_version_id)
-        df = self._filter_by_as_of_and_symbol(loaded, MarketDataQuery(symbol=symbol, as_of=as_of))
+        df = self._filter_by_as_of_and_symbol(loaded, symbol=symbol, as_of=as_of)
 
         if as_dataframe:
             return df.reset_index(drop=True)
@@ -927,7 +924,7 @@ class MarketDataStore:
         as_dataframe: bool = False,
     ) -> list[FundamentalFact] | pd.DataFrame:
         loaded = self._load_dataset_df(dataset_version_id)
-        df = self._filter_by_as_of_and_symbol(loaded, MarketDataQuery(symbol=symbol, as_of=as_of))
+        df = self._filter_by_as_of_and_symbol(loaded, symbol=symbol, as_of=as_of)
 
         if as_dataframe:
             return df.reset_index(drop=True)
@@ -980,7 +977,7 @@ class MarketDataStore:
         as_dataframe: bool = False,
     ) -> list[CorporateAction] | pd.DataFrame:
         loaded = self._load_dataset_df(dataset_version_id)
-        df = self._filter_by_as_of_and_symbol(loaded, MarketDataQuery(symbol=symbol, as_of=as_of))
+        df = self._filter_by_as_of_and_symbol(loaded, symbol=symbol, as_of=as_of)
 
         if as_dataframe:
             return df.reset_index(drop=True)

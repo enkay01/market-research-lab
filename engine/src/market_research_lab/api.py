@@ -14,9 +14,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
+from typing_extensions import TypeAliasType
 
 from .configuration import load_provider_credentials
-from .json_types import JsonObject
 from .market_data import (
     CoverageReport,
     InadequateTemporalProvenanceError,
@@ -27,11 +27,16 @@ from .projects import Project, ProjectNotFoundError, ProjectStore
 from .provider_routes import register_provider_download_route
 from .providers import JsonFetcher
 
+JsonValue = TypeAliasType(
+    "JsonValue",
+    None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"],
+)
+
 
 class ErrorResponse(BaseModel):
     code: str
     message: str
-    details: JsonObject = Field(default_factory=dict)
+    details: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 class HealthResponse(BaseModel):
@@ -65,7 +70,7 @@ class ProjectResponse(BaseModel):
 class DefinitionCreateRequest(BaseModel):
     kind: str = Field(pattern=r"^[a-z][a-z_]*$")
     name: str = Field(min_length=1, max_length=120)
-    definition: JsonObject
+    definition: dict[str, JsonValue]
 
     @field_validator("name")
     @classmethod
@@ -74,12 +79,12 @@ class DefinitionCreateRequest(BaseModel):
 
 
 class DraftRequest(BaseModel):
-    definition: JsonObject
+    definition: dict[str, JsonValue]
 
 
 class DraftResponse(BaseModel):
     name: str
-    definition: JsonObject
+    definition: dict[str, JsonValue]
     saved_at: str
 
 
@@ -269,16 +274,9 @@ def create_app(
     def get_project(project_id: UUID) -> ProjectResponse:
         return _project_response(store.get_project(str(project_id)))
 
+    @app.patch("/api/projects/{project_id}", response_model=ProjectResponse, tags=["projects"])
     def rename_project(project_id: UUID, request: ProjectRenameRequest) -> ProjectResponse:
         return _project_response(store.rename_project(str(project_id), request.name.strip()))
-
-    app.add_api_route(
-        "/api/projects/{project_id}",
-        rename_project,
-        methods=["PATCH"],
-        response_model=ProjectResponse,
-        tags=["projects"],
-    )
 
     @app.delete(
         "/api/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["projects"]
@@ -401,10 +399,10 @@ def create_app(
 
     @app.get(
         "/api/datasets/{dataset_version_id}/preview",
-        response_model=list[JsonObject],
+        response_model=list[dict[str, JsonValue]],
         tags=["datasets"],
     )
-    def get_dataset_preview(dataset_version_id: str, limit: int = 50) -> list[JsonObject]:
+    def get_dataset_preview(dataset_version_id: str, limit: int = 50) -> list[dict[str, JsonValue]]:
         return market_store.preview(dataset_version_id, limit=limit)
 
     @app.get(

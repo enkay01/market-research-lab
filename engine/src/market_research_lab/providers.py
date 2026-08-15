@@ -5,14 +5,22 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Callable, Mapping, TypedDict
+from typing import Annotated, Callable, Literal, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
-from .json_types import JsonValue
 from .market_data import Security
 
 
@@ -51,15 +59,15 @@ class TiingoMetadataResponse(BaseModel):
 class SecObservation(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    accn: str | None = None
-    fy: int | None = None
-    fp: str | None = None
+    accn: str = ""
+    fy: int = 0
+    fp: str = ""
     form: str
     filed: str
-    start: str | None = None
-    end: str | None = None
+    start: str = ""
+    end: str = ""
     val: float | str
-    frame: str | None = None
+    frame: str = ""
 
 
 class SecFactDefinition(BaseModel):
@@ -106,24 +114,52 @@ class SecSubmissions(BaseModel):
     filings: SecFilings = Field(default_factory=SecFilings)
 
 
-@dataclass(frozen=True)
-class TiingoDownloadOptions:
-    symbols: list[str] | tuple[str, ...]
-    start_date: str | None
-    end_date: str | None
-    retrieval_time: str
-    token: str | None
-    fetch_json: JsonFetcher | None = None
+class TiingoDownloadRequest(BaseModel):
+    provider: Literal["tiingo"]
+    symbols: list[str] = Field(min_length=1, max_length=500)
+    start_date: date | None = None
+    end_date: date | None = None
+
+    @field_validator("symbols")
+    @classmethod
+    def normalise_symbols(cls, values: list[str]) -> list[str]:
+        cleaned = list(dict.fromkeys(value.strip() for value in values if value.strip()))
+        if not cleaned:
+            raise ValueError("At least one Tiingo symbol is required.")
+        return cleaned
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> "TiingoDownloadRequest":
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise ValueError("start_date must be on or before end_date.")
+        return self
 
 
-@dataclass(frozen=True)
-class SecEdgarDownloadOptions:
-    ciks: list[str] | tuple[str, ...]
-    retrieval_time: str
-    user_agent: str | None
-    start_date: str | None = None
-    end_date: str | None = None
-    fetch_json: JsonFetcher | None = None
+class SecEdgarDownloadRequest(BaseModel):
+    provider: Literal["sec_edgar"]
+    ciks: list[str] = Field(min_length=1, max_length=500)
+    start_date: date | None = None
+    end_date: date | None = None
+
+    @field_validator("ciks")
+    @classmethod
+    def normalise_ciks(cls, values: list[str]) -> list[str]:
+        cleaned = list(dict.fromkeys(value.strip() for value in values if value.strip()))
+        if not cleaned:
+            raise ValueError("At least one SEC EDGAR CIK is required.")
+        return cleaned
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> "SecEdgarDownloadRequest":
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise ValueError("start_date must be on or before end_date.")
+        return self
+
+
+ProviderDownloadRequest = Annotated[
+    TiingoDownloadRequest | SecEdgarDownloadRequest,
+    Field(discriminator="provider"),
+]
 
 
 @dataclass(frozen=True)
@@ -132,58 +168,12 @@ class ProviderCredentials:
     sec_edgar_user_agent: str | None = None
 
 
-class DailyBarRecord(TypedDict):
-    security_id: str
-    date: str
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float
-    adjusted_open: float | None
-    adjusted_high: float | None
-    adjusted_low: float | None
-    adjusted_close: float | None
-    units: str
-    available_at: str
-    eligibility_provenance: str
-    source: str
-    retrieval_time: str
-
-
-class CorporateActionRecord(TypedDict):
-    security_id: str
-    type: str
-    effective_date: str
-    value: float
-    units: str
-    available_at: str
-    eligibility_provenance: str
-    source: str
-    retrieval_time: str
-
-
-class FundamentalFactRecord(TypedDict):
-    security_id: str
-    field: str
-    fiscal_period: str
-    period_start: str | None
-    period_end: str | None
-    value: float | str
-    unit: str
-    filed_at: str
-    available_at: str | None
-    eligibility_provenance: str
-    source: str
-    retrieval_time: str
-
-
 @dataclass
 class ProviderDownload:
     securities: list[Security] = field(default_factory=list)
-    daily_bars: list[DailyBarRecord] = field(default_factory=list)
-    corporate_actions: list[CorporateActionRecord] = field(default_factory=list)
-    fundamental_facts: list[FundamentalFactRecord] = field(default_factory=list)
+    daily_bars: list[dict[str, JsonValue]] = field(default_factory=list)
+    corporate_actions: list[dict[str, JsonValue]] = field(default_factory=list)
+    fundamental_facts: list[dict[str, JsonValue]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -243,23 +233,24 @@ def _tiingo_available_at(raw_date: str, retrieval_time: str) -> str:
     return retrieval_time
 
 
-def download_tiingo(options: TiingoDownloadOptions) -> ProviderDownload:
+def download_tiingo(
+    request: TiingoDownloadRequest,
+    *,
+    token: str | None,
+    retrieval_time: str,
+    fetch_json: JsonFetcher,
+) -> ProviderDownload:
     """Download Tiingo EOD prices and map its action fields to canonical rows."""
-    symbols = options.symbols
-    start_date = options.start_date
-    end_date = options.end_date
-    retrieval_time = options.retrieval_time
-    token = options.token
-    fetch_json = options.fetch_json or _fetch_json
+    fetch = fetch_json or _fetch_json
 
     if not token:
         raise ProviderDownloadError("Tiingo credentials are missing: set TIINGO_API_TOKEN.")
 
     result = ProviderDownload()
     headers = {"Accept": "application/json", "Authorization": f"Token {token}"}
-    for symbol in _normalise_symbols(symbols):
+    for symbol in _normalise_symbols(request.symbols):
         metadata_url = f"https://api.tiingo.com/tiingo/daily/{symbol}"
-        metadata_payload = _call(fetch_json, metadata_url, headers, "Tiingo")
+        metadata_payload = _call(fetch, metadata_url, headers, "Tiingo")
         try:
             metadata = TiingoMetadataResponse.model_validate(metadata_payload)
         except ValidationError as error:
@@ -276,10 +267,10 @@ def download_tiingo(options: TiingoDownloadOptions) -> ProviderDownload:
             )
         )
         query: dict[str, str] = {}
-        if start_date:
-            query["startDate"] = start_date
-        if end_date:
-            query["endDate"] = end_date
+        if request.start_date:
+            query["startDate"] = request.start_date.isoformat()
+        if request.end_date:
+            query["endDate"] = request.end_date.isoformat()
         query_string = f"?{urlencode(query)}" if query else ""
         url = f"https://api.tiingo.com/tiingo/daily/{symbol}/prices{query_string}"
         payload = _call(
@@ -373,8 +364,8 @@ def _normalise_timestamp(raw_value: str, label: str) -> str:
     return raw_value.strip()
 
 
-def _period_date(raw_date: str | None, label: str) -> str | None:
-    if raw_date is None:
+def _period_date(raw_date: str, label: str) -> str | None:
+    if not raw_date:
         return None
     try:
         date.fromisoformat(raw_date[:10])
@@ -393,16 +384,12 @@ def _date_at_midnight(raw_date: str) -> str:
     return f"{parsed.isoformat()}T00:00:00Z"
 
 
-def _in_date_range(raw_date: str, start_date: str | None, end_date: str | None) -> bool:
+def _in_date_range(raw_date: str, start_date: date | None, end_date: date | None) -> bool:
     try:
         current = date.fromisoformat(raw_date[:10])
-        start = date.fromisoformat(start_date) if start_date else None
-        end = date.fromisoformat(end_date) if end_date else None
-    except (TypeError, ValueError) as error:
-        raise ProviderDownloadError(
-            "SEC EDGAR returned an invalid filing date or date range."
-        ) from error
-    return not ((start and current < start) or (end and current > end))
+    except ValueError as error:
+        raise ProviderDownloadError("SEC EDGAR returned an invalid filing date.") from error
+    return not ((start_date and current < start_date) or (end_date and current > end_date))
 
 
 def _parse_submissions(payload: JsonValue) -> SecSubmissions:
@@ -427,33 +414,34 @@ def _fiscal_period(observation: SecObservation) -> str:
     if observation.frame:
         return observation.frame
     fiscal_period = (observation.fp or "FY").upper()
-    if observation.fy is None:
+    if not observation.fy:
         return f"{observation.start or 'unknown'}/{observation.end or 'unknown'}"
     return f"FY{observation.fy}" if fiscal_period == "FY" else f"{observation.fy}{fiscal_period}"
 
 
-def download_sec_edgar(options: SecEdgarDownloadOptions) -> ProviderDownload:
+def download_sec_edgar(
+    request: SecEdgarDownloadRequest,
+    *,
+    user_agent: str | None,
+    retrieval_time: str,
+    fetch_json: JsonFetcher,
+) -> ProviderDownload:
     """Download SEC filing metadata and Company Facts into canonical facts."""
-    ciks = options.ciks
-    retrieval_time = options.retrieval_time
-    user_agent = options.user_agent
-    start_date = options.start_date
-    end_date = options.end_date
-    fetch_json = options.fetch_json or _fetch_json
+    fetch = fetch_json or _fetch_json
 
     if not user_agent:
         raise ProviderDownloadError("SEC EDGAR credentials are missing: set SEC_EDGAR_USER_AGENT.")
 
     result = ProviderDownload()
     headers = {"Accept": "application/json", "User-Agent": user_agent}
-    for cik in _normalise_ciks(ciks):
+    for cik in _normalise_ciks(request.ciks):
         submissions_url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-        submissions_payload = _call(fetch_json, submissions_url, headers, "SEC EDGAR")
+        submissions_payload = _call(fetch, submissions_url, headers, "SEC EDGAR")
         submissions = _parse_submissions(submissions_payload)
         acceptance_times = _acceptance_times(submissions)
 
         facts_url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
-        payload = _call(fetch_json, facts_url, headers, "SEC EDGAR")
+        payload = _call(fetch, facts_url, headers, "SEC EDGAR")
         try:
             company_facts = SecCompanyFacts.model_validate(payload)
         except ValidationError as error:
@@ -479,7 +467,9 @@ def download_sec_edgar(options: SecEdgarDownloadOptions) -> ProviderDownload:
                     for observation in observations:
                         if not observation.form.startswith(("10-K", "10-Q", "20-F", "40-F")):
                             continue
-                        if not _in_date_range(observation.filed, start_date, end_date):
+                        if not _in_date_range(
+                            observation.filed, request.start_date, request.end_date
+                        ):
                             continue
 
                         filed_at = _date_at_midnight(observation.filed)
