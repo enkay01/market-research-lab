@@ -90,6 +90,7 @@ export const api = {
         params: { path: { dataset_version_id: datasetVersionId } },
       }),
     ),
+  listDatasets: () => dataOrThrow(client.GET("/api/datasets")),
   getPreview: (datasetVersionId: string) =>
     dataOrThrow(
       client.GET("/api/datasets/{dataset_version_id}/preview", {

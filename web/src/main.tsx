@@ -43,16 +43,17 @@ function App() {
   const [providerEndDate, setProviderEndDate] = useState("");
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [downloadedVersionIds, setDownloadedVersionIds] = useState<string[]>([]);
+  const [datasetVersions, setDatasetVersions] = useState<CoverageResponse[]>([]);
   const [asOf, setAsOf] = useState("");
   const [pitError, setPitError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    void Promise.all([api.health(), api.listProjects()])
-      .then(([health, availableProjects]) => {
+    void Promise.all([api.health(), api.listProjects(), api.listDatasets()])
+      .then(([health, availableProjects, versions]) => {
         setProjects(availableProjects);
         setSelected(availableProjects[0]);
+        setDatasetVersions(versions);
         setStatus(health.status === "ok" ? "Local engine connected" : "Engine is unavailable");
       })
       .catch((error: unknown) => setStatus(error instanceof Error ? error.message : "Unable to connect"));
@@ -76,6 +77,17 @@ function App() {
     setStatus(`Saved ${saved.revision} for ${selected.name}`);
   }
 
+  async function loadVersion(datasetVersionId: string) {
+    const [newCoverage, rows, versions] = await Promise.all([
+      api.getCoverage(datasetVersionId),
+      api.getPreview(datasetVersionId),
+      api.listDatasets(),
+    ]);
+    setCoverage(newCoverage);
+    setPreviewRows(rows);
+    setDatasetVersions(versions);
+  }
+
   async function handleImportDataset(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected) return;
@@ -97,12 +109,7 @@ function App() {
       const response = await api.importDataset(source, file);
       setStatus(`Imported dataset version`);
       
-      const [newCoverage, rows] = await Promise.all([
-        api.getCoverage(response.dataset_version_id),
-        api.getPreview(response.dataset_version_id),
-      ]);
-      setCoverage(newCoverage);
-      setPreviewRows(rows);
+      await loadVersion(response.dataset_version_id);
       
       sourceInput.value = "";
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -131,13 +138,7 @@ function App() {
     };
     try {
       const response = await api.downloadDataset(request);
-      const [newCoverage, rows] = await Promise.all([
-        api.getCoverage(response.dataset_version_id),
-        api.getPreview(response.dataset_version_id),
-      ]);
-      setCoverage(newCoverage);
-      setPreviewRows(rows);
-      setDownloadedVersionIds(response.dataset_version_ids);
+      await loadVersion(response.dataset_version_id);
       setStatus("Downloaded " + response.dataset_version_ids.length + " Dataset Version" + (response.dataset_version_ids.length === 1 ? "" : "s"));
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Unable to download provider data";
@@ -151,12 +152,7 @@ function App() {
   async function inspectDatasetVersion(datasetVersionId: string) {
     setDownloadError(null);
     try {
-      const [newCoverage, rows] = await Promise.all([
-        api.getCoverage(datasetVersionId),
-        api.getPreview(datasetVersionId),
-      ]);
-      setCoverage(newCoverage);
-      setPreviewRows(rows);
+      await loadVersion(datasetVersionId);
       setStatus("Inspecting Dataset Version " + datasetVersionId);
     } catch (error) {
       setDownloadError(error instanceof Error ? error.message : "Unable to inspect Dataset Version");
@@ -315,18 +311,36 @@ function App() {
                   </div>
                 )}
               </form>
-              {downloadedVersionIds.length > 1 && (
-                <div style={{ marginBottom: '2rem' }}>
-                  <strong>Dataset Versions created by this download:</strong>
-                  <div className="form-row" style={{ flexWrap: 'wrap', marginTop: '0.5rem' }}>
-                    {downloadedVersionIds.map((datasetVersionId) => (
-                      <button key={datasetVersionId} type="button" className="secondary" onClick={() => void inspectDatasetVersion(datasetVersionId)}>
-                        Inspect {datasetVersionId}
-                      </button>
+              <div style={{ marginTop: '2rem' }}>
+                <h3>Dataset Versions</h3>
+                <p className="subtle">File imports and provider downloads share this coverage view.</p>
+                {datasetVersions.length === 0 ? (
+                  <p className="empty">No Dataset Versions yet.</p>
+                ) : (
+                  <ul style={{ listStyle: 'none', padding: 0, marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {datasetVersions.map((version) => (
+                      <li key={version.id}>
+                        <button
+                          type="button"
+                          className={version.id === coverage?.id ? "project active" : "project"}
+                          onClick={() => void inspectDatasetVersion(version.id)}
+                          style={{ width: '100%', textAlign: 'left' }}
+                        >
+                          <strong>{version.source}</strong> · {version.dataset_type}
+                          <span className="subtle" style={{ display: 'block' }}>
+                            {version.coverage_start || 'N/A'} to {version.coverage_end || 'N/A'} · {version.row_count} rows
+                            {version.has_temporal_provenance ? ' · point-in-time ready' : ' · lacks provenance'}
+                            {version.total_warnings > 0 ? ` · ${version.total_warnings} warning${version.total_warnings === 1 ? '' : 's'}` : ''}
+                          </span>
+                          <span className="subtle" style={{ display: 'block', fontSize: '0.8rem' }}>
+                            Retrieved {new Date(version.retrieval_time).toLocaleString()}
+                          </span>
+                        </button>
+                      </li>
                     ))}
-                  </div>
-                </div>
-              )}
+                  </ul>
+                )}
+              </div>
               <h3>Import Market Data</h3>
               <form onSubmit={handleImportDataset} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
                 <div>

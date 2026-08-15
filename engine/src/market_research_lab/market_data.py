@@ -179,6 +179,7 @@ class LoadedDataset:
 class CoverageReport:
     id: str
     source: str
+    retrieval_time: str
     coverage_start: str | None
     coverage_end: str | None
     row_count: int
@@ -779,6 +780,37 @@ class MarketDataStore:
             if path.exists():
                 path.unlink()
 
+    @staticmethod
+    def _coverage_from_row(row: tuple) -> CoverageReport:
+        (
+            version_id,
+            source,
+            retrieval_time,
+            coverage_start,
+            coverage_end,
+            raw_files,
+            raw_summary,
+        ) = row
+        summary = ValidationSummary.from_json(raw_summary)
+        files = [str(file_name) for file_name in json.loads(raw_files)]
+        return CoverageReport(
+            id=version_id,
+            source=source,
+            retrieval_time=retrieval_time,
+            coverage_start=coverage_start,
+            coverage_end=coverage_end,
+            row_count=summary.row_count,
+            rejected_count=summary.rejected_count,
+            missing_fields=summary.missing_fields,
+            warnings=summary.warnings,
+            total_warnings=summary.total_warnings,
+            files=files,
+            has_temporal_provenance=summary.has_temporal_provenance,
+            is_fundamentals=summary.is_fundamentals,
+            is_corporate_actions=summary.is_corporate_actions,
+            dataset_type=summary.dataset_type,
+        )
+
     def coverage(self, dataset_version_id: str) -> CoverageReport:
         with duckdb.connect(str(self.db_path)) as con:
             con.execute(
@@ -792,35 +824,20 @@ class MarketDataStore:
             row = con.fetchone()
             if not row:
                 raise ValueError(f"DatasetVersion {dataset_version_id} not found")
+            return self._coverage_from_row(row)
 
-            (
-                version_id,
-                source,
-                _retrieval_time,
-                coverage_start,
-                coverage_end,
-                raw_files,
-                raw_summary,
-            ) = row
-            summary = ValidationSummary.from_json(raw_summary)
-            files = [str(file_name) for file_name in json.loads(raw_files)]
-
-            return CoverageReport(
-                id=version_id,
-                source=source,
-                coverage_start=coverage_start,
-                coverage_end=coverage_end,
-                row_count=summary.row_count,
-                rejected_count=summary.rejected_count,
-                missing_fields=summary.missing_fields,
-                warnings=summary.warnings,
-                total_warnings=summary.total_warnings,
-                files=files,
-                has_temporal_provenance=summary.has_temporal_provenance,
-                is_fundamentals=summary.is_fundamentals,
-                is_corporate_actions=summary.is_corporate_actions,
-                dataset_type=summary.dataset_type,
-            )
+    def list_dataset_versions(self) -> list[CoverageReport]:
+        """Return every Dataset Version as the same coverage summary used by ``coverage``."""
+        with duckdb.connect(str(self.db_path)) as con:
+            rows = con.execute(
+                """
+                SELECT id, source, retrieval_time, coverage_start, coverage_end,
+                       files, validation_summary
+                FROM dataset_versions
+                ORDER BY retrieval_time DESC, source, id
+                """
+            ).fetchall()
+        return [self._coverage_from_row(row) for row in rows]
 
     def preview(self, dataset_version_id: str, limit: int = 50) -> list[dict[str, JsonValue]]:
         loaded = self._load_dataset_df(dataset_version_id)

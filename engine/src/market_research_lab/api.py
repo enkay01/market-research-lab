@@ -146,6 +146,7 @@ class FundamentalFactResponse(BaseModel):
 class CoverageResponse(BaseModel):
     id: str
     source: str
+    retrieval_time: str
     coverage_start: str | None
     coverage_end: str | None
     row_count: int
@@ -168,6 +169,7 @@ def _coverage_response(coverage: CoverageReport) -> CoverageResponse:
     return CoverageResponse(
         id=coverage.id,
         source=coverage.source,
+        retrieval_time=coverage.retrieval_time,
         coverage_start=coverage.coverage_start,
         coverage_end=coverage.coverage_end,
         row_count=coverage.row_count,
@@ -384,6 +386,16 @@ def create_app(
         finally:
             if tmp_path.exists():
                 tmp_path.unlink()
+
+    @app.get(
+        "/api/datasets",
+        response_model=list[CoverageResponse],
+        tags=["datasets"],
+    )
+    def list_datasets() -> list[CoverageResponse]:
+        return [
+            _coverage_response(report) for report in market_store.list_dataset_versions()
+        ]
 
     @app.get(
         "/api/datasets/{dataset_version_id}/coverage",
