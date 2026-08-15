@@ -7,19 +7,20 @@
     "dev": "vite",
     "generate:client": "uv run --project ../engine python -m market_research_lab.export_openapi && openapi-typescript ../engine/openapi.json -o src/api/schema.ts",
     "check": "npm run generate:client && tsc --noEmit",
-    "build": "npm run generate:client && tsc -b && vite build"
+    "build": "npm run generate:client && tsc --noEmit && vite build"
   },
   "dependencies": {
-    "openapi-fetch": "latest",
+    "@astryxdesign/core": "^0.4.1",
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
+    "openapi-fetch": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "vite": "latest"
   },
   "devDependencies": {
     "@types/react": "latest",
     "@types/react-dom": "latest",
-    "typescript": "latest",
-    "openapi-typescript": "latest"
+    "openapi-typescript": "latest",
+    "typescript": "latest"
   }
 }

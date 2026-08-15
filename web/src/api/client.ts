@@ -9,7 +9,9 @@ export type CoverageResponse = components["schemas"]["CoverageResponse"];
 export type CorporateActionResponse = components["schemas"]["CorporateActionResponse"];
 export type DailyBarResponse = components["schemas"]["DailyBarResponse"];
 export type FundamentalFactResponse = components["schemas"]["FundamentalFactResponse"];
-export type ProviderDownloadRequest = components["schemas"]["ProviderDownloadRequest"];
+export type ProviderDownloadRequest =
+  | components["schemas"]["TiingoDownloadRequest"]
+  | components["schemas"]["SecEdgarDownloadRequest"];
 export type ProviderDownloadResponse = components["schemas"]["ProviderDownloadResponse"];
 
 export class ApiError extends Error {
