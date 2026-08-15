@@ -606,3 +606,69 @@ def test_fundamentals_ingest_preserves_incomplete_fields_marker():
         facts = store.fundamentals(version.id)
         assert facts[0].incomplete_fields == ("accn", "frame", "start")
         assert facts[1].incomplete_fields is None
+
+
+def test_search_securities_and_security_summary_across_datasets() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        workspace = Path(tmpdir)
+        store = MarketDataStore(workspace)
+
+        # 1. Ingest daily bars dataset
+        bars_csv = workspace / "bars.csv"
+        bars_csv.write_text(
+            "symbol,name,exchange,currency,date,open,high,low,close,volume\n"
+            "AAPL,Apple Inc.,NASDAQ,USD,2023-01-01,150.0,155.0,149.0,154.0,1000000\n"
+            "AAPL,Apple Inc.,NASDAQ,USD,2023-01-02,154.0,158.0,153.0,157.0,1200000\n"
+            "MSFT,Microsoft Corp.,NASDAQ,USD,2023-01-01,240.0,245.0,239.0,242.0,500000\n",
+            encoding="utf-8",
+        )
+        v1 = store.ingest(
+            IngestionRequest(
+                source="test_bars", file_path=bars_csv, retrieval_time="2023-01-03T00:00:00Z"
+            )
+        )
+
+        # 2. Ingest corporate actions dataset
+        actions_csv = workspace / "actions.csv"
+        actions_csv.write_text(
+            "symbol,type,effective_date,value\n"
+            "AAPL,dividend,2023-01-05,0.23\n",
+            encoding="utf-8",
+        )
+        v2 = store.ingest(
+            IngestionRequest(
+                source="test_actions", file_path=actions_csv, retrieval_time="2023-01-06T00:00:00Z"
+            )
+        )
+
+        # Search securities
+        all_sec = store.search_securities()
+        assert len(all_sec) == 2
+        assert [s.symbol for s in all_sec] == ["AAPL", "MSFT"]
+
+        # Filter by symbol query
+        apple_sec = store.search_securities("aap")
+        assert len(apple_sec) == 1
+        assert apple_sec[0].symbol == "AAPL"
+
+        # Filter by company name query
+        msft_sec = store.search_securities("microsoft")
+        assert len(msft_sec) == 1
+        assert msft_sec[0].symbol == "MSFT"
+
+        # Security summary for AAPL (covers v1 and v2)
+        summary = store.get_security_summary("AAPL")
+        assert summary is not None
+        assert summary.security.symbol == "AAPL"
+        assert summary.daily_bars_count == 2
+        assert summary.daily_bars_start == "2023-01-01"
+        assert summary.daily_bars_end == "2023-01-02"
+        assert summary.latest_close == 157.0
+        assert summary.daily_bars_dataset_versions == [v1.id]
+        assert summary.corporate_actions_count == 1
+        assert summary.corporate_actions_dataset_versions == [v2.id]
+        assert set(summary.covering_dataset_versions) == {v1.id, v2.id}
+
+        # Unknown security returns None
+        assert store.get_security_summary("UNKNOWN") is None
+

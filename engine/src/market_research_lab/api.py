@@ -8,7 +8,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
+from fastapi import (
+    Path as FastAPIPath,
+)
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -26,6 +38,20 @@ from .market_data import (
 from .projects import Project, ProjectNotFoundError, ProjectStore
 from .provider_routes import register_provider_download_route
 from .providers import JsonFetcher
+from .research import (
+    InvalidSecurityIdError,
+    ResearchThesis,
+    SecurityNotWatchedError,
+    default_thesis_template,
+)
+
+
+class SecurityNotFoundError(Exception):
+    """Raised when a security is not found in the local catalogue."""
+
+    def __init__(self, identifier: str) -> None:
+        super().__init__(f"Security '{identifier}' was not found in the local catalogue.")
+        self.identifier = identifier
 
 
 class ErrorResponse(BaseModel):
@@ -94,6 +120,68 @@ class RunResponse(BaseModel):
 
 class DatasetImportResponse(BaseModel):
     dataset_version_id: str
+
+
+class SecurityResponse(BaseModel):
+    security_id: str
+    symbol: str
+    name: str
+    exchange: str | None = None
+    currency: str = "USD"
+
+
+class SecuritySummaryResponse(BaseModel):
+    security: SecurityResponse
+    daily_bars_count: int = 0
+    daily_bars_start: str | None = None
+    daily_bars_end: str | None = None
+    latest_close: float | None = None
+    daily_bars_dataset_versions: list[str] = Field(default_factory=list)
+    corporate_actions_count: int = 0
+    corporate_actions_dataset_versions: list[str] = Field(default_factory=list)
+    fundamentals_count: int = 0
+    fundamentals_fiscal_periods: list[str] = Field(default_factory=list)
+    fundamentals_dataset_versions: list[str] = Field(default_factory=list)
+    covering_dataset_versions: list[str] = Field(default_factory=list)
+    valuations: list[dict[str, JsonValue]] = Field(default_factory=list)
+    runs: list[dict[str, JsonValue]] = Field(default_factory=list)
+    alerts: list[dict[str, JsonValue]] = Field(default_factory=list)
+
+
+class WatchlistItemResponse(BaseModel):
+    security: SecurityResponse
+    has_thesis: bool
+    thesis_updated_at: str | None = None
+    thesis_preview: str | None = None
+
+
+class WatchlistResponse(BaseModel):
+    project_id: str
+    items: list[WatchlistItemResponse]
+    total: int
+    offset: int
+    limit: int
+
+
+class WatchlistAddRequest(BaseModel):
+    identifier: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]{1,64}$")
+
+
+class ResearchThesisResponse(BaseModel):
+    security_id: str
+    content: str
+    updated_at: str | None = None
+    summary: str | None = None
+    evidence: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    catalysts: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    sources: list[str] = Field(default_factory=list)
+    dated_updates: list[str] = Field(default_factory=list)
+
+
+class ResearchThesisSaveRequest(BaseModel):
+    content: str = Field(min_length=1)
 
 
 class DailyBarResponse(BaseModel):
@@ -185,6 +273,114 @@ def _coverage_response(coverage: CoverageReport) -> CoverageResponse:
     )
 
 
+def _thesis_response(thesis: ResearchThesis) -> ResearchThesisResponse:
+    return ResearchThesisResponse(
+        security_id=thesis.security_id,
+        content=thesis.content,
+        updated_at=thesis.updated_at,
+        summary=thesis.summary,
+        evidence=thesis.evidence,
+        risks=thesis.risks,
+        catalysts=thesis.catalysts,
+        assumptions=thesis.assumptions,
+        sources=thesis.sources,
+        dated_updates=thesis.dated_updates,
+    )
+
+
+def _build_watchlist_response(
+    project_id: str,
+    store: ProjectStore,
+    market_store: MarketDataStore,
+    *,
+    query: str | None = None,
+    exchange: str | None = None,
+    thesis_status: str | None = None,
+    sort_by: str = "symbol",
+    sort_order: str = "asc",
+    offset: int = 0,
+    limit: int = 50,
+) -> WatchlistResponse:
+    security_ids = store.get_watchlist(project_id)
+    all_theses = store.list_theses(project_id)
+
+    raw_items: list[WatchlistItemResponse] = []
+    for sec_id in security_ids:
+        sec = market_store.get_security(sec_id)
+        if not sec:
+            continue
+        thesis = (
+            all_theses.get(sec_id)
+            or all_theses.get(sec.security_id)
+            or all_theses.get(sec.symbol)
+        )
+        has_thesis = thesis is not None and bool(thesis.content.strip())
+        thesis_updated = thesis.updated_at if thesis else None
+        thesis_preview = thesis.summary if thesis else None
+
+        raw_items.append(
+            WatchlistItemResponse(
+                security=SecurityResponse(
+                    security_id=sec.security_id,
+                    symbol=sec.symbol,
+                    name=sec.name,
+                    exchange=sec.exchange,
+                    currency=sec.currency,
+                ),
+                has_thesis=has_thesis,
+                thesis_updated_at=thesis_updated,
+                thesis_preview=thesis_preview,
+            )
+        )
+
+    # Filtering (RES-006)
+    filtered = raw_items
+    if query and query.strip():
+        q_lower = query.strip().lower()
+        filtered = [
+            item
+            for item in filtered
+            if q_lower in item.security.symbol.lower() or q_lower in item.security.name.lower()
+        ]
+    if exchange and exchange.strip() and exchange.lower() != "all":
+        ex_lower = exchange.strip().lower()
+        filtered = [
+            item
+            for item in filtered
+            if item.security.exchange and item.security.exchange.lower() == ex_lower
+        ]
+    if thesis_status:
+        st = thesis_status.strip().lower()
+        if st == "has_thesis":
+            filtered = [item for item in filtered if item.has_thesis]
+        elif st == "no_thesis":
+            filtered = [item for item in filtered if not item.has_thesis]
+
+    # Sorting (RES-006)
+    reverse = sort_order.lower() == "desc"
+    if sort_by == "name":
+        filtered.sort(key=lambda item: item.security.name.lower(), reverse=reverse)
+    elif sort_by == "exchange":
+        filtered.sort(
+            key=lambda item: (item.security.exchange or "").lower(), reverse=reverse
+        )
+    elif sort_by == "thesis_updated_at":
+        filtered.sort(key=lambda item: item.thesis_updated_at or "", reverse=reverse)
+    else:  # default 'symbol'
+        filtered.sort(key=lambda item: item.security.symbol.lower(), reverse=reverse)
+
+    total = len(filtered)
+    paged = filtered[offset : offset + limit]
+
+    return WatchlistResponse(
+        project_id=project_id,
+        items=paged,
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
+
+
 def _non_blank_name(value: str) -> str:
     name = value.strip()
     if not name:
@@ -246,6 +442,39 @@ def create_app(
             status_code=status.HTTP_400_BAD_REQUEST,
             content=ErrorResponse(
                 code="point_in_time_data_required",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(SecurityNotFoundError)
+    async def security_not_found(_: Request, error: SecurityNotFoundError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=ErrorResponse(
+                code="security_not_found",
+                message=str(error),
+                details={"identifier": error.identifier},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(SecurityNotWatchedError)
+    async def security_not_watched(_: Request, error: SecurityNotWatchedError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="security_not_watched",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(InvalidSecurityIdError)
+    async def invalid_security_id(_: Request, error: InvalidSecurityIdError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content=ErrorResponse(
+                code="invalid_security_id",
                 message=str(error),
                 details={},
             ).model_dump(),
@@ -314,6 +543,175 @@ def create_app(
     )
     def get_draft(project_id: UUID, kind: str, name: str) -> DraftResponse:
         return DraftResponse(**store.read_draft(str(project_id), kind=kind, name=name))
+
+    @app.get(
+        "/api/securities",
+        response_model=list[SecurityResponse],
+        tags=["securities"],
+    )
+    def list_securities(
+        query: str | None = Query(default=None, description="Search symbol or name"),
+        limit: int = Query(default=50, ge=1, le=500),
+    ) -> list[SecurityResponse]:
+        securities = market_store.search_securities(query=query, limit=limit)
+        return [
+            SecurityResponse(
+                security_id=s.security_id,
+                symbol=s.symbol,
+                name=s.name,
+                exchange=s.exchange,
+                currency=s.currency,
+            )
+            for s in securities
+        ]
+
+    @app.get(
+        "/api/securities/{security_id}",
+        response_model=SecuritySummaryResponse,
+        tags=["securities"],
+    )
+    def get_security_details(
+        security_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
+        project_id: UUID | None = Query(
+            default=None, description="Optional Project ID for linked valuations/runs"
+        ),
+    ) -> SecuritySummaryResponse:
+        summary = market_store.get_security_summary(security_id)
+        if not summary:
+            raise SecurityNotFoundError(security_id)
+
+        valuations: list[dict[str, JsonValue]] = []
+        runs: list[dict[str, JsonValue]] = []
+        if project_id:
+            try:
+                valuations = store.list_valuations_for_security(
+                    str(project_id), summary.security.security_id
+                )
+                runs = store.list_runs_for_security(
+                    str(project_id), summary.security.security_id
+                )
+            except Exception:
+                pass
+
+        return SecuritySummaryResponse(
+            security=SecurityResponse(
+                security_id=summary.security.security_id,
+                symbol=summary.security.symbol,
+                name=summary.security.name,
+                exchange=summary.security.exchange,
+                currency=summary.security.currency,
+            ),
+            daily_bars_count=summary.daily_bars_count,
+            daily_bars_start=summary.daily_bars_start,
+            daily_bars_end=summary.daily_bars_end,
+            latest_close=summary.latest_close,
+            daily_bars_dataset_versions=summary.daily_bars_dataset_versions,
+            corporate_actions_count=summary.corporate_actions_count,
+            corporate_actions_dataset_versions=summary.corporate_actions_dataset_versions,
+            fundamentals_count=summary.fundamentals_count,
+            fundamentals_fiscal_periods=summary.fundamentals_fiscal_periods,
+            fundamentals_dataset_versions=summary.fundamentals_dataset_versions,
+            covering_dataset_versions=summary.covering_dataset_versions,
+            valuations=valuations,
+            runs=runs,
+        )
+
+    @app.get(
+        "/api/projects/{project_id}/watchlist",
+        response_model=WatchlistResponse,
+        tags=["projects"],
+    )
+    def get_project_watchlist(
+        project_id: UUID,
+        query: str | None = Query(default=None, description="Filter symbol or name"),
+        exchange: str | None = Query(default=None, description="Filter exchange"),
+        thesis_status: str | None = Query(
+            default=None, description="all | has_thesis | no_thesis"
+        ),
+        sort_by: str = Query(
+            default="symbol", description="symbol | name | exchange | thesis_updated_at"
+        ),
+        sort_order: str = Query(default="asc", description="asc | desc"),
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> WatchlistResponse:
+        return _build_watchlist_response(
+            str(project_id),
+            store,
+            market_store,
+            query=query,
+            exchange=exchange,
+            thesis_status=thesis_status,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            offset=offset,
+            limit=limit,
+        )
+
+    @app.post(
+        "/api/projects/{project_id}/watchlist",
+        response_model=WatchlistResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["projects"],
+    )
+    def add_to_project_watchlist(
+        project_id: UUID,
+        request: WatchlistAddRequest,
+    ) -> WatchlistResponse:
+        clean_id = request.identifier.strip()
+        sec = market_store.get_security(clean_id)
+        if not sec:
+            raise SecurityNotFoundError(clean_id)
+
+        store.add_to_watchlist(str(project_id), sec.security_id)
+        return _build_watchlist_response(str(project_id), store, market_store)
+
+    @app.delete(
+        "/api/projects/{project_id}/watchlist/{security_id}",
+        response_model=WatchlistResponse,
+        tags=["projects"],
+    )
+    def remove_from_project_watchlist(
+        project_id: UUID,
+        security_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
+    ) -> WatchlistResponse:
+        store.remove_from_watchlist(str(project_id), security_id)
+        return _build_watchlist_response(str(project_id), store, market_store)
+
+    @app.get(
+        "/api/projects/{project_id}/research/{security_id}",
+        response_model=ResearchThesisResponse,
+        tags=["research"],
+    )
+    def get_security_thesis(
+        project_id: UUID,
+        security_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
+    ) -> ResearchThesisResponse:
+        thesis = store.get_thesis(str(project_id), security_id)
+        if not thesis:
+            sec = market_store.get_security(security_id)
+            symbol = sec.symbol if sec else security_id
+            template = default_thesis_template(symbol)
+            return ResearchThesisResponse(
+                security_id=security_id,
+                content=template,
+                updated_at=None,
+                summary=None,
+            )
+        return _thesis_response(thesis)
+
+    @app.put(
+        "/api/projects/{project_id}/research/{security_id}",
+        response_model=ResearchThesisResponse,
+        tags=["research"],
+    )
+    def save_security_thesis(
+        project_id: UUID,
+        request: ResearchThesisSaveRequest,
+        security_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
+    ) -> ResearchThesisResponse:
+        thesis = store.save_thesis(str(project_id), security_id, request.content)
+        return _thesis_response(thesis)
 
     @app.post(
         "/api/projects/{project_id}/runs",

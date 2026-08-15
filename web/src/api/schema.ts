@@ -110,6 +110,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/securities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Securities */
+        get: operations["list_securities_api_securities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/securities/{security_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Security Details */
+        get: operations["get_security_details_api_securities__security_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/watchlist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Project Watchlist */
+        get: operations["get_project_watchlist_api_projects__project_id__watchlist_get"];
+        put?: never;
+        /** Add To Project Watchlist */
+        post: operations["add_to_project_watchlist_api_projects__project_id__watchlist_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/watchlist/{security_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove From Project Watchlist */
+        delete: operations["remove_from_project_watchlist_api_projects__project_id__watchlist__security_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/research/{security_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Security Thesis */
+        get: operations["get_security_thesis_api_projects__project_id__research__security_id__get"];
+        /** Save Security Thesis */
+        put: operations["save_security_thesis_api_projects__project_id__research__security_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/runs": {
         parameters: {
             query?: never;
@@ -460,6 +547,34 @@ export interface components {
             /** Dataset Version Ids */
             dataset_version_ids: string[];
         };
+        /** ResearchThesisResponse */
+        ResearchThesisResponse: {
+            /** Security Id */
+            security_id: string;
+            /** Content */
+            content: string;
+            /** Updated At */
+            updated_at?: string | null;
+            /** Summary */
+            summary?: string | null;
+            /** Evidence */
+            evidence?: string[];
+            /** Risks */
+            risks?: string[];
+            /** Catalysts */
+            catalysts?: string[];
+            /** Assumptions */
+            assumptions?: string[];
+            /** Sources */
+            sources?: string[];
+            /** Dated Updates */
+            dated_updates?: string[];
+        };
+        /** ResearchThesisSaveRequest */
+        ResearchThesisSaveRequest: {
+            /** Content */
+            content: string;
+        };
         /** RunResponse */
         RunResponse: {
             /** Id */
@@ -480,6 +595,69 @@ export interface components {
             provider: "sec_edgar";
             /** Ciks */
             ciks: string[];
+        };
+        /** SecurityResponse */
+        SecurityResponse: {
+            /** Security Id */
+            security_id: string;
+            /** Symbol */
+            symbol: string;
+            /** Name */
+            name: string;
+            /** Exchange */
+            exchange?: string | null;
+            /**
+             * Currency
+             * @default USD
+             */
+            currency: string;
+        };
+        /** SecuritySummaryResponse */
+        SecuritySummaryResponse: {
+            security: components["schemas"]["SecurityResponse"];
+            /**
+             * Daily Bars Count
+             * @default 0
+             */
+            daily_bars_count: number;
+            /** Daily Bars Start */
+            daily_bars_start?: string | null;
+            /** Daily Bars End */
+            daily_bars_end?: string | null;
+            /** Latest Close */
+            latest_close?: number | null;
+            /** Daily Bars Dataset Versions */
+            daily_bars_dataset_versions?: string[];
+            /**
+             * Corporate Actions Count
+             * @default 0
+             */
+            corporate_actions_count: number;
+            /** Corporate Actions Dataset Versions */
+            corporate_actions_dataset_versions?: string[];
+            /**
+             * Fundamentals Count
+             * @default 0
+             */
+            fundamentals_count: number;
+            /** Fundamentals Fiscal Periods */
+            fundamentals_fiscal_periods?: string[];
+            /** Fundamentals Dataset Versions */
+            fundamentals_dataset_versions?: string[];
+            /** Covering Dataset Versions */
+            covering_dataset_versions?: string[];
+            /** Valuations */
+            valuations?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            }[];
+            /** Runs */
+            runs?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            }[];
+            /** Alerts */
+            alerts?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            }[];
         };
         /** TiingoDownloadRequest */
         TiingoDownloadRequest: {
@@ -507,6 +685,34 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** WatchlistAddRequest */
+        WatchlistAddRequest: {
+            /** Identifier */
+            identifier: string;
+        };
+        /** WatchlistItemResponse */
+        WatchlistItemResponse: {
+            security: components["schemas"]["SecurityResponse"];
+            /** Has Thesis */
+            has_thesis: boolean;
+            /** Thesis Updated At */
+            thesis_updated_at?: string | null;
+            /** Thesis Preview */
+            thesis_preview?: string | null;
+        };
+        /** WatchlistResponse */
+        WatchlistResponse: {
+            /** Project Id */
+            project_id: string;
+            /** Items */
+            items: components["schemas"]["WatchlistItemResponse"][];
+            /** Total */
+            total: number;
+            /** Offset */
+            offset: number;
+            /** Limit */
+            limit: number;
         };
     };
     responses: never;
@@ -810,6 +1016,252 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DraftResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_securities_api_securities_get: {
+        parameters: {
+            query?: {
+                /** @description Search symbol or name */
+                query?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecurityResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_security_details_api_securities__security_id__get: {
+        parameters: {
+            query?: {
+                /** @description Optional Project ID for linked valuations/runs */
+                project_id?: string | null;
+            };
+            header?: never;
+            path: {
+                security_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecuritySummaryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_project_watchlist_api_projects__project_id__watchlist_get: {
+        parameters: {
+            query?: {
+                /** @description Filter symbol or name */
+                query?: string | null;
+                /** @description Filter exchange */
+                exchange?: string | null;
+                /** @description all | has_thesis | no_thesis */
+                thesis_status?: string | null;
+                /** @description symbol | name | exchange | thesis_updated_at */
+                sort_by?: string;
+                /** @description asc | desc */
+                sort_order?: string;
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_to_project_watchlist_api_projects__project_id__watchlist_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WatchlistAddRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_from_project_watchlist_api_projects__project_id__watchlist__security_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                security_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_security_thesis_api_projects__project_id__research__security_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                security_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchThesisResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_security_thesis_api_projects__project_id__research__security_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                security_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResearchThesisSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchThesisResponse"];
                 };
             };
             /** @description Validation Error */

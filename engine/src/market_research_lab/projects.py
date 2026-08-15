@@ -151,6 +151,144 @@ class ProjectStore:
         (run_directory / "logs.txt").write_text("", encoding="utf-8")
         return run_id
 
+    def get_watchlist(self, project_id: str) -> list[str]:
+        self.get_project(project_id)
+        watchlist_path = self._directory(project_id) / "watchlist.json"
+        if not watchlist_path.is_file():
+            return []
+        data = json.loads(watchlist_path.read_text(encoding="utf-8"))
+        return [str(sec_id) for sec_id in data.get("security_ids", [])]
+
+    def add_to_watchlist(self, project_id: str, security_id: str) -> list[str]:
+        from .research import validate_security_id
+
+        valid_id = validate_security_id(security_id)
+        self.get_project(project_id)
+        current = self.get_watchlist(project_id)
+        if valid_id not in current:
+            current.append(valid_id)
+            self._write_json(
+                self._directory(project_id) / "watchlist.json", {"security_ids": current}
+            )
+        return current
+
+    def remove_from_watchlist(self, project_id: str, security_id: str) -> list[str]:
+        from .research import validate_security_id
+
+        valid_id = validate_security_id(security_id)
+        self.get_project(project_id)
+        current = self.get_watchlist(project_id)
+        if valid_id in current:
+            current = [sid for sid in current if sid != valid_id]
+            self._write_json(
+                self._directory(project_id) / "watchlist.json", {"security_ids": current}
+            )
+        return current
+
+    def is_watched(self, project_id: str, security_id: str) -> bool:
+        from .research import validate_security_id
+
+        valid_id = validate_security_id(security_id)
+        return valid_id in self.get_watchlist(project_id)
+
+    def get_thesis(self, project_id: str, security_id: str):
+        from .research import SecurityNotWatchedError, get_thesis, validate_security_id
+
+        valid_id = validate_security_id(security_id)
+        if not self.is_watched(project_id, valid_id):
+            raise SecurityNotWatchedError(
+                f"Security '{valid_id}' is not in the project watchlist."
+            )
+        return get_thesis(self._directory(project_id), valid_id)
+
+    def save_thesis(self, project_id: str, security_id: str, content: str):
+        from .research import SecurityNotWatchedError, save_thesis, validate_security_id
+
+        valid_id = validate_security_id(security_id)
+        if not self.is_watched(project_id, valid_id):
+            raise SecurityNotWatchedError(
+                f"Security '{valid_id}' is not in the project watchlist."
+            )
+        return save_thesis(self._directory(project_id), valid_id, content)
+
+    def list_theses(self, project_id: str):
+        from .research import list_theses
+
+        self.get_project(project_id)
+        return list_theses(self._directory(project_id))
+
+    def list_valuations_for_security(
+        self, project_id: str, security_id: str
+    ) -> list[dict[str, JsonValue]]:
+        from .research import validate_security_id
+
+        valid_id = validate_security_id(security_id)
+        self.get_project(project_id)
+        valuation_dir = self._directory(project_id) / "definitions" / "valuation"
+        if not valuation_dir.is_dir():
+            return []
+
+        results: list[dict[str, JsonValue]] = []
+        for model_dir in valuation_dir.iterdir():
+            if not model_dir.is_dir():
+                continue
+            # Check revisions (v1, v2...) and draft
+            for rev_dir in model_dir.iterdir():
+                if not rev_dir.is_dir():
+                    continue
+                def_file = rev_dir / "definition.json"
+                if not def_file.is_file():
+                    continue
+                try:
+                    data = json.loads(def_file.read_text(encoding="utf-8"))
+                    definition = data.get("definition", {})
+                    if isinstance(definition, dict) and definition.get("security_id") == valid_id:
+                        results.append(
+                            {
+                                "name": data.get("name", model_dir.name),
+                                "revision": rev_dir.name,
+                                "kind": "valuation",
+                                "saved_at": data.get("saved_at", ""),
+                            }
+                        )
+                except Exception:
+                    pass
+        return results
+
+    def list_runs_for_security(
+        self, project_id: str, security_id: str
+    ) -> list[dict[str, JsonValue]]:
+        from .research import validate_security_id
+
+        valid_id = validate_security_id(security_id)
+        self.get_project(project_id)
+        runs_dir = self._directory(project_id) / "runs"
+        if not runs_dir.is_dir():
+            return []
+
+        results: list[dict[str, JsonValue]] = []
+        for run_dir in runs_dir.iterdir():
+            if not run_dir.is_dir():
+                continue
+            manifest_file = run_dir / "manifest.json"
+            status_file = run_dir / "status.json"
+            if manifest_file.is_file() and status_file.is_file():
+                try:
+                    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+                    status_data = json.loads(status_file.read_text(encoding="utf-8"))
+                    params = manifest.get("parameters", {})
+                    if isinstance(params, dict) and params.get("security_id") == valid_id:
+                        results.append(
+                            {
+                                "id": run_dir.name,
+                                "status": status_data.get("status", "unknown"),
+                                "parameters": params,
+                            }
+                        )
+                except Exception:
+                    pass
+        return results
+
     def _directory(self, project_id: str) -> Path:
         return self.projects_root / project_id
 

@@ -6,6 +6,7 @@ import ast
 import json
 import math
 from dataclasses import dataclass
+from dataclasses import field as dc_field
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -44,6 +45,22 @@ class Security:
     name: str
     exchange: str | None = None
     currency: str = "USD"
+
+
+@dataclass(frozen=True)
+class SecuritySummary:
+    security: Security
+    daily_bars_count: int = 0
+    daily_bars_start: str | None = None
+    daily_bars_end: str | None = None
+    latest_close: float | None = None
+    daily_bars_dataset_versions: list[str] = dc_field(default_factory=list)
+    corporate_actions_count: int = 0
+    corporate_actions_dataset_versions: list[str] = dc_field(default_factory=list)
+    fundamentals_count: int = 0
+    fundamentals_fiscal_periods: list[str] = dc_field(default_factory=list)
+    fundamentals_dataset_versions: list[str] = dc_field(default_factory=list)
+    covering_dataset_versions: list[str] = dc_field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -673,6 +690,34 @@ class MarketDataStore:
                     ),
                 )
 
+            distinct_securities: dict[str, Security] = {}
+            for _, raw_row in df_raw.iterrows():
+                try:
+                    sec_id = self._security_id(raw_row)
+                except Exception:
+                    continue
+                symbol = self._optional_text(raw_row, "symbol") or sec_id
+                name = self._optional_text(raw_row, "name", "company_name") or symbol
+                exchange = self._optional_text(raw_row, "exchange")
+                currency = (
+                    self._optional_text(raw_row, "currency", "units", "unit", default="USD")
+                    or "USD"
+                )
+                if sec_id not in distinct_securities:
+                    distinct_securities[sec_id] = Security(
+                        security_id=sec_id,
+                        symbol=symbol,
+                        name=name,
+                        exchange=exchange,
+                        currency=currency,
+                    )
+            if distinct_securities:
+                self.upsert_securities(
+                    list(distinct_securities.values()),
+                    source=request.source,
+                    retrieval_time=request.retrieval_time,
+                )
+
         except Exception:
             if parquet_path.exists():
                 parquet_path.unlink()
@@ -754,12 +799,45 @@ class MarketDataStore:
                     ),
                 )
 
-    def list_securities(self) -> list[Security]:
+    def get_security(self, security_id: str) -> Security | None:
+        from .research import validate_security_id
+
+        try:
+            valid_id = validate_security_id(security_id)
+        except Exception:
+            return None
+
         with duckdb.connect(str(self.db_path)) as con:
-            rows = con.execute(
-                "SELECT security_id, symbol, name, exchange, currency "
-                "FROM securities ORDER BY symbol"
-            ).fetchall()
+            row = con.execute(
+                "SELECT security_id, symbol, name, exchange, currency FROM securities "
+                "WHERE security_id = ? OR UPPER(symbol) = UPPER(?) LIMIT 1",
+                (valid_id, valid_id),
+            ).fetchone()
+        if not row:
+            return None
+        return Security(
+            security_id=row[0],
+            symbol=row[1],
+            name=row[2],
+            exchange=row[3],
+            currency=row[4],
+        )
+
+    def search_securities(self, query: str | None = None, limit: int = 50) -> list[Security]:
+        with duckdb.connect(str(self.db_path)) as con:
+            if query and query.strip():
+                pattern = f"%{query.strip()}%"
+                rows = con.execute(
+                    "SELECT security_id, symbol, name, exchange, currency FROM securities "
+                    "WHERE symbol ILIKE ? OR name ILIKE ? ORDER BY symbol LIMIT ?",
+                    (pattern, pattern, limit),
+                ).fetchall()
+            else:
+                rows = con.execute(
+                    "SELECT security_id, symbol, name, exchange, currency FROM securities "
+                    "ORDER BY symbol LIMIT ?",
+                    (limit,),
+                ).fetchall()
         return [
             Security(
                 security_id=row[0],
@@ -770,6 +848,134 @@ class MarketDataStore:
             )
             for row in rows
         ]
+
+    def list_securities(self) -> list[Security]:
+        return self.search_securities(limit=1000)
+
+    def get_security_summary(self, security_id: str) -> SecuritySummary | None:
+        security = self.get_security(security_id)
+        if not security:
+            return None
+
+        with duckdb.connect(str(self.db_path)) as con:
+            versions = con.execute(
+                "SELECT id, files, validation_summary FROM dataset_versions"
+            ).fetchall()
+
+        daily_bars_count = 0
+        daily_bars_start: str | None = None
+        daily_bars_end: str | None = None
+        latest_close: float | None = None
+        latest_session_date: str | None = None
+        daily_bars_dataset_versions: list[str] = []
+
+        corporate_actions_count = 0
+        corporate_actions_dataset_versions: list[str] = []
+
+        fundamentals_count = 0
+        fundamentals_periods: set[str] = set()
+        fundamentals_dataset_versions: list[str] = []
+
+        target_ids = {security.security_id, security.symbol, security.symbol.upper()}
+
+        for v_id, raw_files, raw_summary in versions:
+            summary = ValidationSummary.from_json(raw_summary)
+            files = [str(f) for f in json.loads(raw_files)]
+            dfs = []
+            for file_name in files:
+                path = self.datasets_dir / file_name
+                if path.exists():
+                    dfs.append(pd.read_parquet(path))
+            if not dfs:
+                continue
+            df = pd.concat(dfs, ignore_index=True)
+            if df.empty:
+                continue
+
+            sec_col = (
+                "security_id"
+                if "security_id" in df.columns
+                else ("symbol" if "symbol" in df.columns else None)
+            )
+            if not sec_col:
+                continue
+
+            matched_df = df[df[sec_col].astype(str).isin(target_ids)]
+            if matched_df.empty:
+                continue
+
+            if summary.dataset_type == DATASET_TYPE_DAILY_BARS or (
+                not summary.is_fundamentals and not summary.is_corporate_actions
+            ):
+                if v_id not in daily_bars_dataset_versions:
+                    daily_bars_dataset_versions.append(v_id)
+                daily_bars_count += len(matched_df)
+                if "session_date" in matched_df.columns:
+                    dates = matched_df["session_date"].dropna().astype(str).tolist()
+                    if dates:
+                        min_d = min(dates)
+                        max_d = max(dates)
+                        daily_bars_start = (
+                            min_d if daily_bars_start is None else min(daily_bars_start, min_d)
+                        )
+                        daily_bars_end = (
+                            max_d if daily_bars_end is None else max(daily_bars_end, max_d)
+                        )
+                        if "close" in matched_df.columns:
+                            sorted_df = matched_df.sort_values(by="session_date", ascending=False)
+                            newest_row = sorted_df.iloc[0]
+                            newest_date = str(newest_row["session_date"])
+                            if (
+                                latest_session_date is None
+                                or newest_date >= latest_session_date
+                            ):
+                                latest_session_date = newest_date
+                                if pd.notna(newest_row["close"]):
+                                    latest_close = float(newest_row["close"])
+
+            elif (
+                summary.dataset_type == DATASET_TYPE_CORPORATE_ACTIONS
+                or summary.is_corporate_actions
+            ):
+                if v_id not in corporate_actions_dataset_versions:
+                    corporate_actions_dataset_versions.append(v_id)
+                corporate_actions_count += len(matched_df)
+
+            elif (
+                summary.dataset_type == DATASET_TYPE_FUNDAMENTALS
+                or summary.is_fundamentals
+            ):
+                if v_id not in fundamentals_dataset_versions:
+                    fundamentals_dataset_versions.append(v_id)
+                fundamentals_count += len(matched_df)
+                if "fiscal_period" in matched_df.columns:
+                    for period in matched_df["fiscal_period"].dropna():
+                        fundamentals_periods.add(str(period))
+
+        covering = sorted(
+            list(
+                set(
+                    daily_bars_dataset_versions
+                    + corporate_actions_dataset_versions
+                    + fundamentals_dataset_versions
+                )
+            )
+        )
+
+        return SecuritySummary(
+            security=security,
+            daily_bars_count=daily_bars_count,
+            daily_bars_start=daily_bars_start,
+            daily_bars_end=daily_bars_end,
+            latest_close=latest_close,
+            daily_bars_dataset_versions=daily_bars_dataset_versions,
+            corporate_actions_count=corporate_actions_count,
+            corporate_actions_dataset_versions=corporate_actions_dataset_versions,
+            fundamentals_count=fundamentals_count,
+            fundamentals_fiscal_periods=sorted(list(fundamentals_periods)),
+            fundamentals_dataset_versions=fundamentals_dataset_versions,
+            covering_dataset_versions=covering,
+        )
 
     def discard_dataset_version(self, version: DatasetVersion) -> None:
         """Remove a partially persisted provider version during rollback."""
