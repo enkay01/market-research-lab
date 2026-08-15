@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from pydantic import JsonValue
+from .json_types import JsonValue
 
 
 class ProjectNotFoundError(Exception):

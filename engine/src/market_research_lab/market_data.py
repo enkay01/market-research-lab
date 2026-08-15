@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import math
 import tempfile
@@ -12,7 +13,8 @@ from uuid import uuid4
 
 import duckdb
 import pandas as pd
-from pydantic import JsonValue
+
+from .json_types import JsonValue
 
 
 class InadequateTemporalProvenanceError(ValueError):
@@ -92,6 +94,7 @@ class FundamentalFact:
     eligibility_provenance: str | None = None
     source: str = ""
     retrieval_time: str = ""
+    incomplete_fields: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -189,6 +192,25 @@ class CoverageReport:
     is_fundamentals: bool = False
     is_corporate_actions: bool = False
     dataset_type: str = DATASET_TYPE_DAILY_BARS
+
+
+def _parse_incomplete_fields(raw: object) -> tuple[str, ...] | None:
+    """Normalize the incomplete_fields marker from a provider or file row.
+
+    Provider JSON rows are read back with ``dtype=str``, so a list column
+    arrives as its Python repr (e.g. "['fy', 'frame']"). Accept the list
+    directly when present and parse the repr otherwise.
+    """
+    if isinstance(raw, (list, tuple)):
+        return tuple(str(name) for name in raw)
+    if isinstance(raw, str) and raw.strip().startswith("["):
+        try:
+            parsed = ast.literal_eval(raw)
+        except (ValueError, SyntaxError):
+            return None
+        if isinstance(parsed, (list, tuple)):
+            return tuple(str(name) for name in parsed)
+    return None
 
 
 class MarketDataStore:
@@ -422,6 +444,8 @@ class MarketDataStore:
                     unit = self._optional_text(row, "unit", "units", default="USD") or "USD"
                     filed_at = self._optional_text(row, "filed_at")
                     available_at = self._optional_text(row, "available_at")
+                    raw_incomplete = row.get("incomplete_fields")
+                    incomplete_fields = _parse_incomplete_fields(raw_incomplete)
 
                     valid_rows.append(
                         {
@@ -439,6 +463,7 @@ class MarketDataStore:
                             ),
                             "source": request.source,
                             "retrieval_time": request.retrieval_time,
+                            "incomplete_fields": incomplete_fields,
                         }
                     )
                 except Exception as e:
@@ -937,6 +962,16 @@ class MarketDataStore:
             except (ValueError, TypeError):
                 val = str(raw_val)
 
+            raw_incomplete = row.get("incomplete_fields")
+            incomplete_fields: tuple[str, ...] | None = None
+            if raw_incomplete is not None and not (
+                isinstance(raw_incomplete, float) and pd.isna(raw_incomplete)
+            ):
+                if isinstance(raw_incomplete, (list, tuple)) or hasattr(raw_incomplete, "tolist"):
+                    incomplete_fields = tuple(str(name) for name in raw_incomplete)
+                else:
+                    incomplete_fields = (str(raw_incomplete),)
+
             facts.append(
                 FundamentalFact(
                     security_id=str(row["security_id"]),
@@ -964,6 +999,7 @@ class MarketDataStore:
                     else None,
                     source=str(row.get("source", "")),
                     retrieval_time=str(row.get("retrieval_time", "")),
+                    incomplete_fields=incomplete_fields,
                 )
             )
         return facts

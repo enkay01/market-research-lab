@@ -14,9 +14,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
-from typing_extensions import TypeAliasType
 
 from .configuration import load_provider_credentials
+from .json_types import JsonValue
 from .market_data import (
     CoverageReport,
     InadequateTemporalProvenanceError,
@@ -26,11 +26,6 @@ from .market_data import (
 from .projects import Project, ProjectNotFoundError, ProjectStore
 from .provider_routes import register_provider_download_route
 from .providers import JsonFetcher
-
-JsonValue = TypeAliasType(
-    "JsonValue",
-    None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"],
-)
 
 
 class ErrorResponse(BaseModel):
@@ -145,6 +140,7 @@ class FundamentalFactResponse(BaseModel):
     eligibility_provenance: str | None = None
     source: str
     retrieval_time: str
+    incomplete_fields: list[str] | None = None
 
 
 class CoverageResponse(BaseModel):

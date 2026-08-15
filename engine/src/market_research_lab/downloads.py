@@ -10,8 +10,8 @@ from .providers import (
     JsonFetcher,
     ProviderCredentials,
     ProviderDownloadError,
-    SecEdgarDownloadRequest,
-    TiingoDownloadRequest,
+    SecEdgarDownloadSpec,
+    TiingoDownloadSpec,
     download_sec_edgar,
     download_tiingo,
 )
@@ -19,7 +19,7 @@ from .providers import (
 
 def download_provider(
     store: MarketDataStore,
-    request: TiingoDownloadRequest | SecEdgarDownloadRequest,
+    request: TiingoDownloadSpec | SecEdgarDownloadSpec,
     *,
     credentials: ProviderCredentials,
     fetch_json: JsonFetcher | None = None,

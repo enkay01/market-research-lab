@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-import pytest
-from pydantic import JsonValue
+from datetime import date
 
+import pytest
+
+import market_research_lab.providers as provider_module
+from market_research_lab.json_types import JsonValue
 from market_research_lab.providers import (
     ProviderDownloadError,
-    SecEdgarDownloadRequest,
-    TiingoDownloadRequest,
+    SecEdgarDownloadSpec,
+    TiingoDownloadSpec,
     download_sec_edgar,
     download_tiingo,
 )
@@ -37,11 +40,10 @@ def test_tiingo_payload_maps_prices_and_corporate_actions() -> None:
         ]
 
     result = download_tiingo(
-        TiingoDownloadRequest(
-            provider="tiingo",
-            symbols=["aapl"],
-            start_date="2023-06-01",
-            end_date="2023-06-30",
+        TiingoDownloadSpec(
+            symbols=("AAPL",),
+            start_date=date(2023, 6, 1),
+            end_date=date(2023, 6, 30),
         ),
         token="secret-token",
         retrieval_time="2023-07-01T00:00:00Z",
@@ -60,7 +62,41 @@ def test_tiingo_payload_maps_prices_and_corporate_actions() -> None:
     assert "secret-token" not in calls[0][0]
 
 
+def test_tiingo_uses_default_fetcher_when_none_is_injected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def fetch_json(url: str, _headers: dict[str, str]) -> JsonValue:
+        calls.append(url)
+        if "/prices" not in url:
+            return {"ticker": "AAPL", "name": "Apple Inc.", "exchangeCode": "NASDAQ"}
+        return [
+            {
+                "date": "2023-06-12T00:00:00.000Z",
+                "open": 100,
+                "high": 105,
+                "low": 99,
+                "close": 104,
+                "volume": 123,
+            }
+        ]
+
+    monkeypatch.setattr(provider_module, "_fetch_json", fetch_json)
+
+    result = download_tiingo(
+        TiingoDownloadSpec(symbols=("AAPL",)),
+        token="secret-token",
+        retrieval_time="2023-07-01T00:00:00Z",
+    )
+
+    assert len(calls) == 2
+    assert "/prices" in calls[1]
+    assert result.daily_bars[0]["close"] == 104
+
+
 def test_sec_companyfacts_maps_facts_to_filing_eligibility() -> None:
+
     def fetch_json(url: str, headers: dict[str, str]) -> JsonValue:
         assert headers["User-Agent"] == "Market Research Lab test@example.com"
         if "/submissions/" in url:
@@ -102,7 +138,7 @@ def test_sec_companyfacts_maps_facts_to_filing_eligibility() -> None:
         }
 
     result = download_sec_edgar(
-        SecEdgarDownloadRequest(provider="sec_edgar", ciks=["320193"]),
+        SecEdgarDownloadSpec(ciks=("0000320193",)),
         user_agent="Market Research Lab test@example.com",
         retrieval_time="2023-05-01T00:00:00Z",
         fetch_json=fetch_json,
@@ -122,7 +158,7 @@ def test_sec_companyfacts_maps_facts_to_filing_eligibility() -> None:
 def test_provider_requires_local_credentials() -> None:
     with pytest.raises(ProviderDownloadError, match="TIINGO_API_TOKEN"):
         download_tiingo(
-            TiingoDownloadRequest(provider="tiingo", symbols=["AAPL"]),
+            TiingoDownloadSpec(symbols=("AAPL",)),
             token=None,
             retrieval_time="2023-07-01T00:00:00Z",
             fetch_json=lambda _url, _headers: [],
@@ -161,7 +197,7 @@ def test_sec_missing_acceptance_time_is_preserved_as_ineligible() -> None:
         }
 
     result = download_sec_edgar(
-        SecEdgarDownloadRequest(provider="sec_edgar", ciks=["1"]),
+        SecEdgarDownloadSpec(ciks=("0000000001",)),
         user_agent="Market Research Lab test@example.com",
         retrieval_time="2023-05-01T00:00:00Z",
         fetch_json=fetch_json,
@@ -171,3 +207,97 @@ def test_sec_missing_acceptance_time_is_preserved_as_ineligible() -> None:
     assert fact["available_at"] is None
     assert fact["eligibility_provenance"] == "missing_acceptance_time"
     assert result.warnings
+
+
+def test_sec_defaulted_observation_fields_are_flagged_and_warned() -> None:
+    def fetch_json(url: str, _headers: dict[str, str]) -> JsonValue:
+        if "/submissions/" in url:
+            return {
+                "name": "Example Corp",
+                "tickers": ["EXMP"],
+                "exchanges": ["NASDAQ"],
+                "filings": {
+                    "recent": {
+                        "accessionNumber": ["0000000000-23-000001"],
+                        "acceptanceDateTime": ["2023-04-20T13:30:00.000Z"],
+                    }
+                },
+            }
+        # The observation omits start, frame, and accn: those fields fall back
+        # to their model defaults and must be flagged for downstream handling.
+        return {
+            "facts": {
+                "us-gaap": {
+                    "Assets": {
+                        "units": {
+                            "USD": [
+                                {
+                                    "form": "10-K",
+                                    "filed": "2023-04-20",
+                                    "fy": 2023,
+                                    "fp": "FY",
+                                    "end": "2022-12-31",
+                                    "val": 100,
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+
+    result = download_sec_edgar(
+        SecEdgarDownloadSpec(ciks=("0000000001",)),
+        user_agent="Market Research Lab test@example.com",
+        retrieval_time="2023-05-01T00:00:00Z",
+        fetch_json=fetch_json,
+    )
+
+    fact = result.fundamental_facts[0]
+    assert fact["incomplete_fields"] == ["accn", "frame", "start"]
+    assert any("defaulted" in warning for warning in result.warnings)
+
+
+def test_sec_complete_observation_has_no_defaulted_fields() -> None:
+    def fetch_json(url: str, _headers: dict[str, str]) -> JsonValue:
+        if "/submissions/" in url:
+            return {
+                "name": "Example Corp",
+                "tickers": ["EXMP"],
+                "exchanges": ["NASDAQ"],
+                "filings": {"recent": {}},
+            }
+        return {
+            "facts": {
+                "us-gaap": {
+                    "Assets": {
+                        "units": {
+                            "USD": [
+                                {
+                                    "accn": "0000000000-23-000001",
+                                    "form": "10-K",
+                                    "filed": "2023-04-20",
+                                    "fy": 2023,
+                                    "fp": "FY",
+                                    "start": "2022-01-01",
+                                    "end": "2022-12-31",
+                                    "val": 100,
+                                    "frame": "FY2023",
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+
+    result = download_sec_edgar(
+        SecEdgarDownloadSpec(ciks=("0000000001",)),
+        user_agent="Market Research Lab test@example.com",
+        retrieval_time="2023-05-01T00:00:00Z",
+        fetch_json=fetch_json,
+    )
+
+    fact = result.fundamental_facts[0]
+    assert fact["incomplete_fields"] is None
+    assert not any("defaulted" in warning for warning in result.warnings)

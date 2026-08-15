@@ -464,6 +464,10 @@ export interface components {
         };
         /** SecEdgarDownloadRequest */
         SecEdgarDownloadRequest: {
+            /** Start Date */
+            start_date?: string | null;
+            /** End Date */
+            end_date?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -471,13 +475,13 @@ export interface components {
             provider: "sec_edgar";
             /** Ciks */
             ciks: string[];
+        };
+        /** TiingoDownloadRequest */
+        TiingoDownloadRequest: {
             /** Start Date */
             start_date?: string | null;
             /** End Date */
             end_date?: string | null;
-        };
-        /** TiingoDownloadRequest */
-        TiingoDownloadRequest: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -485,10 +489,6 @@ export interface components {
             provider: "tiingo";
             /** Symbols */
             symbols: string[];
-            /** Start Date */
-            start_date?: string | null;
-            /** End Date */
-            end_date?: string | null;
         };
         /** ValidationError */
         ValidationError: {

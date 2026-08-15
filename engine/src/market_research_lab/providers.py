@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Annotated, Callable, Literal, Mapping
+from typing import Callable, Literal, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -14,13 +14,11 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    JsonValue,
     TypeAdapter,
     ValidationError,
-    field_validator,
-    model_validator,
 )
 
+from .json_types import JsonValue
 from .market_data import Security
 
 
@@ -70,6 +68,36 @@ class SecObservation(BaseModel):
     frame: str = ""
 
 
+def _sec_observation_defaulted_fields(obs: SecObservation) -> frozenset[str]:
+    """Names of SecObservation fields still holding their model defaults.
+
+    SEC EDGAR Company Facts payloads are sparse: when a key is absent, the
+    ``extra="ignore"`` config silently fills the model default (e.g. ``fy=0``,
+    ``fp=""``) instead of failing. The row then flows downstream looking like
+    data even though the source said nothing. This reports exactly which fields
+    were defaulted so the caller can mark the observation for downstream
+    handling (or reject it).
+
+    Required fields (``form``, ``filed``, ``val``) are not reported: validation
+    would have failed if they were absent, and a zero ``val`` is legitimate
+    source data, not a default.
+    """
+    defaulted: set[str] = set()
+    if not obs.accn:
+        defaulted.add("accn")
+    if obs.fy == 0:
+        defaulted.add("fy")
+    if not obs.fp:
+        defaulted.add("fp")
+    if not obs.start:
+        defaulted.add("start")
+    if not obs.end:
+        defaulted.add("end")
+    if not obs.frame:
+        defaulted.add("frame")
+    return frozenset(defaulted)
+
+
 class SecFactDefinition(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -114,52 +142,20 @@ class SecSubmissions(BaseModel):
     filings: SecFilings = Field(default_factory=SecFilings)
 
 
-class TiingoDownloadRequest(BaseModel):
-    provider: Literal["tiingo"]
-    symbols: list[str] = Field(min_length=1, max_length=500)
+@dataclass(frozen=True)
+class TiingoDownloadSpec:
+    symbols: tuple[str, ...]
     start_date: date | None = None
     end_date: date | None = None
-
-    @field_validator("symbols")
-    @classmethod
-    def normalise_symbols(cls, values: list[str]) -> list[str]:
-        cleaned = list(dict.fromkeys(value.strip() for value in values if value.strip()))
-        if not cleaned:
-            raise ValueError("At least one Tiingo symbol is required.")
-        return cleaned
-
-    @model_validator(mode="after")
-    def validate_date_range(self) -> "TiingoDownloadRequest":
-        if self.start_date and self.end_date and self.start_date > self.end_date:
-            raise ValueError("start_date must be on or before end_date.")
-        return self
+    provider: Literal["tiingo"] = field(init=False, default="tiingo")
 
 
-class SecEdgarDownloadRequest(BaseModel):
-    provider: Literal["sec_edgar"]
-    ciks: list[str] = Field(min_length=1, max_length=500)
+@dataclass(frozen=True)
+class SecEdgarDownloadSpec:
+    ciks: tuple[str, ...]
     start_date: date | None = None
     end_date: date | None = None
-
-    @field_validator("ciks")
-    @classmethod
-    def normalise_ciks(cls, values: list[str]) -> list[str]:
-        cleaned = list(dict.fromkeys(value.strip() for value in values if value.strip()))
-        if not cleaned:
-            raise ValueError("At least one SEC EDGAR CIK is required.")
-        return cleaned
-
-    @model_validator(mode="after")
-    def validate_date_range(self) -> "SecEdgarDownloadRequest":
-        if self.start_date and self.end_date and self.start_date > self.end_date:
-            raise ValueError("start_date must be on or before end_date.")
-        return self
-
-
-ProviderDownloadRequest = Annotated[
-    TiingoDownloadRequest | SecEdgarDownloadRequest,
-    Field(discriminator="provider"),
-]
+    provider: Literal["sec_edgar"] = field(init=False, default="sec_edgar")
 
 
 @dataclass(frozen=True)
@@ -201,26 +197,6 @@ def _call(
         ) from error
 
 
-def _normalise_symbols(symbols: list[str] | tuple[str, ...]) -> list[str]:
-    normalised = list(dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip()))
-    if not normalised:
-        raise ProviderDownloadError("At least one Security symbol is required.")
-    return normalised
-
-
-def _normalise_ciks(ciks: list[str] | tuple[str, ...]) -> list[str]:
-    normalised: list[str] = []
-    for raw_cik in ciks:
-        cik = raw_cik.strip()
-        if not cik.isdigit() or len(cik) > 10:
-            raise ProviderDownloadError("SEC EDGAR CIKs must contain up to 10 digits.")
-        normalised.append(cik.zfill(10))
-    normalised = list(dict.fromkeys(normalised))
-    if not normalised:
-        raise ProviderDownloadError("At least one SEC EDGAR CIK is required.")
-    return normalised
-
-
 def _tiingo_available_at(raw_date: str, retrieval_time: str) -> str:
     if not raw_date.strip():
         raise ProviderDownloadError("Tiingo returned a price without a date.")
@@ -234,11 +210,11 @@ def _tiingo_available_at(raw_date: str, retrieval_time: str) -> str:
 
 
 def download_tiingo(
-    request: TiingoDownloadRequest,
+    request: TiingoDownloadSpec,
     *,
     token: str | None,
     retrieval_time: str,
-    fetch_json: JsonFetcher,
+    fetch_json: JsonFetcher | None = None,
 ) -> ProviderDownload:
     """Download Tiingo EOD prices and map its action fields to canonical rows."""
     fetch = fetch_json or _fetch_json
@@ -248,7 +224,7 @@ def download_tiingo(
 
     result = ProviderDownload()
     headers = {"Accept": "application/json", "Authorization": f"Token {token}"}
-    for symbol in _normalise_symbols(request.symbols):
+    for symbol in request.symbols:
         metadata_url = f"https://api.tiingo.com/tiingo/daily/{symbol}"
         metadata_payload = _call(fetch, metadata_url, headers, "Tiingo")
         try:
@@ -274,7 +250,7 @@ def download_tiingo(
         query_string = f"?{urlencode(query)}" if query else ""
         url = f"https://api.tiingo.com/tiingo/daily/{symbol}/prices{query_string}"
         payload = _call(
-            fetch_json,
+            fetch,
             url,
             headers,
             "Tiingo",
@@ -420,11 +396,11 @@ def _fiscal_period(observation: SecObservation) -> str:
 
 
 def download_sec_edgar(
-    request: SecEdgarDownloadRequest,
+    request: SecEdgarDownloadSpec,
     *,
     user_agent: str | None,
     retrieval_time: str,
-    fetch_json: JsonFetcher,
+    fetch_json: JsonFetcher | None = None,
 ) -> ProviderDownload:
     """Download SEC filing metadata and Company Facts into canonical facts."""
     fetch = fetch_json or _fetch_json
@@ -433,8 +409,9 @@ def download_sec_edgar(
         raise ProviderDownloadError("SEC EDGAR credentials are missing: set SEC_EDGAR_USER_AGENT.")
 
     result = ProviderDownload()
+    defaulted_observation_fields: dict[str, int] = {}
     headers = {"Accept": "application/json", "User-Agent": user_agent}
-    for cik in _normalise_ciks(request.ciks):
+    for cik in request.ciks:
         submissions_url = f"https://data.sec.gov/submissions/CIK{cik}.json"
         submissions_payload = _call(fetch, submissions_url, headers, "SEC EDGAR")
         submissions = _parse_submissions(submissions_payload)
@@ -490,6 +467,12 @@ def download_sec_edgar(
                                 "SEC EDGAR returned a period with reversed dates."
                             )
 
+                        defaulted_fields = _sec_observation_defaulted_fields(observation)
+                        for defaulted_field in defaulted_fields:
+                            defaulted_observation_fields[defaulted_field] = (
+                                defaulted_observation_fields.get(defaulted_field, 0) + 1
+                            )
+
                         result.fundamental_facts.append(
                             {
                                 "security_id": security_id,
@@ -504,8 +487,14 @@ def download_sec_edgar(
                                 "eligibility_provenance": provenance,
                                 "source": "sec_edgar",
                                 "retrieval_time": retrieval_time,
+                                "incomplete_fields": sorted(defaulted_fields) or None,
                             }
                         )
+
+    for defaulted_field, count in sorted(defaulted_observation_fields.items()):
+        result.warnings.append(
+            f"SEC EDGAR preserved {count} observations with defaulted {defaulted_field}."
+        )
 
     if not result.fundamental_facts:
         raise ProviderDownloadError("SEC EDGAR returned no quarterly or annual facts.")
