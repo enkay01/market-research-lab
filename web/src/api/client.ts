@@ -6,8 +6,11 @@ export type Project = components["schemas"]["ProjectResponse"];
 export type ProjectCreate = components["schemas"]["ProjectCreateRequest"];
 export type DefinitionCreate = components["schemas"]["DefinitionCreateRequest"];
 export type CoverageResponse = components["schemas"]["CoverageResponse"];
+export type CorporateActionResponse = components["schemas"]["CorporateActionResponse"];
 export type DailyBarResponse = components["schemas"]["DailyBarResponse"];
 export type FundamentalFactResponse = components["schemas"]["FundamentalFactResponse"];
+export type ProviderDownloadRequest = components["schemas"]["ProviderDownloadRequest"];
+export type ProviderDownloadResponse = components["schemas"]["ProviderDownloadResponse"];
 
 export class ApiError extends Error {
   constructor(
@@ -75,6 +78,12 @@ export const api = {
       }),
     );
   },
+  downloadDataset: (request: ProviderDownloadRequest) =>
+    dataOrThrow(
+      client.POST("/api/datasets/download", {
+        body: request,
+      }),
+    ),
   getCoverage: (datasetVersionId: string) =>
     dataOrThrow(
       client.GET("/api/datasets/{dataset_version_id}/coverage", {
@@ -99,6 +108,15 @@ export const api = {
   getFundamentals: (datasetVersionId: string, params?: { as_of?: string; symbol?: string }) =>
     dataOrThrow(
       client.GET("/api/datasets/{dataset_version_id}/fundamentals", {
+        params: {
+          path: { dataset_version_id: datasetVersionId },
+          query: params,
+        },
+      }),
+    ),
+  getCorporateActions: (datasetVersionId: string, params?: { as_of?: string; symbol?: string }) =>
+    dataOrThrow(
+      client.GET("/api/datasets/{dataset_version_id}/corporate-actions", {
         params: {
           path: { dataset_version_id: datasetVersionId },
           query: params,

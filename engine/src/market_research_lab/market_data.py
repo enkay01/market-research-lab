@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,10 @@ TEMPORAL_PROVENANCE_ERROR_MESSAGE = (
     "Market observations lack required point-in-time eligibility timestamps "
     "('available_at') for historical use."
 )
+
+DATASET_TYPE_DAILY_BARS = "daily_bars"
+DATASET_TYPE_CORPORATE_ACTIONS = "corporate_actions"
+DATASET_TYPE_FUNDAMENTALS = "fundamentals"
 
 
 @dataclass(frozen=True)
@@ -52,7 +57,12 @@ class DailyBar:
     source: str
     retrieval_time: str = ""
     available_at: str | None = None
+    eligibility_provenance: str | None = None
     units: str = "USD"
+    adjusted_open: float | None = None
+    adjusted_high: float | None = None
+    adjusted_low: float | None = None
+    adjusted_close: float | None = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +74,7 @@ class CorporateAction:
     source: str
     retrieval_time: str = ""
     available_at: str | None = None
+    eligibility_provenance: str | None = None
     units: str = "USD"
 
 
@@ -76,6 +87,9 @@ class FundamentalFact:
     unit: str = "USD"
     filed_at: str | None = None
     available_at: str | None = None
+    period_start: str | None = None
+    period_end: str | None = None
+    eligibility_provenance: str | None = None
     source: str = ""
     retrieval_time: str = ""
 
@@ -89,6 +103,7 @@ class DatasetVersion:
     coverage_end: str | None
     files: list[str]
     validation_summary: dict[str, Any]
+    dataset_type: str = DATASET_TYPE_DAILY_BARS
 
 
 @dataclass(frozen=True)
@@ -105,6 +120,8 @@ class CoverageReport:
     files: list[str]
     has_temporal_provenance: bool = False
     is_fundamentals: bool = False
+    is_corporate_actions: bool = False
+    dataset_type: str = DATASET_TYPE_DAILY_BARS
 
 
 class MarketDataStore:
@@ -115,6 +132,7 @@ class MarketDataStore:
 
         self.db_path = workspace_root / "catalogue.duckdb"
         self._init_db()
+        self._init_securities_db()
 
     def _init_db(self) -> None:
         with duckdb.connect(str(self.db_path)) as con:
@@ -127,6 +145,20 @@ class MarketDataStore:
                     coverage_end VARCHAR,
                     files JSON,
                     validation_summary JSON
+                )
+            """)
+
+    def _init_securities_db(self) -> None:
+        with duckdb.connect(str(self.db_path)) as con:
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS securities (
+                    security_id VARCHAR PRIMARY KEY,
+                    symbol VARCHAR,
+                    name VARCHAR,
+                    exchange VARCHAR,
+                    currency VARCHAR,
+                    source VARCHAR,
+                    retrieval_time VARCHAR
                 )
             """)
 
@@ -149,7 +181,9 @@ class MarketDataStore:
 
     @staticmethod
     def _is_missing(value: Any) -> bool:
-        return bool(pd.isna(value)) or (isinstance(value, str) and not value.strip())
+        return bool(pd.isna(value)) or (
+            isinstance(value, str) and value.strip().lower() in {"", "nan", "nat", "none"}
+        )
 
     @classmethod
     def _required_text(cls, row: pd.Series, field: str) -> str:
@@ -168,40 +202,104 @@ class MarketDataStore:
             raise ValueError(f"{field.replace('_', ' ').capitalize()} must be finite")
         return number
 
+    @classmethod
+    def _security_id(cls, row: pd.Series) -> str:
+        for field in ("security_id", "symbol"):
+            if field in row and not cls._is_missing(row[field]):
+                return str(row[field]).strip()
+        raise ValueError("security_id / symbol is missing")
+
+    @classmethod
+    def _required_text_from_fields(cls, row: pd.Series, *fields: str) -> str:
+        for field in fields:
+            if field in row and not cls._is_missing(row[field]):
+                return str(row[field]).strip()
+        label = " / ".join(fields)
+        raise ValueError(f"{label.replace('_', ' ').capitalize()} is missing")
+
+    @classmethod
+    def _optional_text(cls, row: pd.Series, *fields: str, default: str | None = None) -> str | None:
+        for field in fields:
+            if field in row and not cls._is_missing(row[field]):
+                return str(row[field]).strip()
+        return default
+
+    @classmethod
+    def _optional_number(cls, row: pd.Series, *fields: str) -> float | None:
+        for field in fields:
+            if field in row and not cls._is_missing(row[field]):
+                return cls._required_number(row, field)
+        return None
+
     @staticmethod
-    def _has_complete_temporal_provenance(df: pd.DataFrame) -> bool:
-        if df.empty or "available_at" not in df.columns:
+    def _canonical_date(value: str) -> str:
+        return pd.to_datetime(value, errors="raise").strftime("%Y-%m-%d")
+
+    @classmethod
+    def _eligibility_values(cls, df: pd.DataFrame, dataset_type: str) -> pd.Series:
+        if df.empty:
+            return pd.Series(index=df.index, dtype="object")
+
+        eligibility = pd.Series(pd.NA, index=df.index, dtype="object")
+        blocked_fallback = pd.Series(False, index=df.index)
+        if dataset_type == DATASET_TYPE_FUNDAMENTALS and "eligibility_provenance" in df.columns:
+            blocked_fallback = df["eligibility_provenance"].eq("missing_acceptance_time")
+
+        for field in ["available_at"]:
+            if field not in df.columns:
+                continue
+            missing = eligibility.map(cls._is_missing)
+            eligibility.loc[missing] = df.loc[missing, field]
+
+        if dataset_type == DATASET_TYPE_FUNDAMENTALS and "filed_at" in df.columns:
+            missing = eligibility.map(cls._is_missing) & ~blocked_fallback
+            eligibility.loc[missing] = df.loc[missing, "filed_at"]
+
+        return eligibility
+
+    @classmethod
+    def _has_complete_temporal_provenance(
+        cls, df: pd.DataFrame, dataset_type: str = DATASET_TYPE_DAILY_BARS
+    ) -> bool:
+        if df.empty:
             return False
 
-        available_at = df["available_at"]
-        if available_at.isna().any() or (available_at.astype(str).str.strip() == "").any():
+        eligibility = cls._eligibility_values(df, dataset_type)
+        if eligibility.map(cls._is_missing).any():
             return False
 
         try:
-            pd.to_datetime(available_at, utc=True, errors="raise")
+            pd.to_datetime(eligibility, utc=True, errors="raise")
         except (TypeError, ValueError):
             return False
 
         return True
 
     def _eligible_timestamps_for_historical_use(
-        self, df: pd.DataFrame, has_provenance: bool
+        self, df: pd.DataFrame, has_provenance: bool, dataset_type: str = DATASET_TYPE_DAILY_BARS
     ) -> pd.Series:
-        if not has_provenance or not self._has_complete_temporal_provenance(df):
+        if not has_provenance or not self._has_complete_temporal_provenance(df, dataset_type):
             raise InadequateTemporalProvenanceError(TEMPORAL_PROVENANCE_ERROR_MESSAGE)
 
-        return pd.to_datetime(df["available_at"], utc=True, errors="raise")
+        return pd.to_datetime(self._eligibility_values(df, dataset_type), utc=True, errors="raise")
 
     def ingest(self, request: IngestionRequest) -> DatasetVersion:
         df_raw = self._read_dataframe(request.file_path)
 
-        has_available_at_col = "available_at" in df_raw.columns
-
-        # Check format: Fundamental facts or Daily bars
+        # Detect one canonical record family from the supplied columns.
         is_fundamental = {"field", "fiscal_period", "value"}.issubset(set(df_raw.columns))
+        is_corporate_action = {"effective_date", "value"}.issubset(set(df_raw.columns)) and (
+            "type" in df_raw.columns or "action_type" in df_raw.columns
+        )
         is_daily_bar = {"open", "high", "low", "close", "volume"}.issubset(set(df_raw.columns))
 
-        if not is_fundamental and not is_daily_bar:
+        if is_corporate_action:
+            dataset_type = DATASET_TYPE_CORPORATE_ACTIONS
+        elif is_fundamental:
+            dataset_type = DATASET_TYPE_FUNDAMENTALS
+        elif is_daily_bar:
+            dataset_type = DATASET_TYPE_DAILY_BARS
+        else:
             required = {"symbol", "date", "open", "high", "low", "close", "volume"}
             missing_cols = required - set(df_raw.columns)
             raise ValueError(f"Missing required columns: {sorted(missing_cols)}")
@@ -210,7 +308,7 @@ class MarketDataStore:
         valid_rows: list[dict[str, Any]] = []
         missing_fields: dict[str, int] = {}
 
-        if is_fundamental:
+        if dataset_type == DATASET_TYPE_FUNDAMENTALS:
             check_cols = [
                 "security_id",
                 "symbol",
@@ -220,6 +318,9 @@ class MarketDataStore:
                 "unit",
                 "filed_at",
                 "available_at",
+                "period_start",
+                "period_end",
+                "eligibility_provenance",
             ]
             for col in check_cols:
                 if col in df_raw.columns:
@@ -229,48 +330,27 @@ class MarketDataStore:
             for i, row in df_raw.iterrows():
                 row_num = i + 1
                 try:
-                    sec_id = str(row.get("security_id", row.get("symbol", ""))).strip()
-                    if not sec_id or sec_id == "nan":
-                        raise ValueError("security_id / symbol is missing")
+                    sec_id = self._security_id(row)
 
-                    field = str(row["field"]).strip()
-                    if not field or field == "nan":
-                        raise ValueError("field is missing")
+                    field = self._required_text(row, "field")
 
-                    fiscal_period = str(row["fiscal_period"]).strip()
-                    if not fiscal_period or fiscal_period == "nan":
-                        raise ValueError("fiscal_period is missing")
+                    fiscal_period = self._required_text(row, "fiscal_period")
 
                     raw_val = row["value"]
-                    if pd.isna(raw_val) or str(raw_val).strip() == "":
+                    if self._is_missing(raw_val):
                         raise ValueError("value is missing")
 
                     try:
                         val: float | str = float(raw_val)
                     except (ValueError, TypeError):
                         val = str(raw_val).strip()
-
-                    unit = (
-                        str(row.get("unit", row.get("units", "USD"))).strip()
-                        if pd.notna(row.get("unit", row.get("units")))
-                        else "USD"
-                    )
-                    filed_at = (
-                        str(row["filed_at"]).strip()
-                        if "filed_at" in row
-                        and pd.notna(row["filed_at"])
-                        and str(row["filed_at"]).strip() != ""
-                        else None
-                    )
-
-                    if (
-                        has_available_at_col
-                        and pd.notna(row["available_at"])
-                        and str(row["available_at"]).strip() != ""
-                    ):
-                        available_at = str(row["available_at"]).strip()
                     else:
-                        available_at = None
+                        if not math.isfinite(val):
+                            raise ValueError("value must be finite")
+
+                    unit = self._optional_text(row, "unit", "units", default="USD") or "USD"
+                    filed_at = self._optional_text(row, "filed_at")
+                    available_at = self._optional_text(row, "available_at")
 
                     valid_rows.append(
                         {
@@ -281,8 +361,54 @@ class MarketDataStore:
                             "unit": unit,
                             "filed_at": filed_at,
                             "available_at": available_at,
+                            "period_start": self._optional_text(row, "period_start"),
+                            "period_end": self._optional_text(row, "period_end"),
+                            "eligibility_provenance": self._optional_text(
+                                row, "eligibility_provenance"
+                            ),
                             "source": request.source,
                             "retrieval_time": request.retrieval_time,
+                        }
+                    )
+                except Exception as e:
+                    warnings.append(f"Rejected row {row_num}: {e}")
+
+        elif dataset_type == DATASET_TYPE_CORPORATE_ACTIONS:
+            check_cols = [
+                "security_id",
+                "symbol",
+                "type",
+                "action_type",
+                "effective_date",
+                "value",
+                "unit",
+                "units",
+                "available_at",
+                "eligibility_provenance",
+            ]
+            for col in check_cols:
+                if col in df_raw.columns:
+                    missing_fields[col] = int(df_raw[col].map(self._is_missing).sum())
+
+            for i, row in df_raw.iterrows():
+                row_num = i + 1
+                try:
+                    valid_rows.append(
+                        {
+                            "security_id": self._security_id(row),
+                            "type": self._required_text_from_fields(row, "type", "action_type"),
+                            "effective_date": self._canonical_date(
+                                self._required_text(row, "effective_date")
+                            ),
+                            "value": self._required_number(row, "value"),
+                            "units": self._optional_text(row, "units", "unit", default="USD")
+                            or "USD",
+                            "source": request.source,
+                            "retrieval_time": request.retrieval_time,
+                            "available_at": self._optional_text(row, "available_at"),
+                            "eligibility_provenance": self._optional_text(
+                                row, "eligibility_provenance"
+                            ),
                         }
                     )
                 except Exception as e:
@@ -297,11 +423,9 @@ class MarketDataStore:
             for i, row in df_raw.iterrows():
                 row_num = i + 1
                 try:
-                    security_field = "symbol" if "symbol" in row else "security_id"
-                    sec_id = self._required_text(row, security_field)
-                    date_field = "date" if "date" in row else "session_date"
-                    date_str = self._required_text(row, date_field)
-                    date = pd.to_datetime(date_str).strftime("%Y-%m-%d")
+                    sec_id = self._security_id(row)
+                    date_str = self._required_text_from_fields(row, "date", "session_date")
+                    date = self._canonical_date(date_str)
 
                     open_px = self._required_number(row, "open")
                     high_px = self._required_number(row, "high")
@@ -309,16 +433,8 @@ class MarketDataStore:
                     close_px = self._required_number(row, "close")
                     volume = self._required_number(row, "volume")
 
-                    units = (
-                        str(row["units"]).strip()
-                        if "units" in row and not self._is_missing(row["units"])
-                        else "USD"
-                    )
-
-                    if has_available_at_col and not self._is_missing(row["available_at"]):
-                        available_at = str(row["available_at"]).strip()
-                    else:
-                        available_at = None
+                    units = self._optional_text(row, "units", "unit", default="USD") or "USD"
+                    available_at = self._optional_text(row, "available_at")
 
                     valid_rows.append(
                         {
@@ -333,6 +449,19 @@ class MarketDataStore:
                             "source": request.source,
                             "retrieval_time": request.retrieval_time,
                             "available_at": available_at,
+                            "eligibility_provenance": self._optional_text(
+                                row, "eligibility_provenance"
+                            ),
+                            "adjusted_open": self._optional_number(
+                                row, "adjusted_open", "adj_open"
+                            ),
+                            "adjusted_high": self._optional_number(
+                                row, "adjusted_high", "adj_high"
+                            ),
+                            "adjusted_low": self._optional_number(row, "adjusted_low", "adj_low"),
+                            "adjusted_close": self._optional_number(
+                                row, "adjusted_close", "adj_close"
+                            ),
                         }
                     )
                 except Exception as e:
@@ -349,10 +478,28 @@ class MarketDataStore:
         files = []
 
         df_valid = pd.DataFrame(valid_rows)
-        has_temporal_provenance = self._has_complete_temporal_provenance(df_valid)
+        has_temporal_provenance = self._has_complete_temporal_provenance(df_valid, dataset_type)
         if "session_date" in df_valid.columns:
             coverage_start = df_valid["session_date"].min()
             coverage_end = df_valid["session_date"].max()
+        elif "effective_date" in df_valid.columns:
+            coverage_start = df_valid["effective_date"].min()
+            coverage_end = df_valid["effective_date"].max()
+        elif ("period_start" in df_valid.columns and df_valid["period_start"].notna().any()) or (
+            "period_end" in df_valid.columns and df_valid["period_end"].notna().any()
+        ):
+            starts = (
+                df_valid["period_start"].dropna()
+                if "period_start" in df_valid.columns
+                else pd.Series(dtype="object")
+            )
+            ends = (
+                df_valid["period_end"].dropna()
+                if "period_end" in df_valid.columns
+                else pd.Series(dtype="object")
+            )
+            coverage_start = starts.min() if not starts.empty else ends.min()
+            coverage_end = ends.max() if not ends.empty else starts.max()
         elif "fiscal_period" in df_valid.columns:
             coverage_start = df_valid["fiscal_period"].min()
             coverage_end = df_valid["fiscal_period"].max()
@@ -360,10 +507,24 @@ class MarketDataStore:
             coverage_start = None
             coverage_end = None
 
+        # Arrow cannot store a mixed numeric/string object column. Preserve the
+        # canonical value semantics by serializing mixed fundamentals as text;
+        # query conversion restores numeric values when possible.
+        if dataset_type == DATASET_TYPE_FUNDAMENTALS and not (
+            df_valid["value"].map(lambda value: isinstance(value, (int, float))).all()
+            or df_valid["value"].map(lambda value: isinstance(value, str)).all()
+        ):
+            df_valid["value"] = df_valid["value"].map(str)
+
         parquet_name = f"{version_id}.parquet"
         parquet_path = self.datasets_dir / parquet_name
-        df_valid.to_parquet(parquet_path, engine="pyarrow", index=False)
-        files.append(parquet_name)
+        try:
+            df_valid.to_parquet(parquet_path, engine="pyarrow", index=False)
+            files.append(parquet_name)
+        except Exception:
+            if parquet_path.exists():
+                parquet_path.unlink()
+            raise
 
         summary = {
             "row_count": len(valid_rows),
@@ -372,7 +533,9 @@ class MarketDataStore:
             "total_warnings": len(warnings),
             "warnings": warnings[:100],
             "has_temporal_provenance": has_temporal_provenance,
-            "is_fundamentals": is_fundamental,
+            "is_fundamentals": dataset_type == DATASET_TYPE_FUNDAMENTALS,
+            "is_corporate_actions": dataset_type == DATASET_TYPE_CORPORATE_ACTIONS,
+            "dataset_type": dataset_type,
         }
 
         version = DatasetVersion(
@@ -383,30 +546,155 @@ class MarketDataStore:
             coverage_end=coverage_end,
             files=files,
             validation_summary=summary,
+            dataset_type=dataset_type,
         )
 
-        with duckdb.connect(str(self.db_path)) as con:
-            con.execute(
-                """
-                INSERT INTO dataset_versions 
-                (
-                    id, source, retrieval_time, coverage_start, coverage_end,
-                    files, validation_summary
+        try:
+            with duckdb.connect(str(self.db_path)) as con:
+                con.execute(
+                    """
+                    INSERT INTO dataset_versions
+                    (
+                        id, source, retrieval_time, coverage_start, coverage_end,
+                        files, validation_summary
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                    (
+                        version.id,
+                        version.source,
+                        version.retrieval_time,
+                        version.coverage_start,
+                        version.coverage_end,
+                        json.dumps(version.files),
+                        json.dumps(version.validation_summary),
+                    ),
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    version.id,
-                    version.source,
-                    version.retrieval_time,
-                    version.coverage_start,
-                    version.coverage_end,
-                    json.dumps(version.files),
-                    json.dumps(version.validation_summary),
-                ),
-            )
+
+        except Exception:
+            if parquet_path.exists():
+                parquet_path.unlink()
+            raise
 
         return version
+
+    def ingest_records(
+        self,
+        request: IngestionRequest,
+        rows: list[dict[str, Any]],
+        *,
+        warnings: list[str] | None = None,
+    ) -> DatasetVersion:
+        """Run provider records through the same validation as file imports."""
+        if not rows:
+            raise ValueError("Import failed: 0 provider records were returned.")
+
+        temp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", suffix=".json", delete=False
+            ) as temporary:
+                json.dump(rows, temporary)
+                temp_path = Path(temporary.name)
+            version = self.ingest(
+                IngestionRequest(
+                    source=request.source,
+                    file_path=temp_path,
+                    retrieval_time=request.retrieval_time,
+                )
+            )
+            try:
+                return self.add_validation_warnings(version, warnings or [])
+            except Exception:
+                self.discard_dataset_version(version)
+                raise
+        finally:
+            if temp_path is not None and temp_path.exists():
+                temp_path.unlink()
+
+    def add_validation_warnings(
+        self, version: DatasetVersion, warnings: list[str]
+    ) -> DatasetVersion:
+        """Persist provider warnings alongside the Dataset Version summary."""
+        if not warnings:
+            return version
+
+        summary = dict(version.validation_summary)
+        summary["warnings"] = (list(summary.get("warnings", [])) + warnings)[:100]
+        summary["total_warnings"] = int(summary.get("total_warnings", 0)) + len(warnings)
+        with duckdb.connect(str(self.db_path)) as con:
+            con.execute(
+                "UPDATE dataset_versions SET validation_summary = ? WHERE id = ?",
+                (json.dumps(summary), version.id),
+            )
+        return DatasetVersion(
+            id=version.id,
+            source=version.source,
+            retrieval_time=version.retrieval_time,
+            coverage_start=version.coverage_start,
+            coverage_end=version.coverage_end,
+            files=version.files,
+            validation_summary=summary,
+            dataset_type=version.dataset_type,
+        )
+
+    def upsert_securities(
+        self, securities: list[Security], *, source: str, retrieval_time: str
+    ) -> None:
+        """Persist provider-native Security identities in one transaction."""
+        if not securities:
+            return
+        with duckdb.connect(str(self.db_path)) as con:
+            for security in securities:
+                con.execute(
+                    """
+                    INSERT INTO securities (
+                        security_id, symbol, name, exchange, currency, source, retrieval_time
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (security_id) DO UPDATE SET
+                        symbol = excluded.symbol,
+                        name = excluded.name,
+                        exchange = excluded.exchange,
+                        currency = excluded.currency,
+                        source = excluded.source,
+                        retrieval_time = excluded.retrieval_time
+                    """,
+                    (
+                        security.security_id,
+                        security.symbol,
+                        security.name,
+                        security.exchange,
+                        security.currency,
+                        source,
+                        retrieval_time,
+                    ),
+                )
+
+    def list_securities(self) -> list[Security]:
+        with duckdb.connect(str(self.db_path)) as con:
+            rows = con.execute(
+                "SELECT security_id, symbol, name, exchange, currency "
+                "FROM securities ORDER BY symbol"
+            ).fetchall()
+        return [
+            Security(
+                security_id=row[0],
+                symbol=row[1],
+                name=row[2],
+                exchange=row[3],
+                currency=row[4],
+            )
+            for row in rows
+        ]
+
+    def discard_dataset_version(self, version: DatasetVersion) -> None:
+        """Remove a partially persisted provider version during rollback."""
+        with duckdb.connect(str(self.db_path)) as con:
+            con.execute("DELETE FROM dataset_versions WHERE id = ?", (version.id,))
+        for file_name in version.files:
+            path = self.datasets_dir / file_name
+            if path.exists():
+                path.unlink()
 
     def coverage(self, dataset_version_id: str) -> CoverageReport:
         with duckdb.connect(str(self.db_path)) as con:
@@ -447,13 +735,15 @@ class MarketDataStore:
                 files=files,
                 has_temporal_provenance=summary.get("has_temporal_provenance", False),
                 is_fundamentals=summary.get("is_fundamentals", False),
+                is_corporate_actions=summary.get("is_corporate_actions", False),
+                dataset_type=summary.get("dataset_type", DATASET_TYPE_DAILY_BARS),
             )
 
     def preview(self, dataset_version_id: str, limit: int = 50) -> list[dict[str, Any]]:
-        df, _ = self._load_dataset_df(dataset_version_id)
+        df, _, _ = self._load_dataset_df(dataset_version_id)
         return df.head(limit).to_dict(orient="records")
 
-    def _load_dataset_df(self, dataset_version_id: str) -> tuple[pd.DataFrame, bool]:
+    def _load_dataset_df(self, dataset_version_id: str) -> tuple[pd.DataFrame, bool, str]:
         with duckdb.connect(str(self.db_path)) as con:
             con.execute(
                 "SELECT files, validation_summary FROM dataset_versions WHERE id = ?",
@@ -467,6 +757,7 @@ class MarketDataStore:
             summary = json.loads(raw_summary)
             files = json.loads(raw_files)
             has_prov = summary.get("has_temporal_provenance", False)
+            dataset_type = summary.get("dataset_type", DATASET_TYPE_DAILY_BARS)
 
         dfs = []
         for file_name in files:
@@ -475,21 +766,24 @@ class MarketDataStore:
                 dfs.append(pd.read_parquet(path))
 
         if not dfs:
-            return pd.DataFrame(), has_prov
+            return pd.DataFrame(), has_prov, dataset_type
 
         df = pd.concat(dfs, ignore_index=True)
-        return df, has_prov
+        return df, has_prov, dataset_type
 
     def _filter_by_as_of_and_symbol(
         self,
         df: pd.DataFrame,
         has_provenance: bool,
+        dataset_type: str,
         as_of: datetime | str | None,
         symbol: str | None,
     ) -> pd.DataFrame:
         if as_of is not None:
             as_of_utc = pd.to_datetime(as_of, utc=True)
-            available_at_utc = self._eligible_timestamps_for_historical_use(df, has_provenance)
+            available_at_utc = self._eligible_timestamps_for_historical_use(
+                df, has_provenance, dataset_type
+            )
             df = df[available_at_utc <= as_of_utc]
 
         if symbol is not None and not df.empty:
@@ -501,8 +795,8 @@ class MarketDataStore:
         return df
 
     def ensure_historical_eligibility(self, dataset_version_id: str) -> None:
-        df, has_provenance = self._load_dataset_df(dataset_version_id)
-        self._eligible_timestamps_for_historical_use(df, has_provenance)
+        df, has_provenance, dataset_type = self._load_dataset_df(dataset_version_id)
+        self._eligible_timestamps_for_historical_use(df, has_provenance, dataset_type)
 
     def history(
         self,
@@ -512,9 +806,8 @@ class MarketDataStore:
         as_of: str | datetime | None = None,
         as_dataframe: bool = False,
     ) -> list[DailyBar] | pd.DataFrame:
-        df, has_prov = self._load_dataset_df(dataset_version_id)
-
-        df = self._filter_by_as_of_and_symbol(df, has_prov, as_of, symbol)
+        df, has_prov, dataset_type = self._load_dataset_df(dataset_version_id)
+        df = self._filter_by_as_of_and_symbol(df, has_prov, dataset_type, as_of, symbol)
 
         if as_dataframe:
             return df.reset_index(drop=True)
@@ -536,7 +829,15 @@ class MarketDataStore:
                     if pd.notna(row.get("available_at"))
                     and str(row.get("available_at")).strip() != ""
                     else None,
+                    eligibility_provenance=str(row["eligibility_provenance"])
+                    if pd.notna(row.get("eligibility_provenance"))
+                    and str(row.get("eligibility_provenance")).strip() != ""
+                    else None,
                     units=str(row.get("units", "USD")),
+                    adjusted_open=self._optional_number(row, "adjusted_open", "adj_open"),
+                    adjusted_high=self._optional_number(row, "adjusted_high", "adj_high"),
+                    adjusted_low=self._optional_number(row, "adjusted_low", "adj_low"),
+                    adjusted_close=self._optional_number(row, "adjusted_close", "adj_close"),
                 )
             )
         return bars
@@ -549,9 +850,8 @@ class MarketDataStore:
         as_of: str | datetime | None = None,
         as_dataframe: bool = False,
     ) -> list[FundamentalFact] | pd.DataFrame:
-        df, has_prov = self._load_dataset_df(dataset_version_id)
-
-        df = self._filter_by_as_of_and_symbol(df, has_prov, as_of, symbol)
+        df, has_prov, dataset_type = self._load_dataset_df(dataset_version_id)
+        df = self._filter_by_as_of_and_symbol(df, has_prov, dataset_type, as_of, symbol)
 
         if as_dataframe:
             return df.reset_index(drop=True)
@@ -578,8 +878,56 @@ class MarketDataStore:
                     if pd.notna(row.get("available_at"))
                     and str(row.get("available_at")).strip() != ""
                     else None,
+                    period_start=str(row["period_start"])
+                    if pd.notna(row.get("period_start"))
+                    and str(row.get("period_start")).strip() != ""
+                    else None,
+                    period_end=str(row["period_end"])
+                    if pd.notna(row.get("period_end")) and str(row.get("period_end")).strip() != ""
+                    else None,
+                    eligibility_provenance=str(row["eligibility_provenance"])
+                    if pd.notna(row.get("eligibility_provenance"))
+                    and str(row.get("eligibility_provenance")).strip() != ""
+                    else None,
                     source=str(row.get("source", "")),
                     retrieval_time=str(row.get("retrieval_time", "")),
                 )
             )
         return facts
+
+    def corporate_actions(
+        self,
+        dataset_version_id: str,
+        *,
+        symbol: str | None = None,
+        as_of: str | datetime | None = None,
+        as_dataframe: bool = False,
+    ) -> list[CorporateAction] | pd.DataFrame:
+        df, has_prov, dataset_type = self._load_dataset_df(dataset_version_id)
+        df = self._filter_by_as_of_and_symbol(df, has_prov, dataset_type, as_of, symbol)
+
+        if as_dataframe:
+            return df.reset_index(drop=True)
+
+        actions: list[CorporateAction] = []
+        for _, row in df.iterrows():
+            actions.append(
+                CorporateAction(
+                    security_id=str(row["security_id"]),
+                    type=str(row["type"]),
+                    effective_date=str(row["effective_date"]),
+                    value=float(row["value"]),
+                    source=str(row.get("source", "")),
+                    retrieval_time=str(row.get("retrieval_time", "")),
+                    available_at=str(row["available_at"])
+                    if pd.notna(row.get("available_at"))
+                    and str(row.get("available_at")).strip() != ""
+                    else None,
+                    eligibility_provenance=str(row["eligibility_provenance"])
+                    if pd.notna(row.get("eligibility_provenance"))
+                    and str(row.get("eligibility_provenance")).strip() != ""
+                    else None,
+                    units=str(row.get("units", "USD")),
+                )
+            )
+        return actions

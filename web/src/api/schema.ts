@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/datasets/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Download Dataset */
+        post: operations["download_dataset_api_datasets_download_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -195,6 +212,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/datasets/{dataset_version_id}/corporate-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Dataset Corporate Actions */
+        get: operations["get_dataset_corporate_actions_api_datasets__dataset_version_id__corporate_actions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -205,6 +239,30 @@ export interface components {
             source: string;
             /** File */
             file: string;
+        };
+        /** CorporateActionResponse */
+        CorporateActionResponse: {
+            /** Security Id */
+            security_id: string;
+            /** Type */
+            type: string;
+            /** Effective Date */
+            effective_date: string;
+            /** Value */
+            value: number;
+            /** Source */
+            source: string;
+            /** Retrieval Time */
+            retrieval_time: string;
+            /** Available At */
+            available_at?: string | null;
+            /** Eligibility Provenance */
+            eligibility_provenance?: string | null;
+            /**
+             * Units
+             * @default USD
+             */
+            units: string;
         };
         /** CoverageResponse */
         CoverageResponse: {
@@ -240,6 +298,16 @@ export interface components {
              * @default false
              */
             is_fundamentals: boolean;
+            /**
+             * Is Corporate Actions
+             * @default false
+             */
+            is_corporate_actions: boolean;
+            /**
+             * Dataset Type
+             * @default daily_bars
+             */
+            dataset_type: string;
         };
         /** DailyBarResponse */
         DailyBarResponse: {
@@ -263,11 +331,21 @@ export interface components {
             retrieval_time: string;
             /** Available At */
             available_at?: string | null;
+            /** Eligibility Provenance */
+            eligibility_provenance?: string | null;
             /**
              * Units
              * @default USD
              */
             units: string;
+            /** Adjusted Open */
+            adjusted_open?: number | null;
+            /** Adjusted High */
+            adjusted_high?: number | null;
+            /** Adjusted Low */
+            adjusted_low?: number | null;
+            /** Adjusted Close */
+            adjusted_close?: number | null;
         };
         /** DatasetImportResponse */
         DatasetImportResponse: {
@@ -324,6 +402,12 @@ export interface components {
             filed_at?: string | null;
             /** Available At */
             available_at?: string | null;
+            /** Period Start */
+            period_start?: string | null;
+            /** Period End */
+            period_end?: string | null;
+            /** Eligibility Provenance */
+            eligibility_provenance?: string | null;
             /** Source */
             source: string;
             /** Retrieval Time */
@@ -358,6 +442,29 @@ export interface components {
             /** Created At */
             created_at: string;
         };
+        /** ProviderDownloadRequest */
+        ProviderDownloadRequest: {
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "tiingo" | "sec_edgar";
+            /** Symbols */
+            symbols?: string[];
+            /** Ciks */
+            ciks?: string[];
+            /** Start Date */
+            start_date?: string | null;
+            /** End Date */
+            end_date?: string | null;
+        };
+        /** ProviderDownloadResponse */
+        ProviderDownloadResponse: {
+            /** Dataset Version Id */
+            dataset_version_id: string;
+            /** Dataset Version Ids */
+            dataset_version_ids: string[];
+        };
         /** RunResponse */
         RunResponse: {
             /** Id */
@@ -387,6 +494,39 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    download_dataset_api_datasets_download_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderDownloadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderDownloadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     health_api_health_get: {
         parameters: {
             query?: never;
@@ -850,6 +990,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FundamentalFactResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_dataset_corporate_actions_api_datasets__dataset_version_id__corporate_actions_get: {
+        parameters: {
+            query?: {
+                symbol?: string | null;
+                /** @description As-of decision timestamp (ISO 8601) */
+                as_of?: string | null;
+            };
+            header?: never;
+            path: {
+                dataset_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CorporateActionResponse"][];
                 };
             };
             /** @description Validation Error */

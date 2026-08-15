@@ -290,6 +290,39 @@ def test_dataset_fundamentals_endpoint(tmp_path):
     assert facts[0]["available_at"] == "2023-01-16T09:00:00Z"
 
 
+def test_dataset_corporate_actions_endpoint_applies_point_in_time_filter(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+
+    csv_content = (
+        "symbol,type,effective_date,value,units,available_at\n"
+        "AAPL,split,2023-06-12,4,ratio,2023-06-13T09:00:00Z\n"
+        "AAPL,dividend,2023-08-10,0.24,USD/share,2023-08-11T09:00:00Z\n"
+    )
+
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "corporate-actions-source"},
+        files={"file": ("corporate-actions.csv", csv_content.encode("utf-8"), "text/csv")},
+    )
+    assert imported.status_code == 201
+    dataset_version_id = imported.json()["dataset_version_id"]
+
+    coverage = client.get(f"/api/datasets/{dataset_version_id}/coverage")
+    assert coverage.status_code == 200
+    assert coverage.json()["is_corporate_actions"] is True
+
+    response = client.get(
+        f"/api/datasets/{dataset_version_id}/corporate-actions",
+        params={"symbol": "AAPL", "as_of": "2023-07-01T00:00:00Z"},
+    )
+    assert response.status_code == 200
+    actions = response.json()
+    assert len(actions) == 1
+    assert actions[0]["type"] == "split"
+    assert actions[0]["effective_date"] == "2023-06-12"
+    assert actions[0]["units"] == "ratio"
+
+
 def test_invalid_as_of_format_returns_422(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
 

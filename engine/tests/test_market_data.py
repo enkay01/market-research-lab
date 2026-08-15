@@ -379,3 +379,118 @@ def test_fundamentals_query():
         # Query as-of None should return both
         all_facts = store.fundamentals(version.id, as_of=None)
         assert len(all_facts) == 2
+
+
+def test_corporate_actions_are_imported_and_filtered_by_eligibility_time():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        workspace = Path(tmpdir)
+        store = MarketDataStore(workspace)
+
+        csv_path = workspace / "corporate_actions.csv"
+        csv_path.write_text(
+            "symbol,type,effective_date,value,units,available_at\n"
+            "AAPL,split,2023-06-12,4,ratio,2023-06-13T09:00:00Z\n"
+            "AAPL,dividend,2023-08-10,0.24,USD/share,2023-08-11T09:00:00Z\n"
+            "AAPL,dividend,not-a-date,0.25,USD/share,2023-08-12T09:00:00Z\n"
+            "AAPL,,2023-09-10,0.25,USD/share,2023-09-11T09:00:00Z\n",
+            encoding="utf-8",
+        )
+
+        version = store.ingest(
+            IngestionRequest(
+                source="corporate-actions-source",
+                file_path=csv_path,
+                retrieval_time="2023-09-12T00:00:00Z",
+            )
+        )
+
+        coverage = store.coverage(version.id)
+        assert coverage.dataset_type == "corporate_actions"
+        assert coverage.row_count == 2
+        assert coverage.rejected_count == 2
+        assert coverage.has_temporal_provenance is True
+
+        actions = store.corporate_actions(
+            version.id, symbol="AAPL", as_of="2023-07-01T00:00:00Z"
+        )
+        assert len(actions) == 1
+        assert actions[0].type == "split"
+        assert actions[0].effective_date == "2023-06-12"
+        assert actions[0].value == 4.0
+        assert actions[0].units == "ratio"
+        assert actions[0].source == "corporate-actions-source"
+
+
+def test_daily_bars_keep_raw_and_adjusted_prices_separate():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        workspace = Path(tmpdir)
+        store = MarketDataStore(workspace)
+        csv_path = workspace / "adjusted-bars.csv"
+        csv_path.write_text(
+            "symbol,date,open,high,low,close,adjusted_open,adjusted_high,adjusted_low,adjusted_close,volume,available_at\n"
+            "AAPL,2023-01-03,125,130,124,128,123,128,122,126,1000000,2023-01-03T16:00:00Z\n",
+            encoding="utf-8",
+        )
+
+        version = store.ingest(
+            IngestionRequest(
+                source="adjusted-price-source",
+                file_path=csv_path,
+                retrieval_time="2023-01-04T00:00:00Z",
+            )
+        )
+
+        bar = store.history(version.id)[0]
+        assert bar.close == 128.0
+        assert bar.adjusted_close == 126.0
+        assert bar.open == 125.0
+        assert bar.adjusted_open == 123.0
+
+
+def test_fundamental_security_id_can_fall_back_to_symbol():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        workspace = Path(tmpdir)
+        store = MarketDataStore(workspace)
+        csv_path = workspace / "fundamentals-with-symbol.csv"
+        csv_path.write_text(
+            "security_id,symbol,field,fiscal_period,value,unit,filed_at,available_at\n"
+            ",AAPL,revenue,2023Q1,1000000000,USD,2023-04-20T00:00:00Z,2023-04-21T09:00:00Z\n",
+            encoding="utf-8",
+        )
+
+        version = store.ingest(
+            IngestionRequest(
+                source="fundamentals-source",
+                file_path=csv_path,
+                retrieval_time="2023-04-22T00:00:00Z",
+            )
+        )
+
+        fact = store.fundamentals(version.id)[0]
+        assert fact.security_id == "AAPL"
+
+
+def test_fundamentals_can_use_filed_at_as_eligibility_time():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        workspace = Path(tmpdir)
+        store = MarketDataStore(workspace)
+        csv_path = workspace / "filed-fundamentals.csv"
+        csv_path.write_text(
+            "symbol,field,fiscal_period,value,unit,filed_at\n"
+            "AAPL,operating_income,2023Q1,250000000,USD,2023-04-20T00:00:00Z\n",
+            encoding="utf-8",
+        )
+
+        version = store.ingest(
+            IngestionRequest(
+                source="fundamentals-source",
+                file_path=csv_path,
+                retrieval_time="2023-04-22T00:00:00Z",
+            )
+        )
+
+        assert store.coverage(version.id).has_temporal_provenance is True
+        facts = store.fundamentals(version.id, as_of="2023-04-21T00:00:00Z")
+        assert len(facts) == 1
+        assert facts[0].filed_at == "2023-04-20T00:00:00Z"
+        assert facts[0].available_at is None

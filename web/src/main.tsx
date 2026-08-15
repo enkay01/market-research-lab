@@ -5,15 +5,19 @@ import {
   api,
   ApiError,
   type CoverageResponse,
+  type CorporateActionResponse,
   type DailyBarResponse,
   type FundamentalFactResponse,
   type Project,
+  type ProviderDownloadRequest,
 } from "./api/client";
 import "./styles.css";
 
 type PreviewRow = Record<string, unknown>;
 
-function toPreviewRows(rows: Array<DailyBarResponse | FundamentalFactResponse>): PreviewRow[] {
+function toPreviewRows(
+  rows: Array<DailyBarResponse | CorporateActionResponse | FundamentalFactResponse>,
+): PreviewRow[] {
   return rows.map((row) => ({ ...row }));
 }
 
@@ -32,6 +36,14 @@ function App() {
   const [previewRows, setPreviewRows] = useState<PreviewRow[]>([]);
   const [importError, setImportError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [provider, setProvider] = useState<ProviderDownloadRequest["provider"]>("tiingo");
+  const [providerSymbols, setProviderSymbols] = useState("");
+  const [providerCiks, setProviderCiks] = useState("");
+  const [providerStartDate, setProviderStartDate] = useState("");
+  const [providerEndDate, setProviderEndDate] = useState("");
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadedVersionIds, setDownloadedVersionIds] = useState<string[]>([]);
   const [asOf, setAsOf] = useState("");
   const [pitError, setPitError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -103,17 +115,67 @@ function App() {
     }
   }
 
+  async function handleProviderDownload(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setDownloadError(null);
+    setPitError(null);
+    setAsOf("");
+    setIsDownloading(true);
+    setStatus("Downloading " + (provider === "tiingo" ? "Tiingo prices" : "SEC EDGAR fundamentals") + "...");
+    const request: ProviderDownloadRequest = {
+      provider,
+      symbols: provider === "tiingo" ? providerSymbols.split(",").map((value) => value.trim()).filter(Boolean) : [],
+      ciks: provider === "sec_edgar" ? providerCiks.split(",").map((value) => value.trim()).filter(Boolean) : [],
+      start_date: providerStartDate || null,
+      end_date: providerEndDate || null,
+    };
+    try {
+      const response = await api.downloadDataset(request);
+      const [newCoverage, rows] = await Promise.all([
+        api.getCoverage(response.dataset_version_id),
+        api.getPreview(response.dataset_version_id),
+      ]);
+      setCoverage(newCoverage);
+      setPreviewRows(rows);
+      setDownloadedVersionIds(response.dataset_version_ids);
+      setStatus("Downloaded " + response.dataset_version_ids.length + " Dataset Version" + (response.dataset_version_ids.length === 1 ? "" : "s"));
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Unable to download provider data";
+      setDownloadError(msg);
+      setStatus("Provider download failed");
+    } finally {
+      setIsDownloading(false);
+    }
+  }
+
+  async function inspectDatasetVersion(datasetVersionId: string) {
+    setDownloadError(null);
+    try {
+      const [newCoverage, rows] = await Promise.all([
+        api.getCoverage(datasetVersionId),
+        api.getPreview(datasetVersionId),
+      ]);
+      setCoverage(newCoverage);
+      setPreviewRows(rows);
+      setStatus("Inspecting Dataset Version " + datasetVersionId);
+    } catch (error) {
+      setDownloadError(error instanceof Error ? error.message : "Unable to inspect Dataset Version");
+    }
+  }
   async function handlePitFilter(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!coverage) return;
     setPitError(null);
     try {
       const isFundamentals = coverage?.is_fundamentals ?? false;
+      const isCorporateActions = coverage?.is_corporate_actions ?? false;
       const params = { as_of: asOf.trim() || undefined };
       
       const fetchedRows = isFundamentals
         ? await api.getFundamentals(coverage.id, params)
-        : await api.getHistory(coverage.id, params);
+        : isCorporateActions
+          ? await api.getCorporateActions(coverage.id, params)
+          : await api.getHistory(coverage.id, params);
 
       setPreviewRows(toPreviewRows(fetchedRows));
     } catch (error: unknown) {
@@ -213,6 +275,58 @@ function App() {
             </div>
             
             <div style={{ marginTop: '2rem' }}>
+              <h3>Download Market Data</h3>
+              <p className="subtle">Credentials stay in the local engine. They are never sent by the browser.</p>
+              <form onSubmit={handleProviderDownload} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem', marginBottom: '2rem' }}>
+                <div>
+                  <label htmlFor="provider">Provider</label>
+                  <select id="provider" value={provider} onChange={(event) => setProvider(event.target.value as ProviderDownloadRequest["provider"])} style={{ width: '100%', padding: '12px 14px', border: '1px solid #bbc4b8', borderRadius: '5px' }}>
+                    <option value="tiingo">Tiingo prices, splits, and dividends</option>
+                    <option value="sec_edgar">SEC EDGAR fundamentals</option>
+                  </select>
+                </div>
+                {provider === "tiingo" ? (
+                  <div>
+                    <label htmlFor="provider-symbols">Symbols</label>
+                    <input id="provider-symbols" value={providerSymbols} onChange={(event) => setProviderSymbols(event.target.value)} placeholder="AAPL, MSFT" />
+                  </div>
+                ) : (
+                  <div>
+                    <label htmlFor="provider-ciks">SEC CIKs</label>
+                    <input id="provider-ciks" value={providerCiks} onChange={(event) => setProviderCiks(event.target.value)} placeholder="320193, 789019" />
+                  </div>
+                )}
+                <div className="form-row">
+                  <div style={{ flex: 1 }}>
+                    <label htmlFor="provider-start-date">Start date</label>
+                    <input id="provider-start-date" type="date" value={providerStartDate} onChange={(event) => setProviderStartDate(event.target.value)} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label htmlFor="provider-end-date">End date</label>
+                    <input id="provider-end-date" type="date" value={providerEndDate} onChange={(event) => setProviderEndDate(event.target.value)} />
+                  </div>
+                </div>
+                <button type="submit" disabled={isDownloading} style={{ alignSelf: 'flex-start' }}>
+                  {isDownloading ? "Downloading..." : "Download Data"}
+                </button>
+                {downloadError && (
+                  <div style={{ padding: '0.75rem 1rem', backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid var(--color-danger-fg, #ef4444)', borderRadius: '4px', color: 'var(--color-danger-fg, #ef4444)', fontSize: '0.9rem' }}>
+                    <strong>Download Error:</strong> {downloadError}
+                  </div>
+                )}
+              </form>
+              {downloadedVersionIds.length > 1 && (
+                <div style={{ marginBottom: '2rem' }}>
+                  <strong>Dataset Versions created by this download:</strong>
+                  <div className="form-row" style={{ flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                    {downloadedVersionIds.map((datasetVersionId) => (
+                      <button key={datasetVersionId} type="button" className="secondary" onClick={() => void inspectDatasetVersion(datasetVersionId)}>
+                        Inspect {datasetVersionId}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <h3>Import Market Data</h3>
               <form onSubmit={handleImportDataset} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
                 <div>
@@ -242,6 +356,7 @@ function App() {
                   <li><strong>Coverage:</strong> {coverage.coverage_start || 'N/A'} to {coverage.coverage_end || 'N/A'}</li>
                   <li><strong>Rows Imported:</strong> {coverage.row_count}</li>
                   <li><strong>Rows Rejected:</strong> {coverage.rejected_count}</li>
+                  <li><strong>Dataset Type:</strong> {coverage.dataset_type}</li>
                   <li>
                     <strong>Temporal Provenance:</strong>{" "}
                     {coverage.has_temporal_provenance ? (
