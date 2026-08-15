@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any, Callable, Mapping
+from typing import Callable, Mapping, TypedDict
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
+from .json_types import JsonValue
 from .market_data import Security
 
 
@@ -19,7 +20,7 @@ class ProviderDownloadError(ValueError):
     """Raised when a remote provider cannot return a usable response."""
 
 
-JsonFetcher = Callable[[str, Mapping[str, str]], Any]
+JsonFetcher = Callable[[str, Mapping[str, str]], JsonValue]
 
 
 class TiingoPriceResponse(BaseModel):
@@ -106,21 +107,87 @@ class SecSubmissions(BaseModel):
 
 
 @dataclass(frozen=True)
+class TiingoDownloadOptions:
+    symbols: list[str] | tuple[str, ...]
+    start_date: str | None
+    end_date: str | None
+    retrieval_time: str
+    token: str | None
+    fetch_json: JsonFetcher | None = None
+
+
+@dataclass(frozen=True)
+class SecEdgarDownloadOptions:
+    ciks: list[str] | tuple[str, ...]
+    retrieval_time: str
+    user_agent: str | None
+    start_date: str | None = None
+    end_date: str | None = None
+    fetch_json: JsonFetcher | None = None
+
+
+@dataclass(frozen=True)
 class ProviderCredentials:
     tiingo_api_token: str | None = None
     sec_edgar_user_agent: str | None = None
 
 
+class DailyBarRecord(TypedDict):
+    security_id: str
+    date: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    adjusted_open: float | None
+    adjusted_high: float | None
+    adjusted_low: float | None
+    adjusted_close: float | None
+    units: str
+    available_at: str
+    eligibility_provenance: str
+    source: str
+    retrieval_time: str
+
+
+class CorporateActionRecord(TypedDict):
+    security_id: str
+    type: str
+    effective_date: str
+    value: float
+    units: str
+    available_at: str
+    eligibility_provenance: str
+    source: str
+    retrieval_time: str
+
+
+class FundamentalFactRecord(TypedDict):
+    security_id: str
+    field: str
+    fiscal_period: str
+    period_start: str | None
+    period_end: str | None
+    value: float | str
+    unit: str
+    filed_at: str
+    available_at: str | None
+    eligibility_provenance: str
+    source: str
+    retrieval_time: str
+
+
 @dataclass
 class ProviderDownload:
     securities: list[Security] = field(default_factory=list)
-    daily_bars: list[dict[str, Any]] = field(default_factory=list)
-    corporate_actions: list[dict[str, Any]] = field(default_factory=list)
-    fundamental_facts: list[dict[str, Any]] = field(default_factory=list)
+    daily_bars: list[DailyBarRecord] = field(default_factory=list)
+    corporate_actions: list[CorporateActionRecord] = field(default_factory=list)
+    fundamental_facts: list[FundamentalFactRecord] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
-def _fetch_json(url: str, headers: Mapping[str, str]) -> Any:
+def _fetch_json(url: str, headers: Mapping[str, str]) -> JsonValue:
     request = Request(url, headers=dict(headers), method="GET")
     try:
         with urlopen(request, timeout=30) as response:
@@ -131,7 +198,9 @@ def _fetch_json(url: str, headers: Mapping[str, str]) -> Any:
         raise ProviderDownloadError(f"Provider request failed ({type(error).__name__}).") from error
 
 
-def _call(fetch_json: JsonFetcher, url: str, headers: Mapping[str, str], provider: str) -> Any:
+def _call(
+    fetch_json: JsonFetcher, url: str, headers: Mapping[str, str], provider: str
+) -> JsonValue:
     try:
         return fetch_json(url, headers)
     except ProviderDownloadError as error:
@@ -162,8 +231,8 @@ def _normalise_ciks(ciks: list[str] | tuple[str, ...]) -> list[str]:
     return normalised
 
 
-def _tiingo_available_at(raw_date: Any, retrieval_time: str) -> str:
-    if not isinstance(raw_date, str) or not raw_date.strip():
+def _tiingo_available_at(raw_date: str, retrieval_time: str) -> str:
+    if not raw_date.strip():
         raise ProviderDownloadError("Tiingo returned a price without a date.")
     try:
         datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
@@ -174,16 +243,15 @@ def _tiingo_available_at(raw_date: Any, retrieval_time: str) -> str:
     return retrieval_time
 
 
-def download_tiingo(
-    *,
-    symbols: list[str] | tuple[str, ...],
-    start_date: str | None,
-    end_date: str | None,
-    retrieval_time: str,
-    token: str | None,
-    fetch_json: JsonFetcher = _fetch_json,
-) -> ProviderDownload:
+def download_tiingo(options: TiingoDownloadOptions) -> ProviderDownload:
     """Download Tiingo EOD prices and map its action fields to canonical rows."""
+    symbols = options.symbols
+    start_date = options.start_date
+    end_date = options.end_date
+    retrieval_time = options.retrieval_time
+    token = options.token
+    fetch_json = options.fetch_json or _fetch_json
+
     if not token:
         raise ProviderDownloadError("Tiingo credentials are missing: set TIINGO_API_TOKEN.")
 
@@ -220,10 +288,16 @@ def download_tiingo(
             headers,
             "Tiingo",
         )
-        if not isinstance(payload, list):
-            raise ProviderDownloadError(f"Tiingo returned an invalid price payload for {symbol}.")
+        try:
+            price_payload = TypeAdapter(
+                list[dict[str, str | int | float | bool | None]]
+            ).validate_python(payload)
+        except ValidationError as error:
+            raise ProviderDownloadError(
+                f"Tiingo returned an invalid price payload for {symbol}."
+            ) from error
 
-        for row_number, raw_row in enumerate(payload, start=1):
+        for row_number, raw_row in enumerate(price_payload, start=1):
             try:
                 row = TiingoPriceResponse.model_validate(raw_row)
             except ValidationError:
@@ -287,8 +361,8 @@ def download_tiingo(
     return result
 
 
-def _normalise_timestamp(raw_value: Any, label: str) -> str:
-    if not isinstance(raw_value, str) or not raw_value.strip():
+def _normalise_timestamp(raw_value: str, label: str) -> str:
+    if not raw_value.strip():
         raise ProviderDownloadError(f"SEC EDGAR returned a missing {label}.")
     try:
         parsed = datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
@@ -309,8 +383,8 @@ def _period_date(raw_date: str | None, label: str) -> str | None:
     return raw_date
 
 
-def _date_at_midnight(raw_date: Any) -> str:
-    if not isinstance(raw_date, str) or not raw_date.strip():
+def _date_at_midnight(raw_date: str) -> str:
+    if not raw_date.strip():
         raise ProviderDownloadError("SEC EDGAR returned a fact without a filing date.")
     try:
         parsed = date.fromisoformat(raw_date[:10])
@@ -331,7 +405,7 @@ def _in_date_range(raw_date: str, start_date: str | None, end_date: str | None) 
     return not ((start and current < start) or (end and current > end))
 
 
-def _parse_submissions(payload: Any) -> SecSubmissions:
+def _parse_submissions(payload: JsonValue) -> SecSubmissions:
     try:
         return SecSubmissions.model_validate(payload)
     except ValidationError as error:
@@ -349,27 +423,24 @@ def _acceptance_times(submissions: SecSubmissions) -> dict[str, str]:
     return result
 
 
-def _fiscal_period(observation: Mapping[str, Any]) -> str:
-    frame = observation.get("frame")
-    if frame:
-        return str(frame)
-    fiscal_year = observation.get("fy")
-    fiscal_period = str(observation.get("fp") or "FY").upper()
-    if fiscal_year is None:
-        return f"{observation.get('start', 'unknown')}/{observation.get('end', 'unknown')}"
-    return f"FY{fiscal_year}" if fiscal_period == "FY" else f"{fiscal_year}{fiscal_period}"
+def _fiscal_period(observation: SecObservation) -> str:
+    if observation.frame:
+        return observation.frame
+    fiscal_period = (observation.fp or "FY").upper()
+    if observation.fy is None:
+        return f"{observation.start or 'unknown'}/{observation.end or 'unknown'}"
+    return f"FY{observation.fy}" if fiscal_period == "FY" else f"{observation.fy}{fiscal_period}"
 
 
-def download_sec_edgar(
-    *,
-    ciks: list[str] | tuple[str, ...],
-    retrieval_time: str,
-    user_agent: str | None,
-    start_date: str | None = None,
-    end_date: str | None = None,
-    fetch_json: JsonFetcher = _fetch_json,
-) -> ProviderDownload:
+def download_sec_edgar(options: SecEdgarDownloadOptions) -> ProviderDownload:
     """Download SEC filing metadata and Company Facts into canonical facts."""
+    ciks = options.ciks
+    retrieval_time = options.retrieval_time
+    user_agent = options.user_agent
+    start_date = options.start_date
+    end_date = options.end_date
+    fetch_json = options.fetch_json or _fetch_json
+
     if not user_agent:
         raise ProviderDownloadError("SEC EDGAR credentials are missing: set SEC_EDGAR_USER_AGENT.")
 
@@ -433,7 +504,7 @@ def download_sec_edgar(
                             {
                                 "security_id": security_id,
                                 "field": f"{taxonomy}:{concept}",
-                                "fiscal_period": _fiscal_period(observation.model_dump()),
+                                "fiscal_period": _fiscal_period(observation),
                                 "period_start": period_start,
                                 "period_end": period_end,
                                 "value": observation.val,

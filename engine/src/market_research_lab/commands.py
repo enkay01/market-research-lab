@@ -24,7 +24,7 @@ def _wait_for_children(children: list[subprocess.Popen[object]]) -> None:
         while all(child.poll() is None for child in children):
             time.sleep(0.25)
     except KeyboardInterrupt:
-        pass
+        print("Stopping local services.", file=sys.stderr)
     finally:
         for child in children:
             if child.poll() is None:

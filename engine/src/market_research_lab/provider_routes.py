@@ -9,7 +9,7 @@ from fastapi import FastAPI, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from .downloads import download_provider
+from .downloads import ProviderDownloadOptions, download_provider
 from .market_data import MarketDataStore
 from .providers import JsonFetcher, ProviderCredentials, ProviderDownloadError
 
@@ -64,13 +64,15 @@ def register_provider_download_route(
         try:
             versions = download_provider(
                 market_store,
-                provider=request.provider,
-                symbols=request.symbols,
-                ciks=request.ciks,
-                start_date=request.start_date.isoformat() if request.start_date else None,
-                end_date=request.end_date.isoformat() if request.end_date else None,
-                credentials=credentials,
-                fetch_json=provider_fetch_json,
+                ProviderDownloadOptions(
+                    provider=request.provider,
+                    symbols=request.symbols,
+                    ciks=request.ciks,
+                    start_date=request.start_date.isoformat() if request.start_date else None,
+                    end_date=request.end_date.isoformat() if request.end_date else None,
+                    credentials=credentials,
+                    fetch_json=provider_fetch_json,
+                ),
             )
         except ProviderDownloadError as error:
             return JSONResponse(

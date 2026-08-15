@@ -360,7 +360,7 @@ export interface components {
             name: string;
             /** Definition */
             definition: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue-Input"];
             };
         };
         /** DefinitionResponse */
@@ -372,7 +372,7 @@ export interface components {
         DraftRequest: {
             /** Definition */
             definition: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue-Input"];
             };
         };
         /** DraftResponse */
@@ -381,7 +381,7 @@ export interface components {
             name: string;
             /** Definition */
             definition: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue-Output"];
             };
             /** Saved At */
             saved_at: string;
@@ -423,6 +423,12 @@ export interface components {
             /** Status */
             status: string;
         };
+        "JsonValue-Input": boolean | number | string | components["schemas"]["JsonValue-Input"][] | {
+            [key: string]: components["schemas"]["JsonValue-Input"];
+        } | null;
+        "JsonValue-Output": boolean | number | string | components["schemas"]["JsonValue-Output"][] | {
+            [key: string]: components["schemas"]["JsonValue-Output"];
+        } | null;
         /** ProjectCreateRequest */
         ProjectCreateRequest: {
             /** Name */
@@ -918,7 +924,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        [key: string]: unknown;
+                        [key: string]: components["schemas"]["JsonValue-Output"];
                     }[];
                 };
             };

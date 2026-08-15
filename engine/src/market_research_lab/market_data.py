@@ -8,11 +8,12 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 import duckdb
 import pandas as pd
+
+from .json_types import JsonObject
 
 
 class InadequateTemporalProvenanceError(ValueError):
@@ -95,6 +96,66 @@ class FundamentalFact:
 
 
 @dataclass(frozen=True)
+class ValidationSummary:
+    """Typed validation metadata persisted with a Dataset Version."""
+
+    row_count: int
+    rejected_count: int
+    missing_fields: dict[str, int]
+    total_warnings: int
+    warnings: list[str]
+    has_temporal_provenance: bool
+    is_fundamentals: bool
+    is_corporate_actions: bool
+    dataset_type: str
+
+    def to_json(self) -> JsonObject:
+        return {
+            "row_count": self.row_count,
+            "rejected_count": self.rejected_count,
+            "missing_fields": self.missing_fields,
+            "total_warnings": self.total_warnings,
+            "warnings": self.warnings,
+            "has_temporal_provenance": self.has_temporal_provenance,
+            "is_fundamentals": self.is_fundamentals,
+            "is_corporate_actions": self.is_corporate_actions,
+            "dataset_type": self.dataset_type,
+        }
+
+    def with_warnings(self, warnings: list[str]) -> "ValidationSummary":
+        if not warnings:
+            return self
+        return ValidationSummary(
+            row_count=self.row_count,
+            rejected_count=self.rejected_count,
+            missing_fields=self.missing_fields,
+            total_warnings=self.total_warnings + len(warnings),
+            warnings=(self.warnings + warnings)[:100],
+            has_temporal_provenance=self.has_temporal_provenance,
+            is_fundamentals=self.is_fundamentals,
+            is_corporate_actions=self.is_corporate_actions,
+            dataset_type=self.dataset_type,
+        )
+
+    @classmethod
+    def from_json(cls, raw: str) -> "ValidationSummary":
+        payload = json.loads(raw)
+        return cls(
+            row_count=int(payload["row_count"]),
+            rejected_count=int(payload["rejected_count"]),
+            missing_fields={
+                str(field): int(count) for field, count in payload["missing_fields"].items()
+            },
+            total_warnings=int(payload["total_warnings"]),
+            warnings=[str(warning) for warning in payload["warnings"]],
+            has_temporal_provenance=bool(payload["has_temporal_provenance"]),
+            is_fundamentals=bool(payload["is_fundamentals"]),
+            is_corporate_actions=bool(payload["is_corporate_actions"]),
+            dataset_type=str(payload["dataset_type"]),
+        )
+
+
+@dataclass(frozen=True)
 class DatasetVersion:
     id: str
     source: str
@@ -102,8 +163,21 @@ class DatasetVersion:
     coverage_start: str | None
     coverage_end: str | None
     files: list[str]
-    validation_summary: dict[str, Any]
+    validation_summary: ValidationSummary
     dataset_type: str = DATASET_TYPE_DAILY_BARS
+
+
+@dataclass(frozen=True)
+class LoadedDataset:
+    dataframe: pd.DataFrame
+    has_provenance: bool
+    dataset_type: str
+
+
+@dataclass(frozen=True)
+class MarketDataQuery:
+    symbol: str | None = None
+    as_of: datetime | str | None = None
 
 
 @dataclass(frozen=True)
@@ -180,10 +254,10 @@ class MarketDataStore:
             raise ValueError(f"Failed to parse {format_name} file: {error}") from error
 
     @staticmethod
-    def _is_missing(value: Any) -> bool:
-        return bool(pd.isna(value)) or (
-            isinstance(value, str) and value.strip().lower() in {"", "nan", "nat", "none"}
-        )
+    def _is_missing(value: str | float | int | bool | None) -> bool:
+        if bool(pd.isna(value)):
+            return True
+        return str(value).strip().lower() in {"", "nan", "nat", "none"}
 
     @classmethod
     def _required_text(cls, row: pd.Series, field: str) -> str:
@@ -276,7 +350,11 @@ class MarketDataStore:
         return True
 
     def _eligible_timestamps_for_historical_use(
-        self, df: pd.DataFrame, has_provenance: bool, dataset_type: str = DATASET_TYPE_DAILY_BARS
+        self,
+        df: pd.DataFrame,
+        *,
+        has_provenance: bool,
+        dataset_type: str = DATASET_TYPE_DAILY_BARS,
     ) -> pd.Series:
         if not has_provenance or not self._has_complete_temporal_provenance(df, dataset_type):
             raise InadequateTemporalProvenanceError(TEMPORAL_PROVENANCE_ERROR_MESSAGE)
@@ -305,7 +383,7 @@ class MarketDataStore:
             raise ValueError(f"Missing required columns: {sorted(missing_cols)}")
 
         warnings: list[str] = []
-        valid_rows: list[dict[str, Any]] = []
+        valid_rows: list[JsonObject] = []
         missing_fields: dict[str, int] = {}
 
         if dataset_type == DATASET_TYPE_FUNDAMENTALS:
@@ -510,11 +588,10 @@ class MarketDataStore:
         # Arrow cannot store a mixed numeric/string object column. Preserve the
         # canonical value semantics by serializing mixed fundamentals as text;
         # query conversion restores numeric values when possible.
-        if dataset_type == DATASET_TYPE_FUNDAMENTALS and not (
-            df_valid["value"].map(lambda value: isinstance(value, (int, float))).all()
-            or df_valid["value"].map(lambda value: isinstance(value, str)).all()
-        ):
-            df_valid["value"] = df_valid["value"].map(str)
+        if dataset_type == DATASET_TYPE_FUNDAMENTALS:
+            numeric_values = pd.to_numeric(df_valid["value"], errors="coerce")
+            if not numeric_values.notna().all():
+                df_valid["value"] = df_valid["value"].astype(str)
 
         parquet_name = f"{version_id}.parquet"
         parquet_path = self.datasets_dir / parquet_name
@@ -526,17 +603,17 @@ class MarketDataStore:
                 parquet_path.unlink()
             raise
 
-        summary = {
-            "row_count": len(valid_rows),
-            "rejected_count": rejected_count,
-            "missing_fields": missing_fields,
-            "total_warnings": len(warnings),
-            "warnings": warnings[:100],
-            "has_temporal_provenance": has_temporal_provenance,
-            "is_fundamentals": dataset_type == DATASET_TYPE_FUNDAMENTALS,
-            "is_corporate_actions": dataset_type == DATASET_TYPE_CORPORATE_ACTIONS,
-            "dataset_type": dataset_type,
-        }
+        summary = ValidationSummary(
+            row_count=len(valid_rows),
+            rejected_count=rejected_count,
+            missing_fields=missing_fields,
+            total_warnings=len(warnings),
+            warnings=warnings[:100],
+            has_temporal_provenance=has_temporal_provenance,
+            is_fundamentals=dataset_type == DATASET_TYPE_FUNDAMENTALS,
+            is_corporate_actions=dataset_type == DATASET_TYPE_CORPORATE_ACTIONS,
+            dataset_type=dataset_type,
+        )
 
         version = DatasetVersion(
             id=version_id,
@@ -567,7 +644,7 @@ class MarketDataStore:
                         version.coverage_start,
                         version.coverage_end,
                         json.dumps(version.files),
-                        json.dumps(version.validation_summary),
+                        json.dumps(version.validation_summary.to_json()),
                     ),
                 )
 
@@ -581,7 +658,7 @@ class MarketDataStore:
     def ingest_records(
         self,
         request: IngestionRequest,
-        rows: list[dict[str, Any]],
+        rows: list[JsonObject],
         *,
         warnings: list[str] | None = None,
     ) -> DatasetVersion:
@@ -619,13 +696,11 @@ class MarketDataStore:
         if not warnings:
             return version
 
-        summary = dict(version.validation_summary)
-        summary["warnings"] = (list(summary.get("warnings", [])) + warnings)[:100]
-        summary["total_warnings"] = int(summary.get("total_warnings", 0)) + len(warnings)
+        summary = version.validation_summary.with_warnings(warnings)
         with duckdb.connect(str(self.db_path)) as con:
             con.execute(
                 "UPDATE dataset_versions SET validation_summary = ? WHERE id = ?",
-                (json.dumps(summary), version.id),
+                (json.dumps(summary.to_json()), version.id),
             )
         return DatasetVersion(
             id=version.id,
@@ -719,31 +794,31 @@ class MarketDataStore:
                 raw_files,
                 raw_summary,
             ) = row
-            summary = json.loads(raw_summary)
-            files = json.loads(raw_files)
+            summary = ValidationSummary.from_json(raw_summary)
+            files = [str(file_name) for file_name in json.loads(raw_files)]
 
             return CoverageReport(
                 id=version_id,
                 source=source,
                 coverage_start=coverage_start,
                 coverage_end=coverage_end,
-                row_count=summary.get("row_count", 0),
-                rejected_count=summary.get("rejected_count", 0),
-                missing_fields=summary.get("missing_fields", {}),
-                warnings=summary.get("warnings", []),
-                total_warnings=summary.get("total_warnings", len(summary.get("warnings", []))),
+                row_count=summary.row_count,
+                rejected_count=summary.rejected_count,
+                missing_fields=summary.missing_fields,
+                warnings=summary.warnings,
+                total_warnings=summary.total_warnings,
                 files=files,
-                has_temporal_provenance=summary.get("has_temporal_provenance", False),
-                is_fundamentals=summary.get("is_fundamentals", False),
-                is_corporate_actions=summary.get("is_corporate_actions", False),
-                dataset_type=summary.get("dataset_type", DATASET_TYPE_DAILY_BARS),
+                has_temporal_provenance=summary.has_temporal_provenance,
+                is_fundamentals=summary.is_fundamentals,
+                is_corporate_actions=summary.is_corporate_actions,
+                dataset_type=summary.dataset_type,
             )
 
-    def preview(self, dataset_version_id: str, limit: int = 50) -> list[dict[str, Any]]:
-        df, _, _ = self._load_dataset_df(dataset_version_id)
-        return df.head(limit).to_dict(orient="records")
+    def preview(self, dataset_version_id: str, limit: int = 50) -> list[JsonObject]:
+        loaded = self._load_dataset_df(dataset_version_id)
+        return loaded.dataframe.head(limit).to_dict(orient="records")
 
-    def _load_dataset_df(self, dataset_version_id: str) -> tuple[pd.DataFrame, bool, str]:
+    def _load_dataset_df(self, dataset_version_id: str) -> LoadedDataset:
         with duckdb.connect(str(self.db_path)) as con:
             con.execute(
                 "SELECT files, validation_summary FROM dataset_versions WHERE id = ?",
@@ -754,10 +829,8 @@ class MarketDataStore:
                 raise ValueError(f"DatasetVersion {dataset_version_id} not found")
 
             raw_files, raw_summary = row
-            summary = json.loads(raw_summary)
-            files = json.loads(raw_files)
-            has_prov = summary.get("has_temporal_provenance", False)
-            dataset_type = summary.get("dataset_type", DATASET_TYPE_DAILY_BARS)
+            summary = ValidationSummary.from_json(raw_summary)
+            files = [str(file_name) for file_name in json.loads(raw_files)]
 
         dfs = []
         for file_name in files:
@@ -765,38 +838,41 @@ class MarketDataStore:
             if path.exists():
                 dfs.append(pd.read_parquet(path))
 
-        if not dfs:
-            return pd.DataFrame(), has_prov, dataset_type
-
-        df = pd.concat(dfs, ignore_index=True)
-        return df, has_prov, dataset_type
+        dataframe = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+        return LoadedDataset(
+            dataframe=dataframe,
+            has_provenance=summary.has_temporal_provenance,
+            dataset_type=summary.dataset_type,
+        )
 
     def _filter_by_as_of_and_symbol(
-        self,
-        df: pd.DataFrame,
-        has_provenance: bool,
-        dataset_type: str,
-        as_of: datetime | str | None,
-        symbol: str | None,
+        self, loaded: LoadedDataset, query: MarketDataQuery
     ) -> pd.DataFrame:
-        if as_of is not None:
-            as_of_utc = pd.to_datetime(as_of, utc=True)
+        dataframe = loaded.dataframe
+        if query.as_of is not None:
+            as_of_utc = pd.to_datetime(query.as_of, utc=True)
             available_at_utc = self._eligible_timestamps_for_historical_use(
-                df, has_provenance, dataset_type
+                dataframe,
+                has_provenance=loaded.has_provenance,
+                dataset_type=loaded.dataset_type,
             )
-            df = df[available_at_utc <= as_of_utc]
+            dataframe = dataframe[available_at_utc <= as_of_utc]
 
-        if symbol is not None and not df.empty:
-            if "security_id" in df.columns:
-                df = df[df["security_id"] == symbol]
-            elif "symbol" in df.columns:
-                df = df[df["symbol"] == symbol]
+        if query.symbol is not None and not dataframe.empty:
+            if "security_id" in dataframe.columns:
+                dataframe = dataframe[dataframe["security_id"] == query.symbol]
+            elif "symbol" in dataframe.columns:
+                dataframe = dataframe[dataframe["symbol"] == query.symbol]
 
-        return df
+        return dataframe
 
     def ensure_historical_eligibility(self, dataset_version_id: str) -> None:
-        df, has_provenance, dataset_type = self._load_dataset_df(dataset_version_id)
-        self._eligible_timestamps_for_historical_use(df, has_provenance, dataset_type)
+        loaded = self._load_dataset_df(dataset_version_id)
+        self._eligible_timestamps_for_historical_use(
+            loaded.dataframe,
+            has_provenance=loaded.has_provenance,
+            dataset_type=loaded.dataset_type,
+        )
 
     def history(
         self,
@@ -806,8 +882,8 @@ class MarketDataStore:
         as_of: str | datetime | None = None,
         as_dataframe: bool = False,
     ) -> list[DailyBar] | pd.DataFrame:
-        df, has_prov, dataset_type = self._load_dataset_df(dataset_version_id)
-        df = self._filter_by_as_of_and_symbol(df, has_prov, dataset_type, as_of, symbol)
+        loaded = self._load_dataset_df(dataset_version_id)
+        df = self._filter_by_as_of_and_symbol(loaded, MarketDataQuery(symbol=symbol, as_of=as_of))
 
         if as_dataframe:
             return df.reset_index(drop=True)
@@ -850,8 +926,8 @@ class MarketDataStore:
         as_of: str | datetime | None = None,
         as_dataframe: bool = False,
     ) -> list[FundamentalFact] | pd.DataFrame:
-        df, has_prov, dataset_type = self._load_dataset_df(dataset_version_id)
-        df = self._filter_by_as_of_and_symbol(df, has_prov, dataset_type, as_of, symbol)
+        loaded = self._load_dataset_df(dataset_version_id)
+        df = self._filter_by_as_of_and_symbol(loaded, MarketDataQuery(symbol=symbol, as_of=as_of))
 
         if as_dataframe:
             return df.reset_index(drop=True)
@@ -903,8 +979,8 @@ class MarketDataStore:
         as_of: str | datetime | None = None,
         as_dataframe: bool = False,
     ) -> list[CorporateAction] | pd.DataFrame:
-        df, has_prov, dataset_type = self._load_dataset_df(dataset_version_id)
-        df = self._filter_by_as_of_and_symbol(df, has_prov, dataset_type, as_of, symbol)
+        loaded = self._load_dataset_df(dataset_version_id)
+        df = self._filter_by_as_of_and_symbol(loaded, MarketDataQuery(symbol=symbol, as_of=as_of))
 
         if as_dataframe:
             return df.reset_index(drop=True)

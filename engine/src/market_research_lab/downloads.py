@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -10,51 +11,60 @@ from .providers import (
     JsonFetcher,
     ProviderCredentials,
     ProviderDownloadError,
+    SecEdgarDownloadOptions,
+    TiingoDownloadOptions,
     download_sec_edgar,
     download_tiingo,
 )
 
 
+@dataclass(frozen=True)
+class ProviderDownloadOptions:
+    provider: str
+    credentials: ProviderCredentials
+    symbols: list[str] | tuple[str, ...] = ()
+    ciks: list[str] | tuple[str, ...] = ()
+    start_date: str | None = None
+    end_date: str | None = None
+    retrieval_time: str | None = None
+    fetch_json: JsonFetcher | None = None
+
+
 def download_provider(
     store: MarketDataStore,
-    *,
-    provider: str,
-    symbols: list[str] | tuple[str, ...] = (),
-    ciks: list[str] | tuple[str, ...] = (),
-    start_date: str | None = None,
-    end_date: str | None = None,
-    retrieval_time: str | None = None,
-    credentials: ProviderCredentials,
-    fetch_json: JsonFetcher | None = None,
+    options: ProviderDownloadOptions,
 ) -> list[DatasetVersion]:
     """Fetch all requested provider data before creating any Dataset Version."""
-    retrieved_at = retrieval_time or datetime.now(UTC).isoformat()
-    fetch_kwargs = {"fetch_json": fetch_json} if fetch_json is not None else {}
+    retrieved_at = options.retrieval_time or datetime.now(UTC).isoformat()
 
-    if provider == "tiingo":
+    if options.provider == "tiingo":
         downloaded = download_tiingo(
-            symbols=symbols,
-            start_date=start_date,
-            end_date=end_date,
-            retrieval_time=retrieved_at,
-            token=credentials.tiingo_api_token,
-            **fetch_kwargs,
+            TiingoDownloadOptions(
+                symbols=options.symbols,
+                start_date=options.start_date,
+                end_date=options.end_date,
+                retrieval_time=retrieved_at,
+                token=options.credentials.tiingo_api_token,
+                fetch_json=options.fetch_json,
+            )
         )
         record_groups = [downloaded.daily_bars, downloaded.corporate_actions]
         source = "tiingo"
-    elif provider == "sec_edgar":
+    elif options.provider == "sec_edgar":
         downloaded = download_sec_edgar(
-            ciks=ciks,
-            retrieval_time=retrieved_at,
-            user_agent=credentials.sec_edgar_user_agent,
-            start_date=start_date,
-            end_date=end_date,
-            **fetch_kwargs,
+            SecEdgarDownloadOptions(
+                ciks=options.ciks,
+                retrieval_time=retrieved_at,
+                user_agent=options.credentials.sec_edgar_user_agent,
+                start_date=options.start_date,
+                end_date=options.end_date,
+                fetch_json=options.fetch_json,
+            )
         )
         record_groups = [downloaded.fundamental_facts]
         source = "sec_edgar"
     else:
-        raise ProviderDownloadError(f"Unsupported data provider '{provider}'.")
+        raise ProviderDownloadError(f"Unsupported data provider '{options.provider}'.")
 
     versions: list[DatasetVersion] = []
     try:
@@ -76,9 +86,9 @@ def download_provider(
         for version in versions:
             store.discard_dataset_version(version)
         raise ProviderDownloadError(
-            f"{provider} data could not be persisted as a Dataset Version: {error}"
+            f"{options.provider} data could not be persisted as a Dataset Version: {error}"
         ) from error
 
     if not versions:
-        raise ProviderDownloadError(f"{provider} returned no records.")
+        raise ProviderDownloadError(f"{options.provider} returned no records.")
     return versions

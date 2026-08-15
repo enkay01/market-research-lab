@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
+from market_research_lab.json_types import JsonValue
 from market_research_lab.providers import (
     ProviderDownloadError,
+    SecEdgarDownloadOptions,
+    TiingoDownloadOptions,
     download_sec_edgar,
     download_tiingo,
 )
@@ -14,7 +15,7 @@ from market_research_lab.providers import (
 def test_tiingo_payload_maps_prices_and_corporate_actions() -> None:
     calls: list[tuple[str, dict[str, str]]] = []
 
-    def fetch_json(url: str, headers: dict[str, str]) -> Any:
+    def fetch_json(url: str, headers: dict[str, str]) -> JsonValue:
         calls.append((url, headers))
         if "/prices" not in url:
             return {"ticker": "AAPL", "name": "Apple Inc.", "exchangeCode": "NASDAQ"}
@@ -36,12 +37,14 @@ def test_tiingo_payload_maps_prices_and_corporate_actions() -> None:
         ]
 
     result = download_tiingo(
-        symbols=["aapl"],
-        start_date="2023-06-01",
-        end_date="2023-06-30",
-        retrieval_time="2023-07-01T00:00:00Z",
-        token="secret-token",
-        fetch_json=fetch_json,
+        TiingoDownloadOptions(
+            symbols=["aapl"],
+            start_date="2023-06-01",
+            end_date="2023-06-30",
+            retrieval_time="2023-07-01T00:00:00Z",
+            token="secret-token",
+            fetch_json=fetch_json,
+        )
     )
 
     assert result.securities[0].security_id == "AAPL"
@@ -57,7 +60,7 @@ def test_tiingo_payload_maps_prices_and_corporate_actions() -> None:
 
 
 def test_sec_companyfacts_maps_facts_to_filing_eligibility() -> None:
-    def fetch_json(url: str, headers: dict[str, str]) -> Any:
+    def fetch_json(url: str, headers: dict[str, str]) -> JsonValue:
         assert headers["User-Agent"] == "Market Research Lab test@example.com"
         if "/submissions/" in url:
             return {
@@ -98,10 +101,12 @@ def test_sec_companyfacts_maps_facts_to_filing_eligibility() -> None:
         }
 
     result = download_sec_edgar(
-        ciks=["320193"],
-        retrieval_time="2023-05-01T00:00:00Z",
-        user_agent="Market Research Lab test@example.com",
-        fetch_json=fetch_json,
+        SecEdgarDownloadOptions(
+            ciks=["320193"],
+            retrieval_time="2023-05-01T00:00:00Z",
+            user_agent="Market Research Lab test@example.com",
+            fetch_json=fetch_json,
+        )
     )
 
     assert result.securities[0].security_id == "CIK0000320193"
@@ -118,17 +123,19 @@ def test_sec_companyfacts_maps_facts_to_filing_eligibility() -> None:
 def test_provider_requires_local_credentials() -> None:
     with pytest.raises(ProviderDownloadError, match="TIINGO_API_TOKEN"):
         download_tiingo(
-            symbols=["AAPL"],
-            start_date=None,
-            end_date=None,
-            retrieval_time="2023-07-01T00:00:00Z",
-            token=None,
-            fetch_json=lambda _url, _headers: [],
+            TiingoDownloadOptions(
+                symbols=["AAPL"],
+                start_date=None,
+                end_date=None,
+                retrieval_time="2023-07-01T00:00:00Z",
+                token=None,
+                fetch_json=lambda _url, _headers: [],
+            )
         )
 
 
 def test_sec_missing_acceptance_time_is_preserved_as_ineligible() -> None:
-    def fetch_json(url: str, _headers: dict[str, str]) -> Any:
+    def fetch_json(url: str, _headers: dict[str, str]) -> JsonValue:
         if "/submissions/" in url:
             return {
                 "name": "Example Corp",
@@ -159,10 +166,12 @@ def test_sec_missing_acceptance_time_is_preserved_as_ineligible() -> None:
         }
 
     result = download_sec_edgar(
-        ciks=["1"],
-        retrieval_time="2023-05-01T00:00:00Z",
-        user_agent="Market Research Lab test@example.com",
-        fetch_json=fetch_json,
+        SecEdgarDownloadOptions(
+            ciks=["1"],
+            retrieval_time="2023-05-01T00:00:00Z",
+            user_agent="Market Research Lab test@example.com",
+            fetch_json=fetch_json,
+        )
     )
 
     fact = result.fundamental_facts[0]
