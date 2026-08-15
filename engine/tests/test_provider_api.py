@@ -2,10 +2,18 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
+import market_research_lab.downloads as downloads_module
 from market_research_lab.api import create_app
 from market_research_lab.market_data import MarketDataStore
+from market_research_lab.providers import (
+    ProviderCredentials,
+    ProviderDownload,
+    ProviderDownloadError,
+    TiingoDownloadSpec,
+)
 
 
 def test_provider_download_creates_dataset_versions_without_returning_credentials(tmp_path):
@@ -119,3 +127,48 @@ def test_sec_download_without_acceptance_time_is_not_historically_eligible(tmp_p
     )
     assert historical.status_code == 400
     assert historical.json()["code"] == "point_in_time_data_required"
+
+def test_download_removes_saved_versions_when_a_later_group_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StoredVersion:
+        def __init__(self, version_id: str) -> None:
+            self.id = version_id
+
+    class Store:
+        def __init__(self) -> None:
+            self.ingest_calls = 0
+            self.discarded: list[str] = []
+
+        def ingest_records(self, *_args, **_kwargs) -> StoredVersion:
+            self.ingest_calls += 1
+            if self.ingest_calls == 2:
+                raise OSError("second Dataset Version failed")
+            return StoredVersion("saved-first")
+
+        def discard_dataset_version(self, version: StoredVersion) -> None:
+            self.discarded.append(version.id)
+
+        def upsert_securities(self, *_args, **_kwargs) -> None:
+            raise AssertionError("Securities must not be saved after a failed Dataset Version.")
+
+    downloaded = ProviderDownload(
+        daily_bars=[{"security_id": "AAPL"}],
+        corporate_actions=[{"security_id": "AAPL"}],
+    )
+    monkeypatch.setattr(
+        downloads_module,
+        "download_tiingo",
+        lambda *_args, **_kwargs: downloaded,
+    )
+    store = Store()
+
+    with pytest.raises(ProviderDownloadError, match="data could not be persisted"):
+        downloads_module.download_provider(
+            store,
+            TiingoDownloadSpec(symbols=("AAPL",)),
+            credentials=ProviderCredentials(tiingo_api_token="token"),
+        )
+
+    assert store.ingest_calls == 2
+    assert store.discarded == ["saved-first"]

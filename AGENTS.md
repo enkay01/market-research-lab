@@ -1,3 +1,4 @@
+Write in ASD-STE100 but for a 20 year old.
 # Agent workflow
 
 Read `CONTEXT.md` before changing domain language or implementing market logic.

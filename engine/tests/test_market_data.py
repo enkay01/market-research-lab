@@ -410,9 +410,7 @@ def test_corporate_actions_are_imported_and_filtered_by_eligibility_time():
         assert coverage.rejected_count == 2
         assert coverage.has_temporal_provenance is True
 
-        actions = store.corporate_actions(
-            version.id, symbol="AAPL", as_of="2023-07-01T00:00:00Z"
-        )
+        actions = store.corporate_actions(version.id, symbol="AAPL", as_of="2023-07-01T00:00:00Z")
         assert len(actions) == 1
         assert actions[0].type == "split"
         assert actions[0].effective_date == "2023-06-12"
@@ -494,3 +492,53 @@ def test_fundamentals_can_use_filed_at_as_eligibility_time():
         assert len(facts) == 1
         assert facts[0].filed_at == "2023-04-20T00:00:00Z"
         assert facts[0].available_at is None
+
+
+def test_fundamentals_ingest_preserves_incomplete_fields_marker():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = MarketDataStore(Path(tmpdir))
+        rows = [
+            {
+                "security_id": "CIK0000000001",
+                "symbol": "EXMP",
+                "field": "us-gaap:Assets",
+                "fiscal_period": "FY2023",
+                "value": 100,
+                "unit": "USD",
+                "filed_at": "2023-04-20T00:00:00Z",
+                "available_at": "2023-04-20T13:30:00.000Z",
+                "period_start": None,
+                "period_end": "2022-12-31",
+                "eligibility_provenance": "sec_acceptance_time",
+                "source": "sec_edgar",
+                "retrieval_time": "2023-05-01T00:00:00Z",
+                "incomplete_fields": ["accn", "frame", "start"],
+            },
+            {
+                "security_id": "CIK0000000001",
+                "symbol": "EXMP",
+                "field": "us-gaap:Revenues",
+                "fiscal_period": "CY2023Q1",
+                "value": 1000,
+                "unit": "USD",
+                "filed_at": "2023-04-20T00:00:00Z",
+                "available_at": "2023-04-20T13:30:00.000Z",
+                "period_start": "2023-01-01",
+                "period_end": "2023-03-31",
+                "eligibility_provenance": "sec_acceptance_time",
+                "source": "sec_edgar",
+                "retrieval_time": "2023-05-01T00:00:00Z",
+                "incomplete_fields": None,
+            },
+        ]
+        version = store.ingest_records(
+            IngestionRequest(
+                source="sec_edgar",
+                retrieval_time="2023-05-01T00:00:00Z",
+            ),
+            rows,
+        )
+
+        facts = store.fundamentals(version.id)
+        assert facts[0].incomplete_fields == ("accn", "frame", "start")
+        assert facts[1].incomplete_fields is None

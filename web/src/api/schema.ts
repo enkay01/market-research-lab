@@ -360,7 +360,7 @@ export interface components {
             name: string;
             /** Definition */
             definition: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue-Input"];
             };
         };
         /** DefinitionResponse */
@@ -372,7 +372,7 @@ export interface components {
         DraftRequest: {
             /** Definition */
             definition: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue-Input"];
             };
         };
         /** DraftResponse */
@@ -381,7 +381,7 @@ export interface components {
             name: string;
             /** Definition */
             definition: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue-Output"];
             };
             /** Saved At */
             saved_at: string;
@@ -412,6 +412,8 @@ export interface components {
             source: string;
             /** Retrieval Time */
             retrieval_time: string;
+            /** Incomplete Fields */
+            incomplete_fields?: string[] | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -423,6 +425,12 @@ export interface components {
             /** Status */
             status: string;
         };
+        "JsonValue-Input": boolean | number | string | components["schemas"]["JsonValue-Input"][] | {
+            [key: string]: components["schemas"]["JsonValue-Input"];
+        } | null;
+        "JsonValue-Output": boolean | number | string | components["schemas"]["JsonValue-Output"][] | {
+            [key: string]: components["schemas"]["JsonValue-Output"];
+        } | null;
         /** ProjectCreateRequest */
         ProjectCreateRequest: {
             /** Name */
@@ -442,22 +450,6 @@ export interface components {
             /** Created At */
             created_at: string;
         };
-        /** ProviderDownloadRequest */
-        ProviderDownloadRequest: {
-            /**
-             * Provider
-             * @enum {string}
-             */
-            provider: "tiingo" | "sec_edgar";
-            /** Symbols */
-            symbols?: string[];
-            /** Ciks */
-            ciks?: string[];
-            /** Start Date */
-            start_date?: string | null;
-            /** End Date */
-            end_date?: string | null;
-        };
         /** ProviderDownloadResponse */
         ProviderDownloadResponse: {
             /** Dataset Version Id */
@@ -471,6 +463,34 @@ export interface components {
             id: string;
             /** Status */
             status: string;
+        };
+        /** SecEdgarDownloadRequest */
+        SecEdgarDownloadRequest: {
+            /** Start Date */
+            start_date?: string | null;
+            /** End Date */
+            end_date?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            provider: "sec_edgar";
+            /** Ciks */
+            ciks: string[];
+        };
+        /** TiingoDownloadRequest */
+        TiingoDownloadRequest: {
+            /** Start Date */
+            start_date?: string | null;
+            /** End Date */
+            end_date?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            provider: "tiingo";
+            /** Symbols */
+            symbols: string[];
         };
         /** ValidationError */
         ValidationError: {
@@ -503,7 +523,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ProviderDownloadRequest"];
+                "application/json": components["schemas"]["TiingoDownloadRequest"] | components["schemas"]["SecEdgarDownloadRequest"];
             };
         };
         responses: {
@@ -918,7 +938,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        [key: string]: unknown;
+                        [key: string]: components["schemas"]["JsonValue-Output"];
                     }[];
                 };
             };

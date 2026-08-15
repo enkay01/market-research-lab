@@ -6,7 +6,6 @@ import shutil
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 from uuid import UUID
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
@@ -17,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from .configuration import load_provider_credentials
+from .json_types import JsonValue
 from .market_data import (
     CoverageReport,
     InadequateTemporalProvenanceError,
@@ -31,7 +31,7 @@ from .providers import JsonFetcher
 class ErrorResponse(BaseModel):
     code: str
     message: str
-    details: dict[str, Any] = Field(default_factory=dict)
+    details: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 class HealthResponse(BaseModel):
@@ -65,7 +65,7 @@ class ProjectResponse(BaseModel):
 class DefinitionCreateRequest(BaseModel):
     kind: str = Field(pattern=r"^[a-z][a-z_]*$")
     name: str = Field(min_length=1, max_length=120)
-    definition: dict[str, Any]
+    definition: dict[str, JsonValue]
 
     @field_validator("name")
     @classmethod
@@ -74,12 +74,12 @@ class DefinitionCreateRequest(BaseModel):
 
 
 class DraftRequest(BaseModel):
-    definition: dict[str, Any]
+    definition: dict[str, JsonValue]
 
 
 class DraftResponse(BaseModel):
     name: str
-    definition: dict[str, Any]
+    definition: dict[str, JsonValue]
     saved_at: str
 
 
@@ -140,6 +140,7 @@ class FundamentalFactResponse(BaseModel):
     eligibility_provenance: str | None = None
     source: str
     retrieval_time: str
+    incomplete_fields: list[str] | None = None
 
 
 class CoverageResponse(BaseModel):
@@ -320,6 +321,7 @@ def create_app(
     )
     def create_run(
         project_id: UUID,
+        *,
         dataset_version_id: str | None = Query(default=None),
         historical: bool = Query(default=False),
     ) -> RunResponse:
@@ -393,10 +395,10 @@ def create_app(
 
     @app.get(
         "/api/datasets/{dataset_version_id}/preview",
-        response_model=list[dict[str, Any]],
+        response_model=list[dict[str, JsonValue]],
         tags=["datasets"],
     )
-    def get_dataset_preview(dataset_version_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    def get_dataset_preview(dataset_version_id: str, limit: int = 50) -> list[dict[str, JsonValue]]:
         return market_store.preview(dataset_version_id, limit=limit)
 
     @app.get(

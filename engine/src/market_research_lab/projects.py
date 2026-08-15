@@ -12,6 +12,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+from .json_types import JsonValue
+
 
 class ProjectNotFoundError(Exception):
     """Raised when a requested Project does not exist."""
@@ -83,7 +85,7 @@ class ProjectStore:
         )
 
     def save_revision(
-        self, project_id: str, *, kind: str, name: str, definition: dict[str, object]
+        self, project_id: str, *, kind: str, name: str, definition: dict[str, JsonValue]
     ) -> str:
         self.get_project(project_id)
         definition_root = self._directory(project_id) / "definitions" / kind / _slug(name)
@@ -106,7 +108,7 @@ class ProjectStore:
         return revision
 
     def save_draft(
-        self, project_id: str, *, kind: str, name: str, definition: dict[str, object]
+        self, project_id: str, *, kind: str, name: str, definition: dict[str, JsonValue]
     ) -> None:
         self.get_project(project_id)
         definition_root = self._directory(project_id) / "definitions" / kind / _slug(name)
@@ -115,7 +117,7 @@ class ProjectStore:
             {"name": name, "definition": definition, "saved_at": _timestamp()},
         )
 
-    def read_draft(self, project_id: str, *, kind: str, name: str) -> dict[str, object]:
+    def read_draft(self, project_id: str, *, kind: str, name: str) -> dict[str, JsonValue]:
         self.get_project(project_id)
         draft_path = (
             self._directory(project_id)
@@ -162,7 +164,7 @@ class ProjectStore:
         return max(revisions, default=0) + 1
 
     @staticmethod
-    def _write_json(path: Path, contents: dict[str, object]) -> None:
+    def _write_json(path: Path, contents: dict[str, JsonValue]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", dir=path.parent, delete=False

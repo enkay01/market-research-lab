@@ -83,7 +83,7 @@ def test_project_can_be_renamed_and_deleted(tmp_path):
     assert not (tmp_path / "projects" / project_id).exists()
 
 
-def test_validation_errors_have_a_stable_shape(tmp_path):
+def test_validation_errors_return_a_stable_error_response(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
 
     response = client.post("/api/projects", json={"name": "   "})

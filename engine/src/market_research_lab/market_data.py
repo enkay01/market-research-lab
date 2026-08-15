@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import math
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 import duckdb
 import pandas as pd
+
+from .json_types import JsonValue
 
 
 class InadequateTemporalProvenanceError(ValueError):
@@ -32,8 +33,8 @@ DATASET_TYPE_FUNDAMENTALS = "fundamentals"
 @dataclass(frozen=True)
 class IngestionRequest:
     source: str
-    file_path: Path
     retrieval_time: str
+    file_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,67 @@ class FundamentalFact:
     eligibility_provenance: str | None = None
     source: str = ""
     retrieval_time: str = ""
+    incomplete_fields: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class ValidationSummary:
+    """Typed validation metadata persisted with a Dataset Version."""
+
+    row_count: int
+    rejected_count: int
+    missing_fields: dict[str, int]
+    total_warnings: int
+    warnings: list[str]
+    has_temporal_provenance: bool
+    is_fundamentals: bool
+    is_corporate_actions: bool
+    dataset_type: str
+
+    def to_json(self) -> dict[str, JsonValue]:
+        return {
+            "row_count": self.row_count,
+            "rejected_count": self.rejected_count,
+            "missing_fields": self.missing_fields,
+            "total_warnings": self.total_warnings,
+            "warnings": self.warnings,
+            "has_temporal_provenance": self.has_temporal_provenance,
+            "is_fundamentals": self.is_fundamentals,
+            "is_corporate_actions": self.is_corporate_actions,
+            "dataset_type": self.dataset_type,
+        }
+
+    def with_warnings(self, warnings: list[str]) -> "ValidationSummary":
+        if not warnings:
+            return self
+        return ValidationSummary(
+            row_count=self.row_count,
+            rejected_count=self.rejected_count,
+            missing_fields=self.missing_fields,
+            total_warnings=self.total_warnings + len(warnings),
+            warnings=(self.warnings + warnings)[:100],
+            has_temporal_provenance=self.has_temporal_provenance,
+            is_fundamentals=self.is_fundamentals,
+            is_corporate_actions=self.is_corporate_actions,
+            dataset_type=self.dataset_type,
+        )
+
+    @classmethod
+    def from_json(cls, raw: str) -> "ValidationSummary":
+        payload = json.loads(raw)
+        return cls(
+            row_count=int(payload["row_count"]),
+            rejected_count=int(payload["rejected_count"]),
+            missing_fields={
+                str(field): int(count) for field, count in payload["missing_fields"].items()
+            },
+            total_warnings=int(payload["total_warnings"]),
+            warnings=[str(warning) for warning in payload["warnings"]],
+            has_temporal_provenance=bool(payload["has_temporal_provenance"]),
+            is_fundamentals=bool(payload["is_fundamentals"]),
+            is_corporate_actions=bool(payload["is_corporate_actions"]),
+            dataset_type=str(payload["dataset_type"]),
+        )
 
 
 @dataclass(frozen=True)
@@ -102,8 +164,15 @@ class DatasetVersion:
     coverage_start: str | None
     coverage_end: str | None
     files: list[str]
-    validation_summary: dict[str, Any]
+    validation_summary: ValidationSummary
     dataset_type: str = DATASET_TYPE_DAILY_BARS
+
+
+@dataclass(frozen=True)
+class LoadedDataset:
+    dataframe: pd.DataFrame
+    has_provenance: bool
+    dataset_type: str
 
 
 @dataclass(frozen=True)
@@ -122,6 +191,25 @@ class CoverageReport:
     is_fundamentals: bool = False
     is_corporate_actions: bool = False
     dataset_type: str = DATASET_TYPE_DAILY_BARS
+
+
+def _parse_incomplete_fields(raw: object) -> tuple[str, ...] | None:
+    """Normalize the incomplete_fields marker from a provider or file row.
+
+    Provider JSON rows are read back with ``dtype=str``, so a list column
+    arrives as its Python repr (e.g. "['fy', 'frame']"). Accept the list
+    directly when present and parse the repr otherwise.
+    """
+    if isinstance(raw, (list, tuple)):
+        return tuple(str(name) for name in raw)
+    if isinstance(raw, str) and raw.strip().startswith("["):
+        try:
+            parsed = ast.literal_eval(raw)
+        except (ValueError, SyntaxError):
+            return None
+        if isinstance(parsed, (list, tuple)):
+            return tuple(str(name) for name in parsed)
+    return None
 
 
 class MarketDataStore:
@@ -180,10 +268,10 @@ class MarketDataStore:
             raise ValueError(f"Failed to parse {format_name} file: {error}") from error
 
     @staticmethod
-    def _is_missing(value: Any) -> bool:
-        return bool(pd.isna(value)) or (
-            isinstance(value, str) and value.strip().lower() in {"", "nan", "nat", "none"}
-        )
+    def _is_missing(value: str | float | int | bool | None) -> bool:
+        if bool(pd.isna(value)):
+            return True
+        return str(value).strip().lower() in {"", "nan", "nat", "none"}
 
     @classmethod
     def _required_text(cls, row: pd.Series, field: str) -> str:
@@ -276,7 +364,11 @@ class MarketDataStore:
         return True
 
     def _eligible_timestamps_for_historical_use(
-        self, df: pd.DataFrame, has_provenance: bool, dataset_type: str = DATASET_TYPE_DAILY_BARS
+        self,
+        df: pd.DataFrame,
+        *,
+        has_provenance: bool,
+        dataset_type: str = DATASET_TYPE_DAILY_BARS,
     ) -> pd.Series:
         if not has_provenance or not self._has_complete_temporal_provenance(df, dataset_type):
             raise InadequateTemporalProvenanceError(TEMPORAL_PROVENANCE_ERROR_MESSAGE)
@@ -284,7 +376,14 @@ class MarketDataStore:
         return pd.to_datetime(self._eligibility_values(df, dataset_type), utc=True, errors="raise")
 
     def ingest(self, request: IngestionRequest) -> DatasetVersion:
-        df_raw = self._read_dataframe(request.file_path)
+        if request.file_path is None:
+            raise ValueError("File imports require a file path.")
+        return self._publish_dataframe(request, self._read_dataframe(request.file_path))
+
+    def _publish_dataframe(
+        self, request: IngestionRequest, df_raw: pd.DataFrame
+    ) -> DatasetVersion:
+        """Validate and persist one canonical Market Dataset."""
 
         # Detect one canonical record family from the supplied columns.
         is_fundamental = {"field", "fiscal_period", "value"}.issubset(set(df_raw.columns))
@@ -305,7 +404,7 @@ class MarketDataStore:
             raise ValueError(f"Missing required columns: {sorted(missing_cols)}")
 
         warnings: list[str] = []
-        valid_rows: list[dict[str, Any]] = []
+        valid_rows: list[dict[str, JsonValue]] = []
         missing_fields: dict[str, int] = {}
 
         if dataset_type == DATASET_TYPE_FUNDAMENTALS:
@@ -351,6 +450,8 @@ class MarketDataStore:
                     unit = self._optional_text(row, "unit", "units", default="USD") or "USD"
                     filed_at = self._optional_text(row, "filed_at")
                     available_at = self._optional_text(row, "available_at")
+                    raw_incomplete = row.get("incomplete_fields")
+                    incomplete_fields = _parse_incomplete_fields(raw_incomplete)
 
                     valid_rows.append(
                         {
@@ -368,6 +469,7 @@ class MarketDataStore:
                             ),
                             "source": request.source,
                             "retrieval_time": request.retrieval_time,
+                            "incomplete_fields": incomplete_fields,
                         }
                     )
                 except Exception as e:
@@ -510,11 +612,10 @@ class MarketDataStore:
         # Arrow cannot store a mixed numeric/string object column. Preserve the
         # canonical value semantics by serializing mixed fundamentals as text;
         # query conversion restores numeric values when possible.
-        if dataset_type == DATASET_TYPE_FUNDAMENTALS and not (
-            df_valid["value"].map(lambda value: isinstance(value, (int, float))).all()
-            or df_valid["value"].map(lambda value: isinstance(value, str)).all()
-        ):
-            df_valid["value"] = df_valid["value"].map(str)
+        if dataset_type == DATASET_TYPE_FUNDAMENTALS:
+            numeric_values = pd.to_numeric(df_valid["value"], errors="coerce")
+            if not numeric_values.notna().all():
+                df_valid["value"] = df_valid["value"].astype(str)
 
         parquet_name = f"{version_id}.parquet"
         parquet_path = self.datasets_dir / parquet_name
@@ -526,17 +627,17 @@ class MarketDataStore:
                 parquet_path.unlink()
             raise
 
-        summary = {
-            "row_count": len(valid_rows),
-            "rejected_count": rejected_count,
-            "missing_fields": missing_fields,
-            "total_warnings": len(warnings),
-            "warnings": warnings[:100],
-            "has_temporal_provenance": has_temporal_provenance,
-            "is_fundamentals": dataset_type == DATASET_TYPE_FUNDAMENTALS,
-            "is_corporate_actions": dataset_type == DATASET_TYPE_CORPORATE_ACTIONS,
-            "dataset_type": dataset_type,
-        }
+        summary = ValidationSummary(
+            row_count=len(valid_rows),
+            rejected_count=rejected_count,
+            missing_fields=missing_fields,
+            total_warnings=len(warnings),
+            warnings=warnings[:100],
+            has_temporal_provenance=has_temporal_provenance,
+            is_fundamentals=dataset_type == DATASET_TYPE_FUNDAMENTALS,
+            is_corporate_actions=dataset_type == DATASET_TYPE_CORPORATE_ACTIONS,
+            dataset_type=dataset_type,
+        )
 
         version = DatasetVersion(
             id=version_id,
@@ -567,7 +668,7 @@ class MarketDataStore:
                         version.coverage_start,
                         version.coverage_end,
                         json.dumps(version.files),
-                        json.dumps(version.validation_summary),
+                        json.dumps(version.validation_summary.to_json()),
                     ),
                 )
 
@@ -581,7 +682,7 @@ class MarketDataStore:
     def ingest_records(
         self,
         request: IngestionRequest,
-        rows: list[dict[str, Any]],
+        rows: list[dict[str, JsonValue]],
         *,
         warnings: list[str] | None = None,
     ) -> DatasetVersion:
@@ -589,28 +690,12 @@ class MarketDataStore:
         if not rows:
             raise ValueError("Import failed: 0 provider records were returned.")
 
-        temp_path: Path | None = None
+        version = self._publish_dataframe(request, pd.DataFrame(rows))
         try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", encoding="utf-8", suffix=".json", delete=False
-            ) as temporary:
-                json.dump(rows, temporary)
-                temp_path = Path(temporary.name)
-            version = self.ingest(
-                IngestionRequest(
-                    source=request.source,
-                    file_path=temp_path,
-                    retrieval_time=request.retrieval_time,
-                )
-            )
-            try:
-                return self.add_validation_warnings(version, warnings or [])
-            except Exception:
-                self.discard_dataset_version(version)
-                raise
-        finally:
-            if temp_path is not None and temp_path.exists():
-                temp_path.unlink()
+            return self.add_validation_warnings(version, warnings or [])
+        except Exception:
+            self.discard_dataset_version(version)
+            raise
 
     def add_validation_warnings(
         self, version: DatasetVersion, warnings: list[str]
@@ -619,13 +704,11 @@ class MarketDataStore:
         if not warnings:
             return version
 
-        summary = dict(version.validation_summary)
-        summary["warnings"] = (list(summary.get("warnings", [])) + warnings)[:100]
-        summary["total_warnings"] = int(summary.get("total_warnings", 0)) + len(warnings)
+        summary = version.validation_summary.with_warnings(warnings)
         with duckdb.connect(str(self.db_path)) as con:
             con.execute(
                 "UPDATE dataset_versions SET validation_summary = ? WHERE id = ?",
-                (json.dumps(summary), version.id),
+                (json.dumps(summary.to_json()), version.id),
             )
         return DatasetVersion(
             id=version.id,
@@ -719,31 +802,31 @@ class MarketDataStore:
                 raw_files,
                 raw_summary,
             ) = row
-            summary = json.loads(raw_summary)
-            files = json.loads(raw_files)
+            summary = ValidationSummary.from_json(raw_summary)
+            files = [str(file_name) for file_name in json.loads(raw_files)]
 
             return CoverageReport(
                 id=version_id,
                 source=source,
                 coverage_start=coverage_start,
                 coverage_end=coverage_end,
-                row_count=summary.get("row_count", 0),
-                rejected_count=summary.get("rejected_count", 0),
-                missing_fields=summary.get("missing_fields", {}),
-                warnings=summary.get("warnings", []),
-                total_warnings=summary.get("total_warnings", len(summary.get("warnings", []))),
+                row_count=summary.row_count,
+                rejected_count=summary.rejected_count,
+                missing_fields=summary.missing_fields,
+                warnings=summary.warnings,
+                total_warnings=summary.total_warnings,
                 files=files,
-                has_temporal_provenance=summary.get("has_temporal_provenance", False),
-                is_fundamentals=summary.get("is_fundamentals", False),
-                is_corporate_actions=summary.get("is_corporate_actions", False),
-                dataset_type=summary.get("dataset_type", DATASET_TYPE_DAILY_BARS),
+                has_temporal_provenance=summary.has_temporal_provenance,
+                is_fundamentals=summary.is_fundamentals,
+                is_corporate_actions=summary.is_corporate_actions,
+                dataset_type=summary.dataset_type,
             )
 
-    def preview(self, dataset_version_id: str, limit: int = 50) -> list[dict[str, Any]]:
-        df, _, _ = self._load_dataset_df(dataset_version_id)
-        return df.head(limit).to_dict(orient="records")
+    def preview(self, dataset_version_id: str, limit: int = 50) -> list[dict[str, JsonValue]]:
+        loaded = self._load_dataset_df(dataset_version_id)
+        return loaded.dataframe.head(limit).to_dict(orient="records")
 
-    def _load_dataset_df(self, dataset_version_id: str) -> tuple[pd.DataFrame, bool, str]:
+    def _load_dataset_df(self, dataset_version_id: str) -> LoadedDataset:
         with duckdb.connect(str(self.db_path)) as con:
             con.execute(
                 "SELECT files, validation_summary FROM dataset_versions WHERE id = ?",
@@ -754,10 +837,8 @@ class MarketDataStore:
                 raise ValueError(f"DatasetVersion {dataset_version_id} not found")
 
             raw_files, raw_summary = row
-            summary = json.loads(raw_summary)
-            files = json.loads(raw_files)
-            has_prov = summary.get("has_temporal_provenance", False)
-            dataset_type = summary.get("dataset_type", DATASET_TYPE_DAILY_BARS)
+            summary = ValidationSummary.from_json(raw_summary)
+            files = [str(file_name) for file_name in json.loads(raw_files)]
 
         dfs = []
         for file_name in files:
@@ -765,38 +846,45 @@ class MarketDataStore:
             if path.exists():
                 dfs.append(pd.read_parquet(path))
 
-        if not dfs:
-            return pd.DataFrame(), has_prov, dataset_type
-
-        df = pd.concat(dfs, ignore_index=True)
-        return df, has_prov, dataset_type
+        dataframe = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+        return LoadedDataset(
+            dataframe=dataframe,
+            has_provenance=summary.has_temporal_provenance,
+            dataset_type=summary.dataset_type,
+        )
 
     def _filter_by_as_of_and_symbol(
         self,
-        df: pd.DataFrame,
-        has_provenance: bool,
-        dataset_type: str,
-        as_of: datetime | str | None,
+        loaded: LoadedDataset,
+        *,
         symbol: str | None,
+        as_of: datetime | str | None,
     ) -> pd.DataFrame:
+        dataframe = loaded.dataframe
         if as_of is not None:
             as_of_utc = pd.to_datetime(as_of, utc=True)
             available_at_utc = self._eligible_timestamps_for_historical_use(
-                df, has_provenance, dataset_type
+                dataframe,
+                has_provenance=loaded.has_provenance,
+                dataset_type=loaded.dataset_type,
             )
-            df = df[available_at_utc <= as_of_utc]
+            dataframe = dataframe[available_at_utc <= as_of_utc]
 
-        if symbol is not None and not df.empty:
-            if "security_id" in df.columns:
-                df = df[df["security_id"] == symbol]
-            elif "symbol" in df.columns:
-                df = df[df["symbol"] == symbol]
+        if symbol is not None and not dataframe.empty:
+            if "security_id" in dataframe.columns:
+                dataframe = dataframe[dataframe["security_id"] == symbol]
+            elif "symbol" in dataframe.columns:
+                dataframe = dataframe[dataframe["symbol"] == symbol]
 
-        return df
+        return dataframe
 
     def ensure_historical_eligibility(self, dataset_version_id: str) -> None:
-        df, has_provenance, dataset_type = self._load_dataset_df(dataset_version_id)
-        self._eligible_timestamps_for_historical_use(df, has_provenance, dataset_type)
+        loaded = self._load_dataset_df(dataset_version_id)
+        self._eligible_timestamps_for_historical_use(
+            loaded.dataframe,
+            has_provenance=loaded.has_provenance,
+            dataset_type=loaded.dataset_type,
+        )
 
     def history(
         self,
@@ -806,8 +894,8 @@ class MarketDataStore:
         as_of: str | datetime | None = None,
         as_dataframe: bool = False,
     ) -> list[DailyBar] | pd.DataFrame:
-        df, has_prov, dataset_type = self._load_dataset_df(dataset_version_id)
-        df = self._filter_by_as_of_and_symbol(df, has_prov, dataset_type, as_of, symbol)
+        loaded = self._load_dataset_df(dataset_version_id)
+        df = self._filter_by_as_of_and_symbol(loaded, symbol=symbol, as_of=as_of)
 
         if as_dataframe:
             return df.reset_index(drop=True)
@@ -850,8 +938,8 @@ class MarketDataStore:
         as_of: str | datetime | None = None,
         as_dataframe: bool = False,
     ) -> list[FundamentalFact] | pd.DataFrame:
-        df, has_prov, dataset_type = self._load_dataset_df(dataset_version_id)
-        df = self._filter_by_as_of_and_symbol(df, has_prov, dataset_type, as_of, symbol)
+        loaded = self._load_dataset_df(dataset_version_id)
+        df = self._filter_by_as_of_and_symbol(loaded, symbol=symbol, as_of=as_of)
 
         if as_dataframe:
             return df.reset_index(drop=True)
@@ -863,6 +951,16 @@ class MarketDataStore:
                 val: float | str = float(raw_val)
             except (ValueError, TypeError):
                 val = str(raw_val)
+
+            raw_incomplete = row.get("incomplete_fields")
+            incomplete_fields: tuple[str, ...] | None = None
+            if raw_incomplete is not None and not (
+                isinstance(raw_incomplete, float) and pd.isna(raw_incomplete)
+            ):
+                if isinstance(raw_incomplete, (list, tuple)) or hasattr(raw_incomplete, "tolist"):
+                    incomplete_fields = tuple(str(name) for name in raw_incomplete)
+                else:
+                    incomplete_fields = (str(raw_incomplete),)
 
             facts.append(
                 FundamentalFact(
@@ -891,6 +989,7 @@ class MarketDataStore:
                     else None,
                     source=str(row.get("source", "")),
                     retrieval_time=str(row.get("retrieval_time", "")),
+                    incomplete_fields=incomplete_fields,
                 )
             )
         return facts
@@ -903,8 +1002,8 @@ class MarketDataStore:
         as_of: str | datetime | None = None,
         as_dataframe: bool = False,
     ) -> list[CorporateAction] | pd.DataFrame:
-        df, has_prov, dataset_type = self._load_dataset_df(dataset_version_id)
-        df = self._filter_by_as_of_and_symbol(df, has_prov, dataset_type, as_of, symbol)
+        loaded = self._load_dataset_df(dataset_version_id)
+        df = self._filter_by_as_of_and_symbol(loaded, symbol=symbol, as_of=as_of)
 
         if as_dataframe:
             return df.reset_index(drop=True)
