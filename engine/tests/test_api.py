@@ -7,6 +7,21 @@ from fastapi.testclient import TestClient
 from market_research_lab.api import create_app
 
 
+def _tiingo_prices_fetch_json(url: str, _headers: dict[str, str]) -> dict:
+    if "/prices" not in url:
+        return {"ticker": "AAPL", "name": "Apple Inc.", "exchangeCode": "NASDAQ"}
+    return [
+        {
+            "date": "2023-06-12T00:00:00.000Z",
+            "open": 100,
+            "high": 105,
+            "low": 99,
+            "close": 104,
+            "volume": 123,
+        }
+    ]
+
+
 def test_project_can_be_created_reopened_and_revised(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
 
@@ -321,6 +336,126 @@ def test_dataset_corporate_actions_endpoint_applies_point_in_time_filter(tmp_pat
     assert actions[0]["type"] == "split"
     assert actions[0]["effective_date"] == "2023-06-12"
     assert actions[0]["units"] == "ratio"
+
+
+def test_dataset_catalogue_lists_file_and_provider_versions_in_one_view(tmp_path):
+    (tmp_path / ".env.local").write_text("TIINGO_API_TOKEN=private-token\n", encoding="utf-8")
+    client = TestClient(
+        create_app(workspace_root=tmp_path, provider_fetch_json=_tiingo_prices_fetch_json)
+    )
+
+    file_res = client.post(
+        "/api/datasets",
+        data={"source": "file_source"},
+        files={
+            "file": (
+                "bars.csv",
+                (
+                    "symbol,date,open,high,low,close,volume,available_at\n"
+                    "AAPL,2023-01-01,150.0,155.0,149.0,154.0,1000000,2023-01-01T16:00:00Z\n"
+                ).encode("utf-8"),
+                "text/csv",
+            )
+        },
+    )
+    assert file_res.status_code == 201
+
+    download_res = client.post(
+        "/api/datasets/download", json={"provider": "tiingo", "symbols": ["AAPL"]}
+    )
+    assert download_res.status_code == 201
+
+    catalogue = client.get("/api/datasets")
+    assert catalogue.status_code == 200
+    versions = catalogue.json()
+    assert {version["source"] for version in versions} == {"file_source", "tiingo"}
+    for version in versions:
+        assert version["row_count"] > 0
+        assert version["retrieval_time"]
+        assert "has_temporal_provenance" in version
+        assert "dataset_type" in version
+
+
+def test_epic2_workflow_ingest_inspect_and_query_historically(tmp_path):
+    (tmp_path / ".env.local").write_text("TIINGO_API_TOKEN=private-token\n", encoding="utf-8")
+    client = TestClient(
+        create_app(workspace_root=tmp_path, provider_fetch_json=_tiingo_prices_fetch_json)
+    )
+
+    # File ingestion
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "file_source"},
+        files={
+            "file": (
+                "bars.csv",
+                (
+                    "symbol,date,open,high,low,close,volume,available_at\n"
+                    "AAPL,2023-01-01,150.0,155.0,149.0,154.0,1000000,2023-01-01T16:00:00Z\n"
+                    "AAPL,2023-01-02,154.0,158.0,153.0,157.0,1200000,2023-01-02T16:00:00Z\n"
+                ).encode("utf-8"),
+                "text/csv",
+            )
+        },
+    )
+    assert imported.status_code == 201
+    file_version_id = imported.json()["dataset_version_id"]
+
+    # Coverage inspection
+    coverage = client.get(f"/api/datasets/{file_version_id}/coverage")
+    assert coverage.status_code == 200
+    assert coverage.json()["has_temporal_provenance"] is True
+    assert coverage.json()["row_count"] == 2
+
+    # Historical query excludes the later-eligible bar
+    history = client.get(
+        f"/api/datasets/{file_version_id}/history",
+        params={"as_of": "2023-01-01T18:00:00Z"},
+    )
+    assert history.status_code == 200
+    assert [bar["session_date"] for bar in history.json()] == ["2023-01-01"]
+
+    # Later observations in a new Dataset Version must not change the earlier
+    # as-of result (Epic acceptance criterion 2).
+    later = client.post(
+        "/api/datasets",
+        data={"source": "file_source"},
+        files={
+            "file": (
+                "bars_later.csv",
+                (
+                    "symbol,date,open,high,low,close,volume,available_at\n"
+                    "AAPL,2023-01-01,150.0,155.0,149.0,154.0,1000000,2023-01-01T16:00:00Z\n"
+                    "AAPL,2023-01-02,154.0,158.0,153.0,157.0,1200000,2023-01-02T16:00:00Z\n"
+                    "AAPL,2023-01-03,157.0,160.0,156.0,159.0,1100000,2023-01-03T16:00:00Z\n"
+                ).encode("utf-8"),
+                "text/csv",
+            )
+        },
+    )
+    assert later.status_code == 201
+    later_version_id = later.json()["dataset_version_id"]
+
+    replayed = client.get(
+        f"/api/datasets/{later_version_id}/history",
+        params={"as_of": "2023-01-01T18:00:00Z"},
+    )
+    assert replayed.status_code == 200
+    assert [bar["session_date"] for bar in replayed.json()] == ["2023-01-01"]
+
+    # Provider download adds versions to the same catalogue.
+    downloaded = client.post(
+        "/api/datasets/download", json={"provider": "tiingo", "symbols": ["AAPL"]}
+    )
+    assert downloaded.status_code == 201
+    downloaded_ids = set(downloaded.json()["dataset_version_ids"])
+
+    catalogue = client.get("/api/datasets")
+    assert catalogue.status_code == 200
+    version_ids = {version["id"] for version in catalogue.json()}
+    assert {file_version_id, later_version_id} <= version_ids
+    assert downloaded_ids <= version_ids
+    assert {version["source"] for version in catalogue.json()} == {"file_source", "tiingo"}
 
 
 def test_invalid_as_of_format_returns_422(tmp_path):

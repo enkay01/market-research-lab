@@ -134,7 +134,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List Datasets */
+        get: operations["list_datasets_api_datasets_get"];
         put?: never;
         /** Import Dataset */
         post: operations["import_dataset_api_datasets_post"];
@@ -270,6 +271,8 @@ export interface components {
             id: string;
             /** Source */
             source: string;
+            /** Retrieval Time */
+            retrieval_time: string;
             /** Coverage Start */
             coverage_start: string | null;
             /** Coverage End */
@@ -850,6 +853,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_datasets_api_datasets_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverageResponse"][];
                 };
             };
         };

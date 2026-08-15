@@ -494,6 +494,50 @@ def test_fundamentals_can_use_filed_at_as_eligibility_time():
         assert facts[0].available_at is None
 
 
+def test_list_dataset_versions_presents_file_and_provider_sources_together():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        workspace = Path(tmpdir)
+        store = MarketDataStore(workspace)
+
+        csv_path = workspace / "bars.csv"
+        csv_path.write_text(
+            "symbol,date,open,high,low,close,volume,available_at\n"
+            "AAPL,2023-01-01,150.0,155.0,149.0,154.0,1000000,2023-01-01T16:00:00Z\n",
+            encoding="utf-8",
+        )
+        file_version = store.ingest(
+            IngestionRequest(
+                source="file_source",
+                file_path=csv_path,
+                retrieval_time="2023-01-02T00:00:00Z",
+            )
+        )
+
+        provider_version = store.ingest_records(
+            IngestionRequest(source="tiingo", retrieval_time="2023-01-02T00:00:00Z"),
+            [
+                {
+                    "security_id": "MSFT",
+                    "date": "2023-01-02",
+                    "open": 240.0,
+                    "high": 245.0,
+                    "low": 239.0,
+                    "close": 244.0,
+                    "volume": 500000.0,
+                    "available_at": "2023-01-02T16:00:00Z",
+                }
+            ],
+        )
+
+        versions = store.list_dataset_versions()
+        ids = {version.id for version in versions}
+        assert file_version.id in ids
+        assert provider_version.id in ids
+        assert {version.source for version in versions} == {"file_source", "tiingo"}
+        assert all(version.row_count > 0 for version in versions)
+        assert all(version.retrieval_time for version in versions)
+
+
 def test_fundamentals_ingest_preserves_incomplete_fields_marker():
     with tempfile.TemporaryDirectory() as tmpdir:
         store = MarketDataStore(Path(tmpdir))
