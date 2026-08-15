@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from pathlib import Path
 
 from .market_data import DatasetVersion, IngestionRequest, MarketDataStore
 from .providers import (
@@ -53,7 +52,7 @@ def download_provider(
                 versions.append(
                     store.ingest_records(
                         IngestionRequest(
-                            source=source, file_path=Path(), retrieval_time=retrieved_at
+                            source=source, retrieval_time=retrieved_at
                         ),
                         rows,
                         warnings=downloaded.warnings,

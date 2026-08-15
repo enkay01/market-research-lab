@@ -412,6 +412,8 @@ export interface components {
             source: string;
             /** Retrieval Time */
             retrieval_time: string;
+            /** Incomplete Fields */
+            incomplete_fields?: string[] | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {

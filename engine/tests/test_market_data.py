@@ -534,7 +534,6 @@ def test_fundamentals_ingest_preserves_incomplete_fields_marker():
         version = store.ingest_records(
             IngestionRequest(
                 source="sec_edgar",
-                file_path=Path(),
                 retrieval_time="2023-05-01T00:00:00Z",
             ),
             rows,

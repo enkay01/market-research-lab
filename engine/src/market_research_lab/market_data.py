@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 import json
 import math
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -34,8 +33,8 @@ DATASET_TYPE_FUNDAMENTALS = "fundamentals"
 @dataclass(frozen=True)
 class IngestionRequest:
     source: str
-    file_path: Path
     retrieval_time: str
+    file_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -377,7 +376,14 @@ class MarketDataStore:
         return pd.to_datetime(self._eligibility_values(df, dataset_type), utc=True, errors="raise")
 
     def ingest(self, request: IngestionRequest) -> DatasetVersion:
-        df_raw = self._read_dataframe(request.file_path)
+        if request.file_path is None:
+            raise ValueError("File imports require a file path.")
+        return self._publish_dataframe(request, self._read_dataframe(request.file_path))
+
+    def _publish_dataframe(
+        self, request: IngestionRequest, df_raw: pd.DataFrame
+    ) -> DatasetVersion:
+        """Validate and persist one canonical Market Dataset."""
 
         # Detect one canonical record family from the supplied columns.
         is_fundamental = {"field", "fiscal_period", "value"}.issubset(set(df_raw.columns))
@@ -684,28 +690,12 @@ class MarketDataStore:
         if not rows:
             raise ValueError("Import failed: 0 provider records were returned.")
 
-        temp_path: Path | None = None
+        version = self._publish_dataframe(request, pd.DataFrame(rows))
         try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", encoding="utf-8", suffix=".json", delete=False
-            ) as temporary:
-                json.dump(rows, temporary)
-                temp_path = Path(temporary.name)
-            version = self.ingest(
-                IngestionRequest(
-                    source=request.source,
-                    file_path=temp_path,
-                    retrieval_time=request.retrieval_time,
-                )
-            )
-            try:
-                return self.add_validation_warnings(version, warnings or [])
-            except Exception:
-                self.discard_dataset_version(version)
-                raise
-        finally:
-            if temp_path is not None and temp_path.exists():
-                temp_path.unlink()
+            return self.add_validation_warnings(version, warnings or [])
+        except Exception:
+            self.discard_dataset_version(version)
+            raise
 
     def add_validation_warnings(
         self, version: DatasetVersion, warnings: list[str]
