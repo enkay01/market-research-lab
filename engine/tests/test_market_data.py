@@ -14,7 +14,27 @@ from market_research_lab.market_data import (
     IngestionRequest,
     MarketDataStore,
     Security,
+    ValidationSummary,
 )
+
+
+def test_legacy_validation_summary_defaults_new_fields() -> None:
+    summary = ValidationSummary.from_json(
+        json.dumps(
+            {
+                "row_count": 1,
+                "rejected_count": 0,
+                "missing_fields": {},
+                "total_warnings": 0,
+                "warnings": [],
+            }
+        )
+    )
+
+    assert summary.has_temporal_provenance is False
+    assert summary.is_fundamentals is False
+    assert summary.is_corporate_actions is False
+    assert summary.dataset_type == "daily_bars"
 
 
 def test_import_csv_validates_and_creates_dataset_version():
