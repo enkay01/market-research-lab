@@ -149,10 +149,10 @@ class ValidationSummary:
             },
             total_warnings=int(payload["total_warnings"]),
             warnings=[str(warning) for warning in payload["warnings"]],
-            has_temporal_provenance=bool(payload["has_temporal_provenance"]),
-            is_fundamentals=bool(payload["is_fundamentals"]),
-            is_corporate_actions=bool(payload["is_corporate_actions"]),
-            dataset_type=str(payload["dataset_type"]),
+            has_temporal_provenance=bool(payload.get("has_temporal_provenance", False)),
+            is_fundamentals=bool(payload.get("is_fundamentals", False)),
+            is_corporate_actions=bool(payload.get("is_corporate_actions", False)),
+            dataset_type=str(payload.get("dataset_type", DATASET_TYPE_DAILY_BARS)),
         )
 
 

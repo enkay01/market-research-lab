@@ -28,6 +28,7 @@ function isErrorBody(value: unknown): value is { code?: string; message?: string
 }
 
 function App() {
+  const [showHelp, setShowHelp] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selected, setSelected] = useState<Project>();
   const [name, setName] = useState("");
@@ -236,8 +237,14 @@ function App() {
           <h1>Market Research Lab</h1>
           <p className="subtle">Turn market ideas into explicit, reproducible research.</p>
         </div>
-        <span className="status">{status}</span>
+        <div className="header-actions">
+          <button className="help-link" type="button" onClick={() => setShowHelp((current) => !current)}>
+            {showHelp ? "Back to workspace" : "Help"}
+          </button>
+          <span className="status">{status}</span>
+        </div>
       </header>
+      {showHelp ? <HelpPage onReturn={() => setShowHelp(false)} /> : <>
       <section className="panel">
         <div>
           <p className="eyebrow">PROJECTS</p>
@@ -462,9 +469,30 @@ function App() {
           </>}
         </article>
       </section>
+      </>}
     </main>
   );
 }
 
+function HelpPage({ onReturn }: { onReturn: () => void }) {
+  return (
+    <section className="help-page" aria-labelledby="help-title">
+      <div className="help-intro">
+        <p className="eyebrow">USER GUIDE</p>
+        <h2 id="help-title">Use the lab to make your research repeatable.</h2>
+        <p>Market Research Lab keeps your Projects and market data on this computer. It helps you inspect information before you use it in research. It never places or routes orders.</p>
+        <button className="secondary" type="button" onClick={onReturn}>Open workspace</button>
+      </div>
+      <ol className="help-steps">
+        <li><h3>1. Create a Project</h3><p>Enter a name in the Project area and select <strong>Create Project</strong>. Select a Project from the list to work in it. Use the Project actions to rename or delete it.</p></li>
+        <li><h3>2. Add market data</h3><p>Choose <strong>Download Data</strong> to retrieve prices, Corporate Actions, or fundamentals from a supported provider. Enter symbols for Tiingo or SEC CIKs for SEC EDGAR, then choose a date range if needed.</p><p>You can also use <strong>Import Data</strong> to add a CSV, JSON, or Parquet file. Give the source a clear name so you can identify it later.</p></li>
+        <li><h3>3. Check the Dataset Version</h3><p>Every successful import or download creates a Dataset Version. Select it in the Dataset Versions list to see its source, dates, row count, missing fields, and warnings.</p><p>Check <strong>Temporal Provenance</strong> before historical analysis. “Present” means the data includes when it became available. “Lacking” means it is not suitable for affected historical Runs.</p></li>
+        <li><h3>4. Inspect only eligible data</h3><p>In the Coverage Report, enter an ISO timestamp such as <code>2023-01-01T16:00:00Z</code> in <strong>As-Of Timestamp</strong>, then select <strong>Filter As-Of</strong>. The preview will show only observations available by that time.</p></li>
+        <li><h3>5. Save an example definition</h3><p>Select <strong>Save a starter Valuation revision</strong> to create an initial saved Valuation definition for the Project. Saved revisions preserve the definition that was used, so later work can refer back to it.</p></li>
+      </ol>
+      <aside className="help-note"><h3>Good to know</h3><ul><li>Your provider credentials stay in the local engine and are not sent by the browser.</li><li>Warnings and rejected rows tell you when a file needs attention; review them before you rely on the data.</li><li>More research, Valuation, Indicator, Backtest, report, and Alert tools will appear in later releases.</li></ul></aside>
+    </section>
+  );
+}
 createRoot(document.getElementById("root")!).render(<App />);
 
