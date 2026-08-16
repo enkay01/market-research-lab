@@ -28,6 +28,13 @@ export type IndicatorPoint = components["schemas"]["IndicatorPointResponse"];
 export type IndicatorSeries = components["schemas"]["IndicatorSeriesResponse"];
 export type IndicatorCalculateRequest = components["schemas"]["IndicatorCalculateRequest"];
 
+export type StrategyMetadata = components["schemas"]["StrategyMetadataResponse"];
+export type StrategyParameter = components["schemas"]["StrategyParameterResponse"];
+export type StrategyTarget = components["schemas"]["StrategyTargetResponse"];
+export type StrategyEvaluation = components["schemas"]["StrategyEvaluationResponse"];
+export type SavedStrategyEvaluation = components["schemas"]["SavedStrategyEvaluationResponse"];
+export type StrategyEvaluateRequest = components["schemas"]["StrategyEvaluateRequest"];
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -242,6 +249,26 @@ export const api = {
   calculateIndicator: (request: IndicatorCalculateRequest) =>
     dataOrThrow(
       client.POST("/api/indicators/calculate", {
+        body: request,
+      }),
+    ),
+  listStrategies: () => dataOrThrow(client.GET("/api/strategies")),
+  getStrategy: (name: string) =>
+    dataOrThrow(
+      client.GET("/api/strategies/{name}", {
+        params: { path: { name } },
+      }),
+    ),
+  evaluateStrategy: (request: StrategyEvaluateRequest) =>
+    dataOrThrow(
+      client.POST("/api/strategies/evaluate", {
+        body: request,
+      }),
+    ),
+  saveStrategyEvaluation: (projectId: string, request: StrategyEvaluateRequest) =>
+    dataOrThrow(
+      client.POST("/api/projects/{project_id}/strategies/evaluate", {
+        params: { path: { project_id: projectId } },
         body: request,
       }),
     ),

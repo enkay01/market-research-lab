@@ -26,6 +26,7 @@ import {
   Dialog,
   DialogHeader,
   EmptyState,
+  Card,
 } from "@astryxdesign/core";
 import {
   api,
@@ -34,6 +35,9 @@ import {
   type IndicatorMetadata,
   type IndicatorSeries,
   type IndicatorPoint,
+  type StrategyMetadata,
+  type StrategyEvaluation,
+  type StrategyEvaluateRequest,
 } from "../api/client";
 
 interface ModelsViewProps {
@@ -41,7 +45,7 @@ interface ModelsViewProps {
 }
 
 export function ModelsView({ project }: ModelsViewProps) {
-  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"indicators" | "predictive">("indicators");
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"indicators" | "predictive" | "strategies">("indicators");
 
   // Datasets & Securities
   const [datasets, setDatasets] = useState<CoverageResponse[]>([]);
@@ -73,10 +77,23 @@ export function ModelsView({ project }: ModelsViewProps) {
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
 
+  // Strategy State
+  const [strategies, setStrategies] = useState<StrategyMetadata[]>([]);
+  const [selectedStrategyName, setSelectedStrategyName] = useState<string>("long_flat_moving_average");
+  const [strategyParams, setStrategyParams] = useState<Record<string, string | number>>({
+    fast_period: 20,
+    slow_period: 50,
+    ma_type: "sma",
+  });
+  const [strategyResult, setStrategyResult] = useState<StrategyEvaluation | null>(null);
+  const [isStrategyLoading, setIsStrategyLoading] = useState<boolean>(false);
+  const [strategyError, setStrategyError] = useState<string | null>(null);
+  const [strategySaveSuccess, setStrategySaveSuccess] = useState<string | null>(null);
+
   // Load available datasets and indicators on mount
   useEffect(() => {
-    void Promise.all([api.listDatasets(), api.listIndicators()])
-      .then(([allDatasets, allIndicators]) => {
+    void Promise.all([api.listDatasets(), api.listIndicators(), api.listStrategies()])
+      .then(([allDatasets, allIndicators, allStrategies]) => {
         // Filter daily bars datasets
         const barDatasets = allDatasets.filter(
           (d) => d.dataset_type === "daily_bars" || (!d.is_fundamentals && !d.is_corporate_actions),
@@ -86,6 +103,7 @@ export function ModelsView({ project }: ModelsViewProps) {
           setSelectedDatasetId(barDatasets[0].id);
         }
         setIndicators(allIndicators);
+        setStrategies(allStrategies);
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Failed to load indicator metadata.");
@@ -121,6 +139,11 @@ export function ModelsView({ project }: ModelsViewProps) {
     [indicators, selectedIndicatorName],
   );
 
+  const currentStrategy = useMemo(
+    () => strategies.find((strat) => strat.name === selectedStrategyName),
+    [strategies, selectedStrategyName],
+  );
+
   // Update default param values when indicator changes
   useEffect(() => {
     if (!currentIndicator) return;
@@ -130,6 +153,16 @@ export function ModelsView({ project }: ModelsViewProps) {
     }
     setParamValues((prev) => ({ ...defaults, ...prev }));
   }, [currentIndicator]);
+
+  // Update default strategy param values when strategy changes
+  useEffect(() => {
+    if (!currentStrategy) return;
+    const defaults: Record<string, string | number> = {};
+    for (const p of currentStrategy.parameters) {
+      defaults[p.name] = (p.default as string | number) ?? (p.param_type === "int" ? 20 : "sma");
+    }
+    setStrategyParams((prev) => ({ ...defaults, ...prev }));
+  }, [currentStrategy]);
 
   async function handleCalculate() {
     if (!selectedDatasetId || !selectedSymbol || !selectedIndicatorName) {
@@ -193,6 +226,71 @@ export function ModelsView({ project }: ModelsViewProps) {
       setIsSaveOpen(false);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to save revision.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleEvaluateStrategy() {
+    if (!selectedDatasetId || !selectedSymbol || !selectedStrategyName) {
+      setStrategyError("Please select a dataset and symbol.");
+      return;
+    }
+
+    setIsStrategyLoading(true);
+    setStrategyError(null);
+    setStrategySaveSuccess(null);
+
+    const typedParams: Record<string, unknown> = {};
+    if (currentStrategy) {
+      for (const p of currentStrategy.parameters) {
+        const raw = strategyParams[p.name];
+        if (p.param_type === "int") {
+          typedParams[p.name] = parseInt(String(raw), 10) || (p.default as number);
+        } else {
+          typedParams[p.name] = raw || p.default;
+        }
+      }
+    }
+
+    const request: StrategyEvaluateRequest = {
+      name: selectedStrategyName,
+      dataset_version_id: selectedDatasetId,
+      symbol: selectedSymbol,
+      parameters: typedParams,
+      price_field: "close",
+    };
+
+    try {
+      const result = await api.evaluateStrategy(request);
+      setStrategyResult(result);
+    } catch (err: unknown) {
+      setStrategyError(err instanceof Error ? err.message : "Failed to evaluate strategy.");
+      setStrategyResult(null);
+    } finally {
+      setIsStrategyLoading(false);
+    }
+  }
+
+  async function handleSaveStrategyRevision() {
+    if (!project || !strategyResult) return;
+    setIsSaving(true);
+    setStrategyError(null);
+    setStrategySaveSuccess(null);
+    const request: StrategyEvaluateRequest = {
+      name: selectedStrategyName,
+      dataset_version_id: strategyResult.dataset_version_id,
+      symbol: strategyResult.symbol,
+      parameters: strategyResult.parameters,
+      price_field: "close",
+    };
+    try {
+      const saved = await api.saveStrategyEvaluation(project.id, request);
+      setStrategySaveSuccess(
+        `Saved revision '${saved.revision}' (${saved.strategy_revision}).`,
+      );
+    } catch (err: unknown) {
+      setStrategyError(err instanceof Error ? err.message : "Failed to save strategy revision.");
     } finally {
       setIsSaving(false);
     }
@@ -313,10 +411,11 @@ export function ModelsView({ project }: ModelsViewProps) {
               <SegmentedControl
                 label="Workspace Mode"
                 value={activeWorkspaceTab}
-                onChange={(val) => setActiveWorkspaceTab(val as "indicators" | "predictive")}
+                onChange={(val) => setActiveWorkspaceTab(val as "indicators" | "predictive" | "strategies")}
               >
                 <SegmentedControlItem value="indicators" label="Technical Indicators" />
                 <SegmentedControlItem value="predictive" label="Predictive Models" />
+                <SegmentedControlItem value="strategies" label="Strategies" />
               </SegmentedControl>
             </HStack>
 
@@ -723,6 +822,93 @@ export function ModelsView({ project }: ModelsViewProps) {
                   }}
                 />
               )
+            ) : activeWorkspaceTab === "strategies" ? (
+              <VStack gap={4}>
+                {strategyError && (
+                  <Banner status="error" title="Strategy Error">
+                    {strategyError}
+                  </Banner>
+                )}
+
+                {strategySaveSuccess && (
+                  <Banner status="success" title="Revision Saved">
+                    {strategySaveSuccess}
+                  </Banner>
+                )}
+
+                {strategyResult ? (
+                  <VStack gap={4}>
+                    <HStack justify="between" align="center" style={{ flexWrap: "wrap" }}>
+                      <VStack gap={0}>
+                        <Heading level={3}>
+                          {currentStrategy?.display_name || strategyResult.strategy_name} ({strategyResult.symbol})
+                        </Heading>
+                        <Text type="supporting">
+                          Desired target weights emitted at the decision time; never an order or a fill.
+                        </Text>
+                      </VStack>
+
+                      <HStack gap={2} align="center">
+                        {strategyResult.targets.map((target, idx) => (
+                          <Token
+                            key={idx}
+                            label={target.weight > 0 ? "LONG (100%)" : "FLAT (0%)"}
+                            color={target.weight > 0 ? "green" : "purple"}
+                          />
+                        ))}
+                        {strategyResult.indicator_name && (
+                          <Token label={strategyResult.indicator_name} color="blue" />
+                        )}
+                      </HStack>
+                    </HStack>
+
+                    {strategyResult.targets.map((target, idx) => (
+                      <Card key={idx} padding={4}>
+                        <VStack gap={3}>
+                          <HStack justify="between" align="center">
+                            <Text weight="bold">Target Weight</Text>
+                            <Token
+                              label={`${(target.weight * 100).toFixed(0)}%`}
+                              color={target.weight > 0 ? "green" : "purple"}
+                            />
+                          </HStack>
+                          <Text>{target.rationale}</Text>
+                          <HStack gap={3} style={{ flexWrap: "wrap" }}>
+                            <Text type="supporting">Decision time: {target.decision_time}</Text>
+                            {target.indicator_state && (
+                              <Text type="supporting">Indicator state: {target.indicator_state}</Text>
+                            )}
+                            {strategyResult.latest_session_date && (
+                              <Text type="supporting">Latest eligible session: {strategyResult.latest_session_date}</Text>
+                            )}
+                          </HStack>
+                        </VStack>
+                      </Card>
+                    ))}
+
+                    {project && (
+                      <HStack justify="end">
+                        <Button
+                          label="Save Revision"
+                          variant="secondary"
+                          size="sm"
+                          onClick={handleSaveStrategyRevision}
+                          isLoading={isSaving}
+                        />
+                      </HStack>
+                    )}
+                  </VStack>
+                ) : (
+                  <EmptyState
+                    title="No Strategy Evaluated"
+                    description="Select a strategy, dataset, and symbol in the right panel, then click Evaluate Strategy to emit target weights and rationale."
+                    primaryAction={{
+                      label: "Evaluate Strategy",
+                      onClick: handleEvaluateStrategy,
+                    }}
+                  />
+                )}
+              </VStack>
             ) : (
               <VStack gap={4}>
                 <Heading level={3}>Chronological Walk-Forward Predictive Model Folds</Heading>
@@ -761,7 +947,12 @@ export function ModelsView({ project }: ModelsViewProps) {
         </LayoutContent>
       }
       end={
-        <LayoutPanel width={360} hasDivider isScrollable label="Indicator Parameters">
+        <LayoutPanel
+          width={360}
+          hasDivider
+          isScrollable
+          label={activeWorkspaceTab === "strategies" ? "Strategy Parameters" : "Indicator Parameters"}
+        >
           <VStack gap={4} style={{ padding: "16px" }}>
             <Heading level={3}>Configuration</Heading>
 
@@ -796,78 +987,157 @@ export function ModelsView({ project }: ModelsViewProps) {
               />
             </VStack>
 
-            {/* Indicator Selection */}
-            <VStack gap={1}>
-              <Text weight="medium">Indicator Technique</Text>
-              <Selector
-                label="Indicator"
-                isLabelHidden
-                options={indicators.map((ind) => ({
-                  value: ind.name,
-                  label: ind.display_name,
-                }))}
-                value={selectedIndicatorName}
-                onChange={(val) => setSelectedIndicatorName(val)}
-              />
-              {currentIndicator && (
-                <Text type="supporting">{currentIndicator.description}</Text>
-              )}
-            </VStack>
+            {activeWorkspaceTab === "strategies" ? (
+              <>
+                {/* Strategy Selection */}
+                <VStack gap={1}>
+                  <Text weight="medium">Strategy Technique</Text>
+                  <Selector
+                    label="Strategy"
+                    isLabelHidden
+                    options={strategies.map((strat) => ({
+                      value: strat.name,
+                      label: strat.display_name,
+                    }))}
+                    value={selectedStrategyName}
+                    onChange={(val) => setSelectedStrategyName(val)}
+                  />
+                  {currentStrategy && (
+                    <Text type="supporting">{currentStrategy.description}</Text>
+                  )}
+                </VStack>
 
-            {/* Dynamic Typed Parameters */}
-            {currentIndicator && currentIndicator.parameters.length > 0 && (
-              <VStack gap={3}>
-                <Heading level={4}>Parameters</Heading>
-                {currentIndicator.parameters.map((param) => {
-                  if (param.options && param.options.length > 0) {
-                    return (
-                      <VStack gap={1} key={param.name}>
-                        <Text weight="medium">{param.name}</Text>
-                        <SegmentedControl
-                          label={param.name}
-                          value={String(paramValues[param.name] || param.default)}
-                          onChange={(val) =>
-                            setParamValues((prev) => ({ ...prev, [param.name]: val }))
-                          }
-                        >
-                          {param.options.map((opt) => (
-                            <SegmentedControlItem key={opt} value={opt} label={opt.toUpperCase()} />
-                          ))}
-                        </SegmentedControl>
-                        <Text type="supporting">{param.description}</Text>
-                      </VStack>
-                    );
-                  }
+                {/* Strategy Parameters */}
+                {currentStrategy && currentStrategy.parameters.length > 0 && (
+                  <VStack gap={3}>
+                    <Heading level={4}>Parameters</Heading>
+                    {currentStrategy.parameters.map((param) => {
+                      if (param.options && param.options.length > 0) {
+                        return (
+                          <VStack gap={1} key={param.name}>
+                            <Text weight="medium">{param.name}</Text>
+                            <SegmentedControl
+                              label={param.name}
+                              value={String(strategyParams[param.name] || param.default)}
+                              onChange={(val) =>
+                                setStrategyParams((prev) => ({ ...prev, [param.name]: val }))
+                              }
+                            >
+                              {param.options.map((opt) => (
+                                <SegmentedControlItem key={opt} value={opt} label={opt.toUpperCase()} />
+                              ))}
+                            </SegmentedControl>
+                            <Text type="supporting">{param.description}</Text>
+                          </VStack>
+                        );
+                      }
 
-                  return (
-                    <VStack gap={1} key={param.name}>
-                      <TextInput
-                        label={`${param.name} (${param.param_type})`}
-                        value={String(paramValues[param.name] ?? param.default ?? "")}
-                        onChange={(val) =>
-                          setParamValues((prev) => ({
-                            ...prev,
-                            [param.name]: typeof val === "string" ? val : "",
-                          }))
-                        }
-                      />
-                      <Text type="supporting">
-                        {param.description}
-                        {param.min_value !== null ? ` (min: ${param.min_value}` : ""}
-                        {param.max_value !== null ? `, max: ${param.max_value})` : param.min_value !== null ? ")" : ""}
-                      </Text>
-                    </VStack>
-                  );
-                })}
-              </VStack>
+                      return (
+                        <VStack gap={1} key={param.name}>
+                          <TextInput
+                            label={`${param.name} (${param.param_type})`}
+                            value={String(strategyParams[param.name] ?? param.default ?? "")}
+                            onChange={(val) =>
+                              setStrategyParams((prev) => ({
+                                ...prev,
+                                [param.name]: typeof val === "string" ? val : "",
+                              }))
+                            }
+                          />
+                          <Text type="supporting">
+                            {param.description}
+                            {param.min_value !== null ? ` (min: ${param.min_value}` : ""}
+                            {param.max_value !== null ? `, max: ${param.max_value})` : param.min_value !== null ? ")" : ""}
+                          </Text>
+                        </VStack>
+                      );
+                    })}
+                  </VStack>
+                )}
+
+                <Button
+                  label="Evaluate Strategy"
+                  variant="primary"
+                  onClick={handleEvaluateStrategy}
+                  isLoading={isStrategyLoading}
+                />
+              </>
+            ) : (
+              <>
+                {/* Indicator Selection */}
+                <VStack gap={1}>
+                  <Text weight="medium">Indicator Technique</Text>
+                  <Selector
+                    label="Indicator"
+                    isLabelHidden
+                    options={indicators.map((ind) => ({
+                      value: ind.name,
+                      label: ind.display_name,
+                    }))}
+                    value={selectedIndicatorName}
+                    onChange={(val) => setSelectedIndicatorName(val)}
+                  />
+                  {currentIndicator && (
+                    <Text type="supporting">{currentIndicator.description}</Text>
+                  )}
+                </VStack>
+
+                {/* Dynamic Typed Parameters */}
+                {currentIndicator && currentIndicator.parameters.length > 0 && (
+                  <VStack gap={3}>
+                    <Heading level={4}>Parameters</Heading>
+                    {currentIndicator.parameters.map((param) => {
+                      if (param.options && param.options.length > 0) {
+                        return (
+                          <VStack gap={1} key={param.name}>
+                            <Text weight="medium">{param.name}</Text>
+                            <SegmentedControl
+                              label={param.name}
+                              value={String(paramValues[param.name] || param.default)}
+                              onChange={(val) =>
+                                setParamValues((prev) => ({ ...prev, [param.name]: val }))
+                              }
+                            >
+                              {param.options.map((opt) => (
+                                <SegmentedControlItem key={opt} value={opt} label={opt.toUpperCase()} />
+                              ))}
+                            </SegmentedControl>
+                            <Text type="supporting">{param.description}</Text>
+                          </VStack>
+                        );
+                      }
+
+                      return (
+                        <VStack gap={1} key={param.name}>
+                          <TextInput
+                            label={`${param.name} (${param.param_type})`}
+                            value={String(paramValues[param.name] ?? param.default ?? "")}
+                            onChange={(val) =>
+                              setParamValues((prev) => ({
+                                ...prev,
+                                [param.name]: typeof val === "string" ? val : "",
+                              }))
+                            }
+                          />
+                          <Text type="supporting">
+                            {param.description}
+                            {param.min_value !== null ? ` (min: ${param.min_value}` : ""}
+                            {param.max_value !== null ? `, max: ${param.max_value})` : param.min_value !== null ? ")" : ""}
+                          </Text>
+                        </VStack>
+                      );
+                    })}
+                  </VStack>
+                )}
+
+                <Button
+                  label="Calculate Preview"
+                  variant="primary"
+                  onClick={handleCalculate}
+                  isLoading={isLoading}
+                />
+              </>
             )}
-
-            <Button
-              label="Calculate Preview"
-              variant="primary"
-              onClick={handleCalculate}
-              isLoading={isLoading}
-            />
           </VStack>
         </LayoutPanel>
       }

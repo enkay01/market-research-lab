@@ -419,6 +419,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/strategies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Strategies */
+        get: operations["get_strategies_api_strategies_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/strategies/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Strategy By Name */
+        get: operations["get_strategy_by_name_api_strategies__name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/strategies/evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Evaluate Strategy Endpoint */
+        post: operations["evaluate_strategy_endpoint_api_strategies_evaluate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/strategies/evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Save Strategy Evaluation */
+        post: operations["save_strategy_evaluation_api_projects__project_id__strategies_evaluate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -864,6 +932,33 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** SavedStrategyEvaluationResponse */
+        SavedStrategyEvaluationResponse: {
+            /** Strategy Name */
+            strategy_name: string;
+            /** Symbol */
+            symbol: string;
+            /** Dataset Version Id */
+            dataset_version_id: string;
+            /** Parameters */
+            parameters: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Decision Time */
+            decision_time: string;
+            /** Targets */
+            targets: components["schemas"]["StrategyTargetResponse"][];
+            /** Indicator Name */
+            indicator_name?: string | null;
+            /** Latest Session Date */
+            latest_session_date?: string | null;
+            /** Warnings */
+            warnings?: string[];
+            /** Revision */
+            revision: string;
+            /** Strategy Revision */
+            strategy_revision: string;
+        };
         /** SavedValuationResponse */
         SavedValuationResponse: {
             /** Run Id */
@@ -951,6 +1046,91 @@ export interface components {
                 [key: string]: components["schemas"]["JsonValue-Output"];
             }[];
         };
+        /** StrategyEvaluateRequest */
+        StrategyEvaluateRequest: {
+            /** Name */
+            name: string;
+            /** Dataset Version Id */
+            dataset_version_id: string;
+            /** Symbol */
+            symbol: string;
+            /** Parameters */
+            parameters?: {
+                [key: string]: components["schemas"]["JsonValue-Input"];
+            };
+            /** As Of */
+            as_of?: string | null;
+            /**
+             * Price Field
+             * @default close
+             */
+            price_field: string;
+        };
+        /** StrategyEvaluationResponse */
+        StrategyEvaluationResponse: {
+            /** Strategy Name */
+            strategy_name: string;
+            /** Symbol */
+            symbol: string;
+            /** Dataset Version Id */
+            dataset_version_id: string;
+            /** Parameters */
+            parameters: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Decision Time */
+            decision_time: string;
+            /** Targets */
+            targets: components["schemas"]["StrategyTargetResponse"][];
+            /** Indicator Name */
+            indicator_name?: string | null;
+            /** Latest Session Date */
+            latest_session_date?: string | null;
+            /** Warnings */
+            warnings?: string[];
+        };
+        /** StrategyMetadataResponse */
+        StrategyMetadataResponse: {
+            /** Name */
+            name: string;
+            /** Display Name */
+            display_name: string;
+            /** Description */
+            description: string;
+            /** Parameters */
+            parameters: components["schemas"]["StrategyParameterResponse"][];
+            /** Outputs */
+            outputs: string[];
+        };
+        /** StrategyParameterResponse */
+        StrategyParameterResponse: {
+            /** Name */
+            name: string;
+            /** Param Type */
+            param_type: string;
+            default: components["schemas"]["JsonValue-Output"];
+            /** Description */
+            description: string;
+            /** Min Value */
+            min_value?: number | null;
+            /** Max Value */
+            max_value?: number | null;
+            /** Options */
+            options?: string[] | null;
+        };
+        /** StrategyTargetResponse */
+        StrategyTargetResponse: {
+            /** Security Id */
+            security_id: string;
+            /** Weight */
+            weight: number;
+            /** Decision Time */
+            decision_time: string;
+            /** Rationale */
+            rationale: string;
+            /** Indicator State */
+            indicator_state?: string | null;
+        };
         /** TiingoDownloadRequest */
         TiingoDownloadRequest: {
             /** Start Date */
@@ -986,6 +1166,10 @@ export interface components {
         /** WatchlistItemResponse */
         WatchlistItemResponse: {
             security: components["schemas"]["SecurityResponse"];
+            /** Security Id */
+            security_id: string;
+            /** Symbol */
+            symbol: string;
             /** Has Thesis */
             has_thesis: boolean;
             /** Thesis Updated At */
@@ -1995,6 +2179,125 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IndicatorSeriesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_strategies_api_strategies_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyMetadataResponse"][];
+                };
+            };
+        };
+    };
+    get_strategy_by_name_api_strategies__name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyMetadataResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    evaluate_strategy_endpoint_api_strategies_evaluate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StrategyEvaluateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyEvaluationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_strategy_evaluation_api_projects__project_id__strategies_evaluate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StrategyEvaluateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedStrategyEvaluationResponse"];
                 };
             };
             /** @description Validation Error */

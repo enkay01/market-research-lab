@@ -18,7 +18,7 @@ from market_research_lab.market_data import (
 )
 
 
-def test_legacy_validation_summary_defaults_new_fields() -> None:
+def test_legacy_validation_summary_defaults_new_fields():
     summary = ValidationSummary.from_json(
         json.dumps(
             {
@@ -608,7 +608,7 @@ def test_fundamentals_ingest_preserves_incomplete_fields_marker():
         assert facts[1].incomplete_fields is None
 
 
-def test_search_securities_and_security_summary_across_datasets() -> None:
+def test_search_securities_and_security_summary_across_datasets():
     with tempfile.TemporaryDirectory() as tmpdir:
         workspace = Path(tmpdir)
         store = MarketDataStore(workspace)

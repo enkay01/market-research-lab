@@ -10,13 +10,13 @@ from market_research_lab.projects import ProjectNotFoundError, ProjectStore
 from market_research_lab.research import InvalidSecurityIdError, SecurityNotWatchedError
 
 
-def test_create_project_initializes_empty_watchlist(tmp_path: Path) -> None:
+def test_create_project_initializes_empty_watchlist(tmp_path: Path):
     store = ProjectStore(tmp_path)
     project = store.create_project("Tech Research")
     assert store.get_watchlist(project.id) == []
 
 
-def test_add_and_remove_from_watchlist(tmp_path: Path) -> None:
+def test_add_and_remove_from_watchlist(tmp_path: Path):
     store = ProjectStore(tmp_path)
     project = store.create_project("Tech Research")
 
@@ -38,7 +38,7 @@ def test_add_and_remove_from_watchlist(tmp_path: Path) -> None:
     assert store.is_watched(project.id, "sec-aapl") is False
 
 
-def test_thesis_operations_require_watched_security(tmp_path: Path) -> None:
+def test_thesis_operations_require_watched_security(tmp_path: Path):
     store = ProjectStore(tmp_path)
     project = store.create_project("Tech Research")
 
@@ -60,7 +60,7 @@ def test_thesis_operations_require_watched_security(tmp_path: Path) -> None:
     assert loaded.summary == "Apple."
 
 
-def test_removing_from_watchlist_retains_thesis_file(tmp_path: Path) -> None:
+def test_removing_from_watchlist_retains_thesis_file(tmp_path: Path):
     store = ProjectStore(tmp_path)
     project = store.create_project("Tech Research")
 
@@ -82,7 +82,7 @@ def test_removing_from_watchlist_retains_thesis_file(tmp_path: Path) -> None:
     assert restored.summary == "Retained Apple thesis."
 
 
-def test_watchlist_operations_reject_unsafe_security_ids(tmp_path: Path) -> None:
+def test_watchlist_operations_reject_unsafe_security_ids(tmp_path: Path):
     store = ProjectStore(tmp_path)
     project = store.create_project("Tech Research")
 
@@ -90,7 +90,7 @@ def test_watchlist_operations_reject_unsafe_security_ids(tmp_path: Path) -> None
         store.add_to_watchlist(project.id, "../unsafe")
 
 
-def test_watchlist_operations_on_nonexistent_project(tmp_path: Path) -> None:
+def test_watchlist_operations_on_nonexistent_project(tmp_path: Path):
     store = ProjectStore(tmp_path)
     with pytest.raises(ProjectNotFoundError):
         store.get_watchlist("non-existent-id")

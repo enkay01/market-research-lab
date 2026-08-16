@@ -57,6 +57,18 @@ from .research import (
     SecurityNotWatchedError,
     default_thesis_template,
 )
+from .strategies import (
+    MarketView,
+    StrategyEvaluation,
+    StrategyEvaluationError,
+    StrategyMetadata,
+    StrategyParameter,
+    StrategyParameterValidationError,
+    StrategyTarget,
+    evaluate_strategy,
+    get_strategy_spec,
+    list_strategies,
+)
 from .valuation import ComparableCompanyInput, ComparableValuationResult, evaluate
 
 
@@ -164,6 +176,8 @@ class SecuritySummaryResponse(BaseModel):
 
 class WatchlistItemResponse(BaseModel):
     security: SecurityResponse
+    security_id: str
+    symbol: str
     has_thesis: bool
     thesis_updated_at: str | None = None
     thesis_preview: str | None = None
@@ -388,6 +402,58 @@ class IndicatorSeriesResponse(BaseModel):
     points: list[IndicatorPointResponse]
 
 
+class StrategyParameterResponse(BaseModel):
+    name: str
+    param_type: str
+    default: JsonValue
+    description: str
+    min_value: float | None = None
+    max_value: float | None = None
+    options: list[str] | None = None
+
+
+class StrategyMetadataResponse(BaseModel):
+    name: str
+    display_name: str
+    description: str
+    parameters: list[StrategyParameterResponse]
+    outputs: list[str]
+
+
+class StrategyTargetResponse(BaseModel):
+    security_id: str
+    weight: float
+    decision_time: str
+    rationale: str
+    indicator_state: str | None = None
+
+
+class StrategyEvaluateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    dataset_version_id: str = Field(min_length=1)
+    symbol: str = Field(min_length=1, max_length=32)
+    parameters: dict[str, JsonValue] = Field(default_factory=dict)
+    as_of: datetime | None = None
+    price_field: str = Field(default="close", pattern=r"^(close|open|high|low)$")
+
+
+class StrategyEvaluationResponse(BaseModel):
+    strategy_name: str
+    symbol: str
+    dataset_version_id: str
+    parameters: dict[str, JsonValue]
+    decision_time: str
+    targets: list[StrategyTargetResponse]
+    indicator_name: str | None = None
+    latest_session_date: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class SavedStrategyEvaluationResponse(StrategyEvaluationResponse):
+    revision: str
+    strategy_revision: str
+
+
 def _indicator_param_response(param: IndicatorParameter) -> IndicatorParameterResponse:
     return IndicatorParameterResponse(
         name=param.name,
@@ -434,6 +500,57 @@ def _indicator_series_response(
         warmup_period=series.warmup_period,
         valid_bars=series.valid_bars,
         points=[_indicator_point_response(p) for p in series.points],
+    )
+
+
+def _strategy_param_response(param: StrategyParameter) -> StrategyParameterResponse:
+    return StrategyParameterResponse(
+        name=param.name,
+        param_type=param.param_type,
+        default=param.default,
+        description=param.description,
+        min_value=param.min_value,
+        max_value=param.max_value,
+        options=param.options,
+    )
+
+
+def _strategy_meta_response(spec: StrategyMetadata) -> StrategyMetadataResponse:
+    return StrategyMetadataResponse(
+        name=spec.name,
+        display_name=spec.display_name,
+        description=spec.description,
+        parameters=[_strategy_param_response(p) for p in spec.parameters],
+        outputs=spec.outputs,
+    )
+
+
+def _strategy_target_response(target: StrategyTarget) -> StrategyTargetResponse:
+    return StrategyTargetResponse(
+        security_id=target.security_id,
+        weight=target.weight,
+        decision_time=target.decision_time,
+        rationale=target.rationale,
+        indicator_state=target.indicator_state,
+    )
+
+
+def _strategy_evaluation_response(
+    evaluation: StrategyEvaluation,
+    *,
+    symbol: str,
+    dataset_version_id: str,
+) -> StrategyEvaluationResponse:
+    return StrategyEvaluationResponse(
+        strategy_name=evaluation.strategy_name,
+        symbol=symbol,
+        dataset_version_id=dataset_version_id,
+        parameters=evaluation.parameters,
+        decision_time=evaluation.decision_time,
+        targets=[_strategy_target_response(t) for t in evaluation.targets],
+        indicator_name=evaluation.indicator_name,
+        latest_session_date=evaluation.latest_session_date,
+        warnings=list(evaluation.warnings),
     )
 
 
@@ -646,6 +763,56 @@ def _calculate_comparable_result(
     )
 
 
+class StrategyRequestContext(NamedTuple):
+    """Eligible Market View and decision time resolved for a Strategy request."""
+
+    market_view: MarketView
+    decision_time: str
+
+
+def _strategy_market_view(
+    market_store: MarketDataStore, request: StrategyEvaluateRequest
+) -> StrategyRequestContext:
+    """Build the eligible Market View and decision time for a Strategy request."""
+    bars = market_store.history(
+        request.dataset_version_id,
+        symbol=request.symbol,
+        as_of=request.as_of,
+    )
+    if not bars:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"No price history found for symbol '{request.symbol}' "
+                f"in dataset '{request.dataset_version_id}'."
+            ),
+        )
+
+    sorted_bars = sorted(bars, key=lambda b: b.session_date)
+    session_dates = [bar.session_date for bar in sorted_bars]
+    if request.price_field == "open":
+        prices = [bar.open for bar in sorted_bars]
+    elif request.price_field == "high":
+        prices = [bar.high for bar in sorted_bars]
+    elif request.price_field == "low":
+        prices = [bar.low for bar in sorted_bars]
+    else:
+        prices = [bar.close for bar in sorted_bars]
+
+    latest_bar = sorted_bars[-1]
+    decision_time = (
+        request.as_of.isoformat()
+        if request.as_of is not None
+        else (latest_bar.available_at or datetime.now(UTC).isoformat())
+    )
+    view = MarketView(
+        security_id=request.symbol,
+        session_dates=tuple(session_dates),
+        prices=tuple(prices),
+    )
+    return StrategyRequestContext(market_view=view, decision_time=decision_time)
+
+
 def _build_watchlist_response(
     project_id: str,
     store: ProjectStore,
@@ -679,6 +846,8 @@ def _build_watchlist_response(
                     exchange=sec.exchange,
                     currency=sec.currency,
                 ),
+                security_id=sec.security_id,
+                symbol=sec.symbol,
                 has_thesis=has_thesis,
                 thesis_updated_at=thesis_updated,
                 thesis_preview=thesis_preview,
@@ -853,6 +1022,32 @@ def create_app(
             status_code=status.HTTP_400_BAD_REQUEST,
             content=ErrorResponse(
                 code="indicator_calculation_error",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(StrategyParameterValidationError)
+    async def strategy_parameter_validation_error(
+        _: Request, error: StrategyParameterValidationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content=ErrorResponse(
+                code="parameter_validation_error",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(StrategyEvaluationError)
+    async def strategy_evaluation_error(
+        _: Request, error: StrategyEvaluationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="strategy_evaluation_error",
                 message=str(error),
                 details={},
             ).model_dump(),
@@ -1340,6 +1535,97 @@ def create_app(
             series,
             dataset_version_id=request.dataset_version_id,
             symbol=request.symbol,
+        )
+
+    @app.get(
+        "/api/strategies",
+        response_model=list[StrategyMetadataResponse],
+        tags=["strategies"],
+    )
+    def get_strategies() -> list[StrategyMetadataResponse]:
+        return [_strategy_meta_response(spec) for spec in list_strategies()]
+
+    @app.get(
+        "/api/strategies/{name}",
+        response_model=StrategyMetadataResponse,
+        tags=["strategies"],
+    )
+    def get_strategy_by_name(
+        name: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_]{1,64}$"),
+    ) -> StrategyMetadataResponse:
+        return _strategy_meta_response(get_strategy_spec(name))
+
+    @app.post(
+        "/api/strategies/evaluate",
+        response_model=StrategyEvaluationResponse,
+        tags=["strategies"],
+    )
+    def evaluate_strategy_endpoint(
+        request: StrategyEvaluateRequest,
+    ) -> StrategyEvaluationResponse:
+        context = _strategy_market_view(market_store, request)
+        evaluation = evaluate_strategy(
+            name=request.name,
+            market_view=context.market_view,
+            parameters=request.parameters,
+            decision_time=context.decision_time,
+        )
+        return _strategy_evaluation_response(
+            evaluation,
+            symbol=request.symbol,
+            dataset_version_id=request.dataset_version_id,
+        )
+
+    @app.post(
+        "/api/projects/{project_id}/strategies/evaluate",
+        response_model=SavedStrategyEvaluationResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["strategies"],
+    )
+    def save_strategy_evaluation(
+        project_id: UUID, request: StrategyEvaluateRequest
+    ) -> SavedStrategyEvaluationResponse:
+        context = _strategy_market_view(market_store, request)
+        evaluation = evaluate_strategy(
+            name=request.name,
+            market_view=context.market_view,
+            parameters=request.parameters,
+            decision_time=context.decision_time,
+        )
+        name = f"{evaluation.strategy_name} - {request.symbol}"
+        revision = store.save_revision(
+            str(project_id),
+            kind="strategy",
+            name=name,
+            definition={
+                "strategy": evaluation.strategy_name,
+                "indicator": evaluation.indicator_name,
+                "symbol": request.symbol,
+                "dataset_version_id": request.dataset_version_id,
+                "price_field": request.price_field,
+                "parameters": evaluation.parameters,
+                "decision_time": evaluation.decision_time,
+                "latest_session_date": evaluation.latest_session_date,
+                "targets": [
+                    {
+                        "security_id": target.security_id,
+                        "weight": target.weight,
+                        "rationale": target.rationale,
+                        "indicator_state": target.indicator_state,
+                    }
+                    for target in evaluation.targets
+                ],
+            },
+        )
+        base = _strategy_evaluation_response(
+            evaluation,
+            symbol=request.symbol,
+            dataset_version_id=request.dataset_version_id,
+        )
+        return SavedStrategyEvaluationResponse(
+            **base.model_dump(),
+            revision=revision,
+            strategy_revision=f"{evaluation.strategy_name}:{revision}",
         )
 
     built_interface = static_dir or repository_root / "web" / "dist"
