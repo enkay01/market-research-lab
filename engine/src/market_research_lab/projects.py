@@ -172,7 +172,7 @@ class ProjectStore:
         record: ValuationRunRecord,
     ) -> str:
         """Persist one completed Valuation as a reproducible Run artifact."""
-        from .valuation import generate_valuation_csv, generate_valuation_html_report
+        from .reporting import generate_valuation_csv, generate_valuation_html_report
 
         run_id = self.create_run(project_id)
         run_directory = self._directory(project_id) / "runs" / run_id

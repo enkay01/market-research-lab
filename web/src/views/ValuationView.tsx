@@ -50,6 +50,23 @@ function currencyFormat(value: number | null | undefined, currency: string = "US
   return `${currency} ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function ValuationKpiCard({ label, value }: { label: string; value: string }) {
+  return (
+    <VStack
+      gap={1}
+      style={{
+        padding: "var(--spacing-4, 1rem)",
+        background: "var(--color-bg-subtle, #f8fafc)",
+        borderRadius: "var(--radius-medium, 0.5rem)",
+        flex: 1,
+      }}
+    >
+      <Text type="supporting">{label}</Text>
+      <Heading level={2}>{value}</Heading>
+    </VStack>
+  );
+}
+
 export function ValuationView({ project }: ValuationViewProps) {
   const [activeTab, setActiveTab] = useState<"fcff_dcf" | "comparables" | "comparison">("fcff_dcf");
   const [securities, setSecurities] = useState<Security[]>([]);
@@ -79,6 +96,15 @@ export function ValuationView({ project }: ValuationViewProps) {
   const [savedValuations, setSavedValuations] = useState<SavedValuation[]>([]);
   const [selectedRunIds, setSelectedRunIds] = useState<string[]>([]);
   const [comparisonResult, setComparisonResult] = useState<ValuationComparison | null>(null);
+  const [compareMethodFilter, setCompareMethodFilter] = useState<"fcff_dcf" | "trading_comparables">("fcff_dcf");
+
+  const filteredValuations = useMemo(() => {
+    return savedValuations.filter((v) =>
+      compareMethodFilter === "fcff_dcf"
+        ? v.method_revision.startsWith("fcff_dcf")
+        : v.method_revision.startsWith("trading_comparables")
+    );
+  }, [savedValuations, compareMethodFilter]);
 
   // Loading states
   const [isCalculating, setIsCalculating] = useState(false);
@@ -353,7 +379,7 @@ export function ValuationView({ project }: ValuationViewProps) {
             {activeTab === "fcff_dcf" && (
               <VStack gap={4}>
                 <VStack gap={3}>
-                  <Heading level={3}>Model Assumptions & Inputs</Heading>
+                  <Heading level={3}>Valuation Assumptions & Inputs</Heading>
                   <Selector
                     label="Target Security"
                     value={targetId}
@@ -442,22 +468,22 @@ export function ValuationView({ project }: ValuationViewProps) {
 
                     {/* Headline KPI cards */}
                     <HStack gap={3}>
-                      <VStack gap={1} style={{ padding: "16px", background: "var(--color-bg-subtle, #f8fafc)", borderRadius: "8px", flex: 1 }}>
-                        <Text type="supporting">Value Per Share</Text>
-                        <Heading level={2}>{currencyFormat(dcfResult.value_per_share, dcfResult.currency)}</Heading>
-                      </VStack>
-                      <VStack gap={1} style={{ padding: "16px", background: "var(--color-bg-subtle, #f8fafc)", borderRadius: "8px", flex: 1 }}>
-                        <Text type="supporting">Enterprise Value</Text>
-                        <Heading level={2}>{currencyFormat(dcfResult.enterprise_value, dcfResult.currency)}</Heading>
-                      </VStack>
-                      <VStack gap={1} style={{ padding: "16px", background: "var(--color-bg-subtle, #f8fafc)", borderRadius: "8px", flex: 1 }}>
-                        <Text type="supporting">Equity Value</Text>
-                        <Heading level={2}>{currencyFormat(dcfResult.equity_value, dcfResult.currency)}</Heading>
-                      </VStack>
-                      <VStack gap={1} style={{ padding: "16px", background: "var(--color-bg-subtle, #f8fafc)", borderRadius: "8px", flex: 1 }}>
-                        <Text type="supporting">Terminal Contribution</Text>
-                        <Heading level={2}>{percentage(dcfResult.terminal_value_contribution)}</Heading>
-                      </VStack>
+                      <ValuationKpiCard
+                        label="Value Per Share"
+                        value={currencyFormat(dcfResult.value_per_share, dcfResult.currency)}
+                      />
+                      <ValuationKpiCard
+                        label="Enterprise Value"
+                        value={currencyFormat(dcfResult.enterprise_value, dcfResult.currency)}
+                      />
+                      <ValuationKpiCard
+                        label="Equity Value"
+                        value={currencyFormat(dcfResult.equity_value, dcfResult.currency)}
+                      />
+                      <ValuationKpiCard
+                        label="Terminal Contribution"
+                        value={percentage(dcfResult.terminal_value_contribution)}
+                      />
                     </HStack>
 
                     {/* Forecast Cash Flows Table */}
@@ -559,7 +585,7 @@ export function ValuationView({ project }: ValuationViewProps) {
                       {dcfResult.run_id ? ` Run ID: ${dcfResult.run_id}.` : ""}
                     </Text>
                     {dcfResult.warnings.length > 0 && (
-                      <Banner status="warning" title="Model Notices">
+                      <Banner status="warning" title="Valuation Notices">
                         {dcfResult.warnings.join(" ")}
                       </Banner>
                     )}
@@ -658,11 +684,24 @@ export function ValuationView({ project }: ValuationViewProps) {
             {activeTab === "comparison" && (
               <VStack gap={4}>
                 <VStack gap={3}>
-                  <Heading level={3}>Select Saved Valuations</Heading>
-                  <Text type="supporting">Select 2 or more saved Valuation runs to compare assumptions, revisions, and outputs side-by-side.</Text>
-                  {savedValuations.length === 0 ? (
-                    <Banner status="info" title="No Saved Valuations">
-                      Save at least two DCF or Comparable Valuations to enable side-by-side comparison.
+                  <Heading level={3}>Select Compatible Valuations</Heading>
+                  <Text type="supporting">Select 2 or more saved Valuation runs of the same method to compare assumptions, revisions, and outputs side-by-side.</Text>
+                  
+                  <SegmentedControl
+                    value={compareMethodFilter}
+                    onChange={(val) => {
+                      setCompareMethodFilter(val as "fcff_dcf" | "trading_comparables");
+                      setSelectedRunIds([]);
+                      setComparisonResult(null);
+                    }}
+                  >
+                    <SegmentedControlItem value="fcff_dcf" label="FCFF DCF Valuations" />
+                    <SegmentedControlItem value="trading_comparables" label="Trading Comparables" />
+                  </SegmentedControl>
+
+                  {filteredValuations.length === 0 ? (
+                    <Banner status="info" title="No Saved Valuations for this Method">
+                      Save at least two {compareMethodFilter === "fcff_dcf" ? "FCFF DCF" : "Trading Comparable"} Valuations to enable side-by-side comparison.
                     </Banner>
                   ) : (
                     <VStack gap={2}>
@@ -672,7 +711,7 @@ export function ValuationView({ project }: ValuationViewProps) {
                         onChange={setSelectedRunIds}
                         hasDividers
                       >
-                        {savedValuations.map((val) => {
+                        {filteredValuations.map((val) => {
                           const res = val.result as any;
                           const sym = res?.symbol || res?.target?.symbol || "Unknown";
                           return (
@@ -720,7 +759,7 @@ export function ValuationView({ project }: ValuationViewProps) {
                             <TableCell>
                               <VStack gap={0}>
                                 <Text weight="bold">{item.method_revision}</Text>
-                                <Text type="supporting" style={{ fontSize: "0.75rem" }}>{item.run_id}</Text>
+                                <Text type="supporting">{item.run_id}</Text>
                               </VStack>
                             </TableCell>
                             <TableCell><Token label={item.method} color="blue" /></TableCell>
@@ -729,18 +768,18 @@ export function ValuationView({ project }: ValuationViewProps) {
                             <TableCell>{currencyFormat(item.enterprise_value, item.currency)}</TableCell>
                             <TableCell>{percentage(item.terminal_value_contribution)}</TableCell>
                             <TableCell>
-                              <VStack gap={0} style={{ fontSize: "0.8rem" }}>
+                              <VStack gap={0}>
                                 {item.method === "fcff_dcf" ? (
                                   <>
-                                    <Text>WACC: {((Number(item.key_assumptions.wacc) || 0) * 100).toFixed(1)}%</Text>
-                                    <Text>Term Growth: {((Number(item.key_assumptions.terminal_growth_rate) || 0) * 100).toFixed(1)}%</Text>
-                                    <Text>Rev Growth: {((Number(item.key_assumptions.revenue_growth_rate) || 0) * 100).toFixed(1)}%</Text>
+                                    <Text type="supporting">WACC: {((Number(item.key_assumptions.wacc) || 0) * 100).toFixed(1)}%</Text>
+                                    <Text type="supporting">Term Growth: {((Number(item.key_assumptions.terminal_growth_rate) || 0) * 100).toFixed(1)}%</Text>
+                                    <Text type="supporting">Rev Growth: {((Number(item.key_assumptions.revenue_growth_rate) || 0) * 100).toFixed(1)}%</Text>
                                   </>
                                 ) : (
                                   <>
-                                    <Text>P/E: {multiple(item.price_to_earnings)}</Text>
-                                    <Text>EV/Rev: {multiple(item.ev_to_revenue)}</Text>
-                                    <Text>EV/EBITDA: {multiple(item.ev_to_ebitda)}</Text>
+                                    <Text type="supporting">P/E: {multiple(item.price_to_earnings)}</Text>
+                                    <Text type="supporting">EV/Rev: {multiple(item.ev_to_revenue)}</Text>
+                                    <Text type="supporting">EV/EBITDA: {multiple(item.ev_to_ebitda)}</Text>
                                   </>
                                 )}
                               </VStack>

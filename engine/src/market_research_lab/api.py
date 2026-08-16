@@ -411,6 +411,23 @@ class SensitivityMatrixResponse(BaseModel):
     grid: list[list[float | None]]
 
 
+class FCFFDCFInputResponse(BaseModel):
+    base_revenue: float
+    revenue_growth_rate: float
+    operating_margin: float
+    tax_rate: float
+    reinvestment_rate: float
+    wacc: float
+    terminal_growth_rate: float
+    shares_outstanding: float
+    total_debt: float
+    cash: float
+    forecast_years: int
+    provenance: dict[str, str] = Field(default_factory=dict)
+    units: dict[str, str] = Field(default_factory=dict)
+    input_warnings: list[str] = Field(default_factory=list)
+
+
 class FCFFDCFValuationResponse(BaseModel):
     security_id: str
     symbol: str
@@ -433,6 +450,9 @@ class FCFFDCFValuationResponse(BaseModel):
     warnings: list[str]
     dataset_version_ids: list[str]
     calculated_at: str
+    inputs: FCFFDCFInputResponse | None = None
+    provenance: dict[str, str] = Field(default_factory=dict)
+    units: dict[str, str] = Field(default_factory=dict)
     method_revision: str | None = None
     run_id: str | None = None
 
@@ -1041,6 +1061,24 @@ def _dcf_valuation_response(
         warnings=result.warnings,
         dataset_version_ids=result.dataset_version_ids,
         calculated_at=result.calculated_at,
+        inputs=FCFFDCFInputResponse(
+            base_revenue=result.inputs.base_revenue,
+            revenue_growth_rate=result.inputs.revenue_growth_rate,
+            operating_margin=result.inputs.operating_margin,
+            tax_rate=result.inputs.tax_rate,
+            reinvestment_rate=result.inputs.reinvestment_rate,
+            wacc=result.inputs.wacc,
+            terminal_growth_rate=result.inputs.terminal_growth_rate,
+            shares_outstanding=result.inputs.shares_outstanding,
+            total_debt=result.inputs.total_debt,
+            cash=result.inputs.cash,
+            forecast_years=result.inputs.forecast_years,
+            provenance=result.inputs.provenance,
+            units=result.inputs.units,
+            input_warnings=result.inputs.input_warnings,
+        ),
+        provenance=result.inputs.provenance,
+        units=result.inputs.units,
         method_revision=method_revision,
         run_id=run_id,
     )
@@ -1631,11 +1669,22 @@ def create_app(
                         dataset_version_ids=result_dict.get("dataset_version_ids", []),
                     )
                 )
+        methods_present = {item.method for item in items}
+        if len(methods_present) > 1:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "incompatible_valuation_methods",
+                    "message": f"Cannot compare incompatible valuation methods side by side: {', '.join(sorted(methods_present))}.",
+                    "details": {"methods": sorted(methods_present)},
+                },
+            )
 
         return ValuationComparisonResponse(
             items=items,
             compared_at=datetime.now(UTC).isoformat(),
         )
+
 
     @app.get(
         "/api/projects/{project_id}/valuations/{run_id}/export/{format_type}",

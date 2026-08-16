@@ -713,6 +713,7 @@ def test_dcf_valuation_endpoints_seed_revisions_and_durability(tmp_path):
     prices = (
         "symbol,name,exchange,currency,date,open,high,low,close,volume\n"
         "AAPL,Apple Inc.,NASDAQ,USD,2023-01-01,150,150,150,150,1000\n"
+        "MSFT,Microsoft Corporation,NASDAQ,USD,2023-01-01,300,300,300,300,1000\n"
     )
     price_import = client.post(
         "/api/datasets",
@@ -729,6 +730,12 @@ def test_dcf_valuation_endpoints_seed_revisions_and_durability(tmp_path):
         "AAPL,revenue,2023FY,200,USD,2023-01-01T00:00:00Z\n"
         "AAPL,ebitda,2023FY,60,USD,2023-01-01T00:00:00Z\n"
         "AAPL,net_income,2023FY,40,USD,2023-01-01T00:00:00Z\n"
+        "MSFT,shares_outstanding,2023FY,20,shares,2023-01-01T00:00:00Z\n"
+        "MSFT,total_debt,2023FY,40,USD,2023-01-01T00:00:00Z\n"
+        "MSFT,cash,2023FY,50,USD,2023-01-01T00:00:00Z\n"
+        "MSFT,revenue,2023FY,300,USD,2023-01-01T00:00:00Z\n"
+        "MSFT,ebitda,2023FY,100,USD,2023-01-01T00:00:00Z\n"
+        "MSFT,net_income,2023FY,70,USD,2023-01-01T00:00:00Z\n"
     )
     fundamental_import = client.post(
         "/api/datasets",
@@ -774,12 +781,17 @@ def test_dcf_valuation_endpoints_seed_revisions_and_durability(tmp_path):
     assert len(calc_data["forecast_cash_flows"]) == 5
     assert len(calc_data["scenarios"]) == 3
     assert len(calc_data["sensitivity"]["grid"]) == 5
+    assert calc_data["inputs"]["base_revenue"] == 200.0
+    assert calc_data["inputs"]["tax_rate"] == 0.21
+    assert "market_cap" in calc_data["provenance"]
+    assert calc_data["units"]["market_cap"] == "USD"
 
     # 3. Save DCF revision v1
     save1 = client.post(f"/api/projects/{project['id']}/valuations/dcf", json=dcf_req)
     assert save1.status_code == 201
     save1_data = save1.json()
     assert save1_data["method_revision"] == "fcff_dcf:v1"
+    assert save1_data["inputs"]["tax_rate"] == 0.21
     run1_id = save1_data["run_id"]
     assert run1_id
 
@@ -804,6 +816,7 @@ def test_dcf_valuation_endpoints_seed_revisions_and_durability(tmp_path):
     assert html_export.status_code == 200
     assert "<!DOCTYPE html>" in html_export.text
     assert "fcff_dcf:v1" in html_export.text
+    assert "Out-of-sample" in html_export.text
 
     csv_export = client.get(f"/api/projects/{project['id']}/valuations/{run1_id}/export/csv")
     assert csv_export.status_code == 200
@@ -813,6 +826,7 @@ def test_dcf_valuation_endpoints_seed_revisions_and_durability(tmp_path):
     assert json_export.status_code == 200
     assert "manifest" in json_export.json()
     assert "valuation" in json_export.json()
+    assert "inputs" in json_export.json()["valuation"]
 
     # 7. Side-by-side comparison endpoint
     comp_res = client.post(
@@ -824,15 +838,34 @@ def test_dcf_valuation_endpoints_seed_revisions_and_durability(tmp_path):
     assert len(comp_data["items"]) == 2
     assert comp_data["items"][0]["method_revision"] == "fcff_dcf:v1"
     assert comp_data["items"][1]["method_revision"] == "fcff_dcf:v2"
+    assert comp_data["items"][0]["key_assumptions"]["tax_rate"] == 0.21
+    assert comp_data["items"][0]["key_assumptions"]["reinvestment_rate"] == 0.20
     assert comp_data["items"][1]["value_per_share"] > comp_data["items"][0]["value_per_share"]
+
+    # Save a comparable company valuation to test incompatible comparison validation
+    comp_save = client.post(
+        f"/api/projects/{project['id']}/valuations/comparables",
+        json={"target_security_id": "AAPL", "peer_security_ids": ["MSFT"]},
+    )
+    assert comp_save.status_code == 201
+    comp_run_id = comp_save.json()["run_id"]
+
+    incomp_res = client.post(
+        f"/api/projects/{project['id']}/valuations/compare",
+        json={"run_ids": [run1_id, comp_run_id]},
+    )
+    assert incomp_res.status_code == 422
+    assert incomp_res.json()["detail"]["code"] == "incompatible_valuation_methods"
 
     # 8. Test durability after restart/reloading app instance
     reloaded_client = TestClient(create_app(workspace_root=tmp_path))
     val_list = reloaded_client.get(f"/api/projects/{project['id']}/valuations")
     assert val_list.status_code == 200
     vals = val_list.json()
-    assert len(vals) == 2
-    assert {v["method_revision"] for v in vals} == {"fcff_dcf:v1", "fcff_dcf:v2"}
+    assert len(vals) == 3
+    assert {v["method_revision"] for v in vals} == {"fcff_dcf:v1", "fcff_dcf:v2", "trading_comparables:v1"}
+
+
 
 
 def test_indicator_endpoints_and_definition_lifecycle(tmp_path: pytest.TempPathFactory):

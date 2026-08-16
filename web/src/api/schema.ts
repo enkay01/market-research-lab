@@ -851,6 +851,41 @@ export interface components {
             /** Saved At */
             saved_at: string;
         };
+        /** FCFFDCFInputResponse */
+        FCFFDCFInputResponse: {
+            /** Base Revenue */
+            base_revenue: number;
+            /** Revenue Growth Rate */
+            revenue_growth_rate: number;
+            /** Operating Margin */
+            operating_margin: number;
+            /** Tax Rate */
+            tax_rate: number;
+            /** Reinvestment Rate */
+            reinvestment_rate: number;
+            /** Wacc */
+            wacc: number;
+            /** Terminal Growth Rate */
+            terminal_growth_rate: number;
+            /** Shares Outstanding */
+            shares_outstanding: number;
+            /** Total Debt */
+            total_debt: number;
+            /** Cash */
+            cash: number;
+            /** Forecast Years */
+            forecast_years: number;
+            /** Provenance */
+            provenance?: {
+                [key: string]: string;
+            };
+            /** Units */
+            units?: {
+                [key: string]: string;
+            };
+            /** Input Warnings */
+            input_warnings?: string[];
+        };
         /** FCFFDCFRequest */
         FCFFDCFRequest: {
             /** Target Security Id */
@@ -1039,6 +1074,15 @@ export interface components {
             dataset_version_ids: string[];
             /** Calculated At */
             calculated_at: string;
+            inputs?: components["schemas"]["FCFFDCFInputResponse"] | null;
+            /** Provenance */
+            provenance?: {
+                [key: string]: string;
+            };
+            /** Units */
+            units?: {
+                [key: string]: string;
+            };
             /** Method Revision */
             method_revision?: string | null;
             /** Run Id */
