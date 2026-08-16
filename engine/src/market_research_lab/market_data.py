@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import json
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from datetime import datetime
@@ -211,23 +213,30 @@ class CoverageReport:
     dataset_type: str = DATASET_TYPE_DAILY_BARS
 
 
-def _parse_incomplete_fields(raw: object) -> tuple[str, ...] | None:
-    """Normalize the incomplete_fields marker from a provider or file row.
-
-    Provider JSON rows are read back with ``dtype=str``, so a list column
-    arrives as its Python repr (e.g. "['fy', 'frame']"). Accept the list
-    directly when present and parse the repr otherwise.
-    """
-    if isinstance(raw, (list, tuple)):
-        return tuple(str(name) for name in raw)
-    if isinstance(raw, str) and raw.strip().startswith("["):
-        try:
-            parsed = ast.literal_eval(raw)
-        except (ValueError, SyntaxError):
-            return None
-        if isinstance(parsed, (list, tuple)):
-            return tuple(str(name) for name in parsed)
-    return None
+def _parse_incomplete_fields(raw: str | Sequence[str] | None) -> tuple[str, ...] | None:
+    """Normalize the incomplete_fields marker from a provider or file row."""
+    if raw is None:
+        return None
+    match raw:
+        case list() | tuple():
+            return tuple(str(name) for name in raw)
+        case str():
+            trimmed = raw.strip()
+            if not trimmed or trimmed.lower() in ("nan", "none", "null"):
+                return None
+            if trimmed.startswith("[") and trimmed.endswith("]"):
+                with contextlib.suppress(ValueError, SyntaxError):
+                    parsed = ast.literal_eval(trimmed)
+                    match parsed:
+                        case list() | tuple():
+                            return tuple(str(name) for name in parsed)
+            return (trimmed,)
+        case float():
+            return None if math.isnan(raw) else (str(raw),)
+        case _:
+            if hasattr(raw, "tolist"):
+                return tuple(str(name) for name in raw.tolist())
+            return (str(raw),)
 
 
 class MarketDataStore:
@@ -1188,14 +1197,7 @@ class MarketDataStore:
                 val = str(raw_val)
 
             raw_incomplete = row.get("incomplete_fields")
-            incomplete_fields: tuple[str, ...] | None = None
-            if raw_incomplete is not None and not (
-                isinstance(raw_incomplete, float) and pd.isna(raw_incomplete)
-            ):
-                if isinstance(raw_incomplete, (list, tuple)) or hasattr(raw_incomplete, "tolist"):
-                    incomplete_fields = tuple(str(name) for name in raw_incomplete)
-                else:
-                    incomplete_fields = (str(raw_incomplete),)
+            incomplete_fields = _parse_incomplete_fields(raw_incomplete)
 
             facts.append(
                 FundamentalFact(

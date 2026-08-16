@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   Layout,
   LayoutHeader,
@@ -17,21 +17,290 @@ import {
   Text,
   Badge,
   Token,
+  StatusDot,
+  Banner,
+  Selector,
   SegmentedControl,
   SegmentedControlItem,
   TextInput,
+  Dialog,
+  DialogHeader,
+  EmptyState,
 } from "@astryxdesign/core";
-import type { Project } from "../api/client";
+import {
+  api,
+  type Project,
+  type CoverageResponse,
+  type IndicatorMetadata,
+  type IndicatorSeries,
+  type IndicatorPoint,
+} from "../api/client";
 
 interface ModelsViewProps {
   project?: Project;
 }
 
 export function ModelsView({ project }: ModelsViewProps) {
-  const [activeTab, setActiveTab] = useState<"indicators" | "predictive">("indicators");
-  const [fastPeriod, setFastPeriod] = useState("20");
-  const [slowPeriod, setSlowPeriod] = useState("50");
-  const [modelType, setModelType] = useState<"baseline" | "lightgbm">("baseline");
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"indicators" | "predictive">("indicators");
+
+  // Datasets & Securities
+  const [datasets, setDatasets] = useState<CoverageResponse[]>([]);
+  const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
+  const [symbols, setSymbols] = useState<string[]>(["AAPL"]);
+  const [selectedSymbol, setSelectedSymbol] = useState<string>("AAPL");
+
+  // Indicator Metadata & Selection
+  const [indicators, setIndicators] = useState<IndicatorMetadata[]>([]);
+  const [selectedIndicatorName, setSelectedIndicatorName] = useState<string>("moving_average_crossover");
+  const [paramValues, setParamValues] = useState<Record<string, string | number>>({
+    fast_period: 20,
+    slow_period: 50,
+    ma_type: "sma",
+    period: 20,
+  });
+
+  // Calculation Results & State
+  const [series, setSeries] = useState<IndicatorSeries | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Hover state for interactive chart
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+
+  // Save Revision Dialog State
+  const [isSaveOpen, setIsSaveOpen] = useState<boolean>(false);
+  const [definitionName, setDefinitionName] = useState<string>("ma_crossover_strategy");
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+
+  // Load available datasets and indicators on mount
+  useEffect(() => {
+    void Promise.all([api.listDatasets(), api.listIndicators()])
+      .then(([allDatasets, allIndicators]) => {
+        // Filter daily bars datasets
+        const barDatasets = allDatasets.filter(
+          (d) => d.dataset_type === "daily_bars" || (!d.is_fundamentals && !d.is_corporate_actions),
+        );
+        setDatasets(barDatasets);
+        if (barDatasets.length > 0) {
+          setSelectedDatasetId(barDatasets[0].id);
+        }
+        setIndicators(allIndicators);
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : "Failed to load indicator metadata.");
+      });
+  }, []);
+
+  // When selected dataset changes, load available symbols
+  useEffect(() => {
+    if (!selectedDatasetId) return;
+    void api
+      .getPreview(selectedDatasetId)
+      .then((rows) => {
+        const foundSymbols = Array.from(
+          new Set(
+            rows
+              .map((r) => String(r.symbol || r.ticker || ""))
+              .filter((s) => s.length > 0),
+          ),
+        );
+        setSymbols(foundSymbols);
+        if (foundSymbols.length > 0 && (!selectedSymbol || !foundSymbols.includes(selectedSymbol))) {
+          setSelectedSymbol(foundSymbols[0]);
+        }
+      })
+      .catch(() => {
+        // Fallback default
+        if (!selectedSymbol) setSelectedSymbol("AAPL");
+      });
+  }, [selectedDatasetId]);
+
+  const currentIndicator = useMemo(
+    () => indicators.find((ind) => ind.name === selectedIndicatorName),
+    [indicators, selectedIndicatorName],
+  );
+
+  // Update default param values when indicator changes
+  useEffect(() => {
+    if (!currentIndicator) return;
+    const defaults: Record<string, string | number> = {};
+    for (const p of currentIndicator.parameters) {
+      defaults[p.name] = (p.default as string | number) ?? (p.param_type === "int" ? 20 : "sma");
+    }
+    setParamValues((prev) => ({ ...defaults, ...prev }));
+  }, [currentIndicator]);
+
+  async function handleCalculate() {
+    if (!selectedDatasetId || !selectedSymbol || !selectedIndicatorName) {
+      setError("Please select a dataset and symbol.");
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+    setSaveSuccess(null);
+
+    const typedParams: Record<string, unknown> = {};
+    if (currentIndicator) {
+      for (const p of currentIndicator.parameters) {
+        const raw = paramValues[p.name];
+        if (p.param_type === "int") {
+          typedParams[p.name] = parseInt(String(raw), 10) || (p.default as number);
+        } else if (p.param_type === "float") {
+          typedParams[p.name] = parseFloat(String(raw)) || (p.default as number);
+        } else {
+          typedParams[p.name] = raw || p.default;
+        }
+      }
+    }
+
+    try {
+      const result = await api.calculateIndicator({
+        name: selectedIndicatorName,
+        dataset_version_id: selectedDatasetId,
+        symbol: selectedSymbol,
+        parameters: typedParams,
+        price_field: "close",
+      });
+      setSeries(result);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to calculate indicator.");
+      setSeries(null);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function handleSaveRevision() {
+    if (!project || !series) return;
+    setIsSaving(true);
+    setError(null);
+    try {
+      const sanitizedName = definitionName.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+      await api.saveDefinition(project.id, {
+        kind: "indicator",
+        name: sanitizedName,
+        definition: {
+          indicator: series.indicator_name,
+          symbol: series.symbol,
+          dataset_version_id: series.dataset_version_id,
+          parameters: series.parameters,
+          saved_at: new Date().toISOString(),
+        },
+      });
+      setSaveSuccess(`Successfully saved revision for '${sanitizedName}'.`);
+      setIsSaveOpen(false);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to save revision.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  // Summary statistics calculation
+  const latestPoint = useMemo(() => {
+    if (!series || series.points.length === 0) return null;
+    return series.points[series.points.length - 1];
+  }, [series]);
+
+  const latestState = useMemo(() => {
+    if (!latestPoint) return null;
+    return String(latestPoint.values["state"] || "");
+  }, [latestPoint]);
+
+  // Chart computation geometry
+  const chartPoints = useMemo(() => {
+    if (!series || series.points.length === 0) return null;
+    const pts = series.points;
+    const n = pts.length;
+
+    let minVal = Infinity;
+    let maxVal = -Infinity;
+
+    for (const p of pts) {
+      if (p.price < minVal) minVal = p.price;
+      if (p.price > maxVal) maxVal = p.price;
+      if (typeof p.values["fast_ma"] === "number") {
+        minVal = Math.min(minVal, p.values["fast_ma"]);
+        maxVal = Math.max(maxVal, p.values["fast_ma"]);
+      }
+      if (typeof p.values["slow_ma"] === "number") {
+        minVal = Math.min(minVal, p.values["slow_ma"]);
+        maxVal = Math.max(maxVal, p.values["slow_ma"]);
+      }
+      if (typeof p.values["sma"] === "number") {
+        minVal = Math.min(minVal, p.values["sma"]);
+        maxVal = Math.max(maxVal, p.values["sma"]);
+      }
+      if (typeof p.values["ema"] === "number") {
+        minVal = Math.min(minVal, p.values["ema"]);
+        maxVal = Math.max(maxVal, p.values["ema"]);
+      }
+    }
+
+    const padding = (maxVal - minVal) * 0.08 || 5;
+    const yMin = Math.max(0, minVal - padding);
+    const yMax = maxVal + padding;
+    const yRange = yMax - yMin || 1;
+
+    const width = 800;
+    const height = 300;
+    const chartMargin = { top: 20, right: 30, bottom: 30, left: 60 };
+    const innerW = width - chartMargin.left - chartMargin.right;
+    const innerH = height - chartMargin.top - chartMargin.bottom;
+
+    const getX = (idx: number) => chartMargin.left + (n > 1 ? (idx / (n - 1)) * innerW : innerW / 2);
+    const getY = (val: number) => chartMargin.top + innerH - ((val - yMin) / yRange) * innerH;
+
+    // Price path
+    const pricePath = pts
+      .map((p, i) => `${i === 0 ? "M" : "L"} ${getX(i).toFixed(1)} ${getY(p.price).toFixed(1)}`)
+      .join(" ");
+
+    // Fast MA / SMA path
+    const fastMaPts = pts.map((p, i) => {
+      const v = (p.values["fast_ma"] ?? p.values["sma"] ?? p.values["ema"]) as number | undefined;
+      return typeof v === "number" ? { x: getX(i), y: getY(v), idx: i } : null;
+    }).filter(Boolean) as { x: number; y: number; idx: number }[];
+
+    const fastMaPath = fastMaPts
+      .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
+      .join(" ");
+
+    // Slow MA path
+    const slowMaPts = pts.map((p, i) => {
+      const v = p.values["slow_ma"] as number | undefined;
+      return typeof v === "number" ? { x: getX(i), y: getY(v), idx: i } : null;
+    }).filter(Boolean) as { x: number; y: number; idx: number }[];
+
+    const slowMaPath = slowMaPts
+      .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
+      .join(" ");
+
+    // Warmup rectangle width
+    const warmupW = series.warmup_period > 0 && n > 1
+      ? Math.max(0, getX(Math.min(series.warmup_period, n - 1)) - chartMargin.left)
+      : 0;
+
+    return {
+      width,
+      height,
+      chartMargin,
+      innerW,
+      innerH,
+      yMin,
+      yMax,
+      getX,
+      getY,
+      pricePath,
+      fastMaPath,
+      slowMaPath,
+      warmupW,
+    };
+  }, [series]);
+
+  const activeHoveredPoint = hoveredIndex !== null && series ? series.points[hoveredIndex] : null;
 
   return (
     <Layout
@@ -40,179 +309,610 @@ export function ModelsView({ project }: ModelsViewProps) {
         <LayoutHeader hasDivider padding={2}>
           <HStack justify="between" align="center" style={{ width: "100%" }}>
             <HStack align="center" gap={3}>
-              <Heading level={2}>
-                Indicators & Predictive Models
-              </Heading>
+              <Heading level={2}>Indicators & Predictive Models</Heading>
               <SegmentedControl
-                label="Model Workspace Mode"
-                value={activeTab}
-                onChange={(val) => setActiveTab(val as "indicators" | "predictive")}
+                label="Workspace Mode"
+                value={activeWorkspaceTab}
+                onChange={(val) => setActiveWorkspaceTab(val as "indicators" | "predictive")}
               >
                 <SegmentedControlItem value="indicators" label="Technical Indicators" />
-                <SegmentedControlItem value="predictive" label="Predictive Models (Walk-Forward)" />
+                <SegmentedControlItem value="predictive" label="Predictive Models" />
               </SegmentedControl>
             </HStack>
 
-            <HStack gap={2}>
+            <HStack gap={2} align="center">
               {project && <Badge label={`Project: ${project.name}`} variant="purple" />}
-              <Button label="Execute Run" variant="primary" size="sm" />
+              {series && project && (
+                <Button
+                  label="Save Revision"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setIsSaveOpen(true)}
+                />
+              )}
+              <Button
+                label="Calculate Indicator"
+                variant="primary"
+                size="sm"
+                onClick={handleCalculate}
+                isLoading={isLoading}
+              />
             </HStack>
           </HStack>
         </LayoutHeader>
       }
       content={
         <LayoutContent padding={3} isScrollable>
-          {activeTab === "indicators" ? (
-            <VStack gap={4}>
-              <Heading level={3}>
-                Moving Average Crossover Indicator Series (AAPL)
-              </Heading>
-              <Text type="supporting">
-                Time-aligned transformation with warm-up periods explicitly marked as missing.
-              </Text>
+          <VStack gap={4}>
+            {error && (
+              <Banner status="error" title="Calculation Error">
+                {error}
+              </Banner>
+            )}
 
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHeaderCell>Session Date</TableHeaderCell>
-                    <TableHeaderCell>Close Price</TableHeaderCell>
-                    <TableHeaderCell>SMA ({fastPeriod})</TableHeaderCell>
-                    <TableHeaderCell>SMA ({slowPeriod})</TableHeaderCell>
-                    <TableHeaderCell>Spread</TableHeaderCell>
-                    <TableHeaderCell>Indicator State</TableHeaderCell>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  <TableRow>
-                    <TableCell>2024-06-20</TableCell>
-                    <TableCell>$209.68</TableCell>
-                    <TableCell>$198.42</TableCell>
-                    <TableCell>$187.10</TableCell>
-                    <TableCell>+$11.32</TableCell>
-                    <TableCell><Token label="Bullish Above Slow" color="green" /></TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell>2024-06-21</TableCell>
-                    <TableCell>$207.49</TableCell>
-                    <TableCell>$199.12</TableCell>
-                    <TableCell>$187.65</TableCell>
-                    <TableCell>+$11.47</TableCell>
-                    <TableCell><Token label="Bullish Above Slow" color="green" /></TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell>2024-06-24</TableCell>
-                    <TableCell>$208.14</TableCell>
-                    <TableCell>$199.98</TableCell>
-                    <TableCell>$188.22</TableCell>
-                    <TableCell>+$11.76</TableCell>
-                    <TableCell><Token label="Bullish Above Slow" color="green" /></TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            </VStack>
-          ) : (
-            <VStack gap={4}>
-              <Heading level={3}>
-                Chronological Walk-Forward Model Folds
-              </Heading>
-              <Text type="supporting">
-                Feature scaling and training occurs strictly inside each chronological training fold (zero future leakage).
-              </Text>
+            {saveSuccess && (
+              <Banner status="success" title="Revision Saved">
+                {saveSuccess}
+              </Banner>
+            )}
 
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHeaderCell>Fold Index</TableHeaderCell>
-                    <TableHeaderCell>Train Window</TableHeaderCell>
-                    <TableHeaderCell>OOS Test Window</TableHeaderCell>
-                    <TableHeaderCell>In-Sample R²</TableHeaderCell>
-                    <TableHeaderCell>Out-of-Sample R²</TableHeaderCell>
-                    <TableHeaderCell>Naive Benchmark IC</TableHeaderCell>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  <TableRow>
-                    <TableCell><Text weight="bold">Fold 1</Text></TableCell>
-                    <TableCell>2020-01 → 2022-12</TableCell>
-                    <TableCell>2023-01 → 2023-06</TableCell>
-                    <TableCell>0.142</TableCell>
-                    <TableCell><Token label="0.058" color="green" /></TableCell>
-                    <TableCell>0.012</TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell><Text weight="bold">Fold 2</Text></TableCell>
-                    <TableCell>2020-07 → 2023-06</TableCell>
-                    <TableCell>2023-07 → 2023-12</TableCell>
-                    <TableCell>0.138</TableCell>
-                    <TableCell><Token label="0.061" color="green" /></TableCell>
-                    <TableCell>0.009</TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell><Text weight="bold">Fold 3</Text></TableCell>
-                    <TableCell>2021-01 → 2023-12</TableCell>
-                    <TableCell>2024-01 → 2024-06</TableCell>
-                    <TableCell>0.155</TableCell>
-                    <TableCell><Token label="0.049" color="green" /></TableCell>
-                    <TableCell>0.015</TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            </VStack>
-          )}
-        </LayoutContent>
-      }
-      end={
-        <LayoutPanel
-          width={360}
-          hasDivider
-          isScrollable
-          label="Model Parameters"
-        >
-          <VStack gap={4} style={{ padding: "16px" }}>
-            <Heading level={3}>
-              Configuration & Parameters
-            </Heading>
+            {activeWorkspaceTab === "indicators" ? (
+              series && chartPoints ? (
+                <VStack gap={4}>
+                  {/* Summary Bar */}
+                  <HStack justify="between" align="center" style={{ flexWrap: "wrap" }}>
+                    <VStack gap={0}>
+                      <Heading level={3}>
+                        {currentIndicator?.display_name || series.indicator_name} ({series.symbol})
+                      </Heading>
+                      <Text type="supporting">
+                        Time-aligned deterministic series over {series.total_bars} daily sessions.
+                      </Text>
+                    </VStack>
 
-            {activeTab === "indicators" ? (
-              <VStack gap={3}>
-                <VStack gap={1}>
-                  <TextInput
-                    label="Fast Period (Days)"
-                    value={fastPeriod}
-                    onChange={(val) => setFastPeriod(typeof val === "string" ? val : "")}
-                  />
-                </VStack>
-                <VStack gap={1}>
-                  <TextInput
-                    label="Slow Period (Days)"
-                    value={slowPeriod}
-                    onChange={(val) => setSlowPeriod(typeof val === "string" ? val : "")}
-                  />
-                </VStack>
-              </VStack>
-            ) : (
-              <VStack gap={3}>
-                <VStack gap={1}>
-                  <Text weight="medium">Model Architecture</Text>
-                  <SegmentedControl
-                    label="Model Architecture"
-                    value={modelType}
-                    onChange={(val) => setModelType(val as "baseline" | "lightgbm")}
+                    <HStack gap={2} align="center">
+                      <Token label={`${series.total_bars} Sessions`} color="blue" />
+                      <Token label={`${series.warmup_period} Warm-up Bars`} color="orange" />
+                      <Token label={`${series.valid_bars} Valid Bars`} color="green" />
+                      {latestState && latestState !== "warmup" && (
+                        <Token
+                          label={
+                            latestState === "bullish_cross"
+                              ? "Bullish Crossover"
+                              : latestState === "bearish_cross"
+                                ? "Bearish Crossover"
+                                : latestState === "bullish_above"
+                                  ? "Fast > Slow"
+                                  : latestState === "bearish_below"
+                                    ? "Fast < Slow"
+                                    : "Neutral"
+                          }
+                          color={
+                            latestState.includes("bullish")
+                              ? "green"
+                              : latestState.includes("bearish")
+                                ? "red"
+                                : "grey"
+                          }
+                        />
+                      )}
+                    </HStack>
+                  </HStack>
+
+                  {/* SVG Chart */}
+                  <VStack
+                    gap={2}
+                    style={{
+                      border: "1px solid var(--color-border-subtle, #e1e4e8)",
+                      borderRadius: "var(--radius-md, 6px)",
+                      backgroundColor: "var(--color-surface, #ffffff)",
+                      padding: "16px",
+                    }}
                   >
-                    <SegmentedControlItem value="baseline" label="Linear Ridge Baseline" />
-                    <SegmentedControlItem value="lightgbm" label="LightGBM Regressor" />
-                  </SegmentedControl>
+                    <HStack justify="between" align="center">
+                      <Text weight="bold">Time-Series Alignment & Trend Preview</Text>
+                      <HStack gap={3} align="center">
+                        <HStack gap={1} align="center">
+                          <StatusDot variant="neutral" label="Price" />
+                          <Text type="supporting">Close Price</Text>
+                        </HStack>
+                        <HStack gap={1} align="center">
+                          <StatusDot variant="primary" label="Fast" />
+                          <Text type="supporting">
+                            Fast Trend ({String(series.parameters.fast_period || series.parameters.period || "")})
+                          </Text>
+                        </HStack>
+                        {series.parameters.slow_period && (
+                          <HStack gap={1} align="center">
+                            <StatusDot variant="purple" label="Slow" />
+                            <Text type="supporting">
+                              Slow Trend ({String(series.parameters.slow_period)})
+                            </Text>
+                          </HStack>
+                        )}
+                        <HStack gap={1} align="center">
+                          <StatusDot variant="warning" label="Warm-up" />
+                          <Text type="supporting">Warm-up Window</Text>
+                        </HStack>
+                      </HStack>
+                    </HStack>
+
+                    <svg
+                      viewBox={`0 0 ${chartPoints.width} ${chartPoints.height}`}
+                      style={{ width: "100%", height: "280px", overflow: "visible" }}
+                      onMouseLeave={() => setHoveredIndex(null)}
+                    >
+                      {/* Grid Lines */}
+                      <line
+                        x1={chartPoints.chartMargin.left}
+                        y1={chartPoints.chartMargin.top}
+                        x2={chartPoints.width - chartPoints.chartMargin.right}
+                        y2={chartPoints.chartMargin.top}
+                        stroke="var(--color-border-subtle, #f0f0f0)"
+                        strokeDasharray="3 3"
+                      />
+                      <line
+                        x1={chartPoints.chartMargin.left}
+                        y1={chartPoints.chartMargin.top + chartPoints.innerH / 2}
+                        x2={chartPoints.width - chartPoints.chartMargin.right}
+                        y2={chartPoints.chartMargin.top + chartPoints.innerH / 2}
+                        stroke="var(--color-border-subtle, #f0f0f0)"
+                        strokeDasharray="3 3"
+                      />
+                      <line
+                        x1={chartPoints.chartMargin.left}
+                        y1={chartPoints.chartMargin.top + chartPoints.innerH}
+                        x2={chartPoints.width - chartPoints.chartMargin.right}
+                        y2={chartPoints.chartMargin.top + chartPoints.innerH}
+                        stroke="var(--color-border-subtle, #e1e4e8)"
+                      />
+
+                      {/* Y-Axis Labels */}
+                      <text
+                        x={chartPoints.chartMargin.left - 8}
+                        y={chartPoints.chartMargin.top + 4}
+                        textAnchor="end"
+                        fontSize="11"
+                        fill="var(--color-fg-muted, #656d76)"
+                      >
+                        ${chartPoints.yMax.toFixed(2)}
+                      </text>
+                      <text
+                        x={chartPoints.chartMargin.left - 8}
+                        y={chartPoints.chartMargin.top + chartPoints.innerH + 4}
+                        textAnchor="end"
+                        fontSize="11"
+                        fill="var(--color-fg-muted, #656d76)"
+                      >
+                        ${chartPoints.yMin.toFixed(2)}
+                      </text>
+
+                      {/* Warm-up Region Shading */}
+                      {chartPoints.warmupW > 0 && (
+                        <g>
+                          <rect
+                            x={chartPoints.chartMargin.left}
+                            y={chartPoints.chartMargin.top}
+                            width={chartPoints.warmupW}
+                            height={chartPoints.innerH}
+                            fill="var(--color-surface-hover, rgba(0, 0, 0, 0.04))"
+                            stroke="var(--color-border-subtle, #e1e4e8)"
+                            strokeDasharray="4 4"
+                          />
+                          <text
+                            x={chartPoints.chartMargin.left + chartPoints.warmupW / 2}
+                            y={chartPoints.chartMargin.top + 16}
+                            textAnchor="middle"
+                            fontSize="10"
+                            fontWeight="600"
+                            fill="var(--color-fg-muted, #656d76)"
+                          >
+                            Warm-up Zone
+                          </text>
+                        </g>
+                      )}
+
+                      {/* Series Paths */}
+                      <path
+                        d={chartPoints.pricePath}
+                        fill="none"
+                        stroke="var(--color-fg-muted, #8c959f)"
+                        strokeWidth="1.5"
+                      />
+                      {chartPoints.slowMaPath && (
+                        <path
+                          d={chartPoints.slowMaPath}
+                          fill="none"
+                          stroke="var(--color-accent-purple, #8250df)"
+                          strokeWidth="2.5"
+                        />
+                      )}
+                      {chartPoints.fastMaPath && (
+                        <path
+                          d={chartPoints.fastMaPath}
+                          fill="none"
+                          stroke="var(--color-accent-blue, #0969da)"
+                          strokeWidth="2.5"
+                        />
+                      )}
+
+                      {/* Interactive Hover Vertical Line */}
+                      {hoveredIndex !== null && (
+                        <line
+                          x1={chartPoints.getX(hoveredIndex)}
+                          y1={chartPoints.chartMargin.top}
+                          x2={chartPoints.getX(hoveredIndex)}
+                          y2={chartPoints.chartMargin.top + chartPoints.innerH}
+                          stroke="var(--color-border-hover, #57606a)"
+                          strokeDasharray="2 2"
+                        />
+                      )}
+
+                      {/* Transparent Hover Hit Zones */}
+                      {series.points.map((_, idx) => {
+                        const x = chartPoints.getX(idx);
+                        const step = chartPoints.innerW / Math.max(1, series.points.length - 1);
+                        return (
+                          <rect
+                            key={idx}
+                            x={x - step / 2}
+                            y={chartPoints.chartMargin.top}
+                            width={step}
+                            height={chartPoints.innerH}
+                            fill="transparent"
+                            style={{ cursor: "pointer" }}
+                            onMouseEnter={() => setHoveredIndex(idx)}
+                          />
+                        );
+                      })}
+                    </svg>
+
+                    {/* Active Hover Inspection Info */}
+                    {activeHoveredPoint && (
+                      <HStack
+                        justify="between"
+                        align="center"
+                        style={{
+                          backgroundColor: "var(--color-surface-hover, #f6f8fa)",
+                          padding: "8px 12px",
+                          borderRadius: "var(--radius-sm, 4px)",
+                        }}
+                      >
+                        <HStack gap={3}>
+                          <Text weight="bold">Date: {activeHoveredPoint.session_date}</Text>
+                          <Text>Price: ${activeHoveredPoint.price.toFixed(2)}</Text>
+                          {activeHoveredPoint.values["fast_ma"] !== undefined && (
+                            <Text>
+                              Fast MA:{" "}
+                              {activeHoveredPoint.values["fast_ma"] !== null
+                                ? `$${Number(activeHoveredPoint.values["fast_ma"]).toFixed(2)}`
+                                : "None (Warm-up)"}
+                            </Text>
+                          )}
+                          {activeHoveredPoint.values["slow_ma"] !== undefined && (
+                            <Text>
+                              Slow MA:{" "}
+                              {activeHoveredPoint.values["slow_ma"] !== null
+                                ? `$${Number(activeHoveredPoint.values["slow_ma"]).toFixed(2)}`
+                                : "None (Warm-up)"}
+                            </Text>
+                          )}
+                          {activeHoveredPoint.values["spread"] !== undefined &&
+                            activeHoveredPoint.values["spread"] !== null && (
+                              <Text weight="medium">
+                                Spread: {Number(activeHoveredPoint.values["spread"]) > 0 ? "+" : ""}
+                                ${Number(activeHoveredPoint.values["spread"]).toFixed(2)}
+                              </Text>
+                            )}
+                        </HStack>
+
+                        <Token
+                          label={activeHoveredPoint.is_warmup ? "Warm-up" : "Valid Observation"}
+                          color={activeHoveredPoint.is_warmup ? "orange" : "green"}
+                        />
+                      </HStack>
+                    )}
+                  </VStack>
+
+                  {/* Aligned Output Table */}
+                  <VStack gap={2}>
+                    <Heading level={3}>Aligned Indicator Output Series</Heading>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHeaderCell>Session Date</TableHeaderCell>
+                          <TableHeaderCell>Close Price</TableHeaderCell>
+                          <TableHeaderCell>Fast Trend</TableHeaderCell>
+                          {series.parameters.slow_period && <TableHeaderCell>Slow Trend</TableHeaderCell>}
+                          {series.parameters.slow_period && <TableHeaderCell>Spread</TableHeaderCell>}
+                          <TableHeaderCell>Indicator State</TableHeaderCell>
+                          <TableHeaderCell>Provenance / Alignment</TableHeaderCell>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {series.points.map((pt, idx) => {
+                          const fastVal = (pt.values["fast_ma"] ?? pt.values["sma"] ?? pt.values["ema"]) as
+                            | number
+                            | null
+                            | undefined;
+                          const slowVal = pt.values["slow_ma"] as number | null | undefined;
+                          const spreadVal = pt.values["spread"] as number | null | undefined;
+                          const stateStr = String(pt.values["state"] || "");
+
+                          return (
+                            <TableRow key={idx}>
+                              <TableCell>
+                                <Text weight="medium">{pt.session_date}</Text>
+                              </TableCell>
+                              <TableCell>${pt.price.toFixed(2)}</TableCell>
+                              <TableCell>
+                                {fastVal !== null && fastVal !== undefined ? (
+                                  `$${fastVal.toFixed(2)}`
+                                ) : (
+                                  <Text type="supporting">None (warmup)</Text>
+                                )}
+                              </TableCell>
+                              {series.parameters.slow_period && (
+                                <TableCell>
+                                  {slowVal !== null && slowVal !== undefined ? (
+                                    `$${slowVal.toFixed(2)}`
+                                  ) : (
+                                    <Text type="supporting">None (warmup)</Text>
+                                  )}
+                                </TableCell>
+                              )}
+                              {series.parameters.slow_period && (
+                                <TableCell>
+                                  {spreadVal !== null && spreadVal !== undefined ? (
+                                    <Text
+                                      weight="medium"
+                                      style={{
+                                        color:
+                                          spreadVal > 0
+                                            ? "var(--color-fg-success, #1a7f37)"
+                                            : spreadVal < 0
+                                              ? "var(--color-fg-danger, #cf222e)"
+                                              : "inherit",
+                                      }}
+                                    >
+                                      {spreadVal > 0 ? "+" : ""}
+                                      ${spreadVal.toFixed(2)}
+                                    </Text>
+                                  ) : (
+                                    <Text type="supporting">—</Text>
+                                  )}
+                                </TableCell>
+                              )}
+                              <TableCell>
+                                {pt.is_warmup ? (
+                                  <Token label="Warm-up" color="orange" />
+                                ) : stateStr === "bullish_cross" ? (
+                                  <Token label="Bullish Cross" color="green" />
+                                ) : stateStr === "bearish_cross" ? (
+                                  <Token label="Bearish Cross" color="red" />
+                                ) : stateStr === "bullish_above" ? (
+                                  <Token label="Bullish Above" color="green" />
+                                ) : stateStr === "bearish_below" ? (
+                                  <Token label="Bearish Below" color="red" />
+                                ) : (
+                                  <Token label="Neutral" color="grey" />
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <HStack gap={1} align="center">
+                                  <StatusDot variant={pt.is_warmup ? "warning" : "success"} />
+                                  <Text type="supporting">
+                                    {pt.is_warmup ? "Incomplete lookback" : "Aligned eligible bar"}
+                                  </Text>
+                                </HStack>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </VStack>
                 </VStack>
-                <VStack gap={1}>
-                  <Text weight="medium">Prediction Target Horizon</Text>
-                  <Text type="supporting">5-day forward total return</Text>
-                </VStack>
+              ) : (
+                <EmptyState
+                  title="No Indicator Series Calculated"
+                  description="Select an available dataset version, target symbol, and parameters in the right panel, then click Calculate Indicator to preview the time-aligned series."
+                  primaryAction={{
+                    label: "Calculate Default Indicator",
+                    onClick: handleCalculate,
+                  }}
+                />
+              )
+            ) : (
+              <VStack gap={4}>
+                <Heading level={3}>Chronological Walk-Forward Predictive Model Folds</Heading>
+                <Text type="supporting">
+                  Feature scaling and model estimation occurs strictly inside each chronological training fold with zero future leakage.
+                </Text>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHeaderCell>Fold Index</TableHeaderCell>
+                      <TableHeaderCell>Train Window</TableHeaderCell>
+                      <TableHeaderCell>OOS Test Window</TableHeaderCell>
+                      <TableHeaderCell>In-Sample R²</TableHeaderCell>
+                      <TableHeaderCell>Out-of-Sample R²</TableHeaderCell>
+                      <TableHeaderCell>Naive Benchmark IC</TableHeaderCell>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <TableRow>
+                      <TableCell>
+                        <Text weight="bold">Fold 1</Text>
+                      </TableCell>
+                      <TableCell>2020-01 → 2022-12</TableCell>
+                      <TableCell>2023-01 → 2023-06</TableCell>
+                      <TableCell>0.142</TableCell>
+                      <TableCell>
+                        <Token label="0.058" color="green" />
+                      </TableCell>
+                      <TableCell>0.012</TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
               </VStack>
             )}
           </VStack>
+        </LayoutContent>
+      }
+      end={
+        <LayoutPanel width={360} hasDivider isScrollable label="Indicator Parameters">
+          <VStack gap={4} style={{ padding: "16px" }}>
+            <Heading level={3}>Configuration</Heading>
+
+            {/* Dataset Selection */}
+            <VStack gap={1}>
+              <Text weight="medium">Market Dataset</Text>
+              {datasets.length > 0 ? (
+                <Selector
+                  label="Dataset Version"
+                  isLabelHidden
+                  options={datasets.map((d) => ({
+                    value: d.id,
+                    label: `${d.source} (${d.row_count} rows)`,
+                  }))}
+                  value={selectedDatasetId}
+                  onChange={(val) => setSelectedDatasetId(val)}
+                />
+              ) : (
+                <Text type="supporting">No datasets found. Import data in Market Data tab.</Text>
+              )}
+            </VStack>
+
+            {/* Target Symbol */}
+            <VStack gap={1}>
+              <Text weight="medium">Target Security Symbol</Text>
+              <TextInput
+                label="Security Symbol"
+                isLabelHidden
+                value={selectedSymbol}
+                onChange={(val) => setSelectedSymbol(typeof val === "string" ? val.toUpperCase() : "")}
+                placeholder="e.g. AAPL"
+              />
+            </VStack>
+
+            {/* Indicator Selection */}
+            <VStack gap={1}>
+              <Text weight="medium">Indicator Technique</Text>
+              <Selector
+                label="Indicator"
+                isLabelHidden
+                options={indicators.map((ind) => ({
+                  value: ind.name,
+                  label: ind.display_name,
+                }))}
+                value={selectedIndicatorName}
+                onChange={(val) => setSelectedIndicatorName(val)}
+              />
+              {currentIndicator && (
+                <Text type="supporting">{currentIndicator.description}</Text>
+              )}
+            </VStack>
+
+            {/* Dynamic Typed Parameters */}
+            {currentIndicator && currentIndicator.parameters.length > 0 && (
+              <VStack gap={3}>
+                <Heading level={4}>Parameters</Heading>
+                {currentIndicator.parameters.map((param) => {
+                  if (param.options && param.options.length > 0) {
+                    return (
+                      <VStack gap={1} key={param.name}>
+                        <Text weight="medium">{param.name}</Text>
+                        <SegmentedControl
+                          label={param.name}
+                          value={String(paramValues[param.name] || param.default)}
+                          onChange={(val) =>
+                            setParamValues((prev) => ({ ...prev, [param.name]: val }))
+                          }
+                        >
+                          {param.options.map((opt) => (
+                            <SegmentedControlItem key={opt} value={opt} label={opt.toUpperCase()} />
+                          ))}
+                        </SegmentedControl>
+                        <Text type="supporting">{param.description}</Text>
+                      </VStack>
+                    );
+                  }
+
+                  return (
+                    <VStack gap={1} key={param.name}>
+                      <TextInput
+                        label={`${param.name} (${param.param_type})`}
+                        value={String(paramValues[param.name] ?? param.default ?? "")}
+                        onChange={(val) =>
+                          setParamValues((prev) => ({
+                            ...prev,
+                            [param.name]: typeof val === "string" ? val : "",
+                          }))
+                        }
+                      />
+                      <Text type="supporting">
+                        {param.description}
+                        {param.min_value !== null ? ` (min: ${param.min_value}` : ""}
+                        {param.max_value !== null ? `, max: ${param.max_value})` : param.min_value !== null ? ")" : ""}
+                      </Text>
+                    </VStack>
+                  );
+                })}
+              </VStack>
+            )}
+
+            <Button
+              label="Calculate Preview"
+              variant="primary"
+              onClick={handleCalculate}
+              isLoading={isLoading}
+            />
+          </VStack>
         </LayoutPanel>
       }
-    />
+    >
+      {/* Save Revision Dialog */}
+      <Dialog
+        isOpen={isSaveOpen}
+        onOpenChange={(open) => {
+          if (!open) setIsSaveOpen(false);
+        }}
+      >
+        <DialogHeader
+          title="Save Indicator Definition Revision"
+          subtitle="Save an immutable sequentially numbered definition revision (e.g. v1, v2) to the active project."
+        />
+        <VStack gap={4} style={{ padding: "16px" }}>
+          <VStack gap={1}>
+            <TextInput
+              label="Definition Name"
+              value={definitionName}
+              onChange={(val) => setDefinitionName(typeof val === "string" ? val : "")}
+              placeholder="e.g. aapl_trend_crossover"
+              isRequired
+            />
+            <Text type="supporting">
+              Definition will record indicator '{series?.indicator_name}', symbol '{series?.symbol}', parameters, and dataset provenance.
+            </Text>
+          </VStack>
+
+          <HStack justify="end" gap={2}>
+            <Button
+              label="Cancel"
+              variant="secondary"
+              onClick={() => setIsSaveOpen(false)}
+              isDisabled={isSaving}
+            />
+            <Button
+              label="Save Revision"
+              variant="primary"
+              onClick={handleSaveRevision}
+              isLoading={isSaving}
+            />
+          </HStack>
+        </VStack>
+      </Dialog>
+    </Layout>
   );
 }
-

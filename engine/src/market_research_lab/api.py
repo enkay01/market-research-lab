@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Annotated, NamedTuple
 from uuid import UUID
 
 from fastapi import (
@@ -28,6 +30,17 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from .configuration import load_provider_credentials
+from .indicators import (
+    IndicatorCalculationError,
+    IndicatorMetadata,
+    IndicatorParameter,
+    IndicatorPoint,
+    IndicatorSeries,
+    ParameterValidationError,
+    calculate_indicator,
+    get_indicator_spec,
+    list_indicators,
+)
 from .json_types import JsonValue
 from .market_data import (
     CoverageReport,
@@ -35,7 +48,7 @@ from .market_data import (
     IngestionRequest,
     MarketDataStore,
 )
-from .projects import Project, ProjectNotFoundError, ProjectStore
+from .projects import Project, ProjectNotFoundError, ProjectStore, ValuationRunRecord
 from .provider_routes import register_provider_download_route
 from .providers import JsonFetcher
 from .research import (
@@ -164,6 +177,20 @@ class WatchlistResponse(BaseModel):
     limit: int
 
 
+class WatchlistQueryOptions(BaseModel):
+    query: str | None = Field(default=None, description="Filter symbol or name")
+    exchange: str | None = Field(default=None, description="Filter exchange")
+    thesis_status: str | None = Field(
+        default=None, description="all | has_thesis | no_thesis"
+    )
+    sort_by: str = Field(
+        default="symbol", description="symbol | name | exchange | thesis_updated_at"
+    )
+    sort_order: str = Field(default="asc", description="asc | desc")
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=50, ge=1, le=200)
+
+
 class WatchlistAddRequest(BaseModel):
     identifier: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]{1,64}$")
 
@@ -276,6 +303,8 @@ class ComparableCompanyValuationResponse(BaseModel):
     ev_to_ebitda: float | None
     free_cash_flow_yield: float | None
     inputs: ComparableCompanyInputResponse
+    status: str = "ok"
+    has_valuation: bool = True
 
 
 class ComparableValuationResponse(BaseModel):
@@ -312,6 +341,100 @@ class CoverageResponse(BaseModel):
     is_fundamentals: bool = False
     is_corporate_actions: bool = False
     dataset_type: str = "daily_bars"
+
+
+class IndicatorParameterResponse(BaseModel):
+    name: str
+    param_type: str
+    default: JsonValue
+    description: str
+    min_value: float | None = None
+    max_value: float | None = None
+    options: list[str] | None = None
+
+
+class IndicatorMetadataResponse(BaseModel):
+    name: str
+    display_name: str
+    description: str
+    parameters: list[IndicatorParameterResponse]
+    outputs: list[str]
+
+
+class IndicatorPointResponse(BaseModel):
+    session_date: str
+    price: float
+    values: dict[str, JsonValue]
+    is_warmup: bool
+
+
+class IndicatorCalculateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    dataset_version_id: str = Field(min_length=1)
+    symbol: str = Field(min_length=1, max_length=32)
+    parameters: dict[str, JsonValue] = Field(default_factory=dict)
+    as_of: datetime | None = None
+    price_field: str = Field(default="close", pattern=r"^(close|open|high|low)$")
+
+
+class IndicatorSeriesResponse(BaseModel):
+    indicator_name: str
+    dataset_version_id: str
+    symbol: str
+    parameters: dict[str, JsonValue]
+    total_bars: int
+    warmup_period: int
+    valid_bars: int
+    points: list[IndicatorPointResponse]
+
+
+def _indicator_param_response(param: IndicatorParameter) -> IndicatorParameterResponse:
+    return IndicatorParameterResponse(
+        name=param.name,
+        param_type=param.param_type,
+        default=param.default,
+        description=param.description,
+        min_value=param.min_value,
+        max_value=param.max_value,
+        options=param.options,
+    )
+
+
+def _indicator_meta_response(spec: IndicatorMetadata) -> IndicatorMetadataResponse:
+    return IndicatorMetadataResponse(
+        name=spec.name,
+        display_name=spec.display_name,
+        description=spec.description,
+        parameters=[_indicator_param_response(p) for p in spec.parameters],
+        outputs=spec.outputs,
+    )
+
+
+def _indicator_point_response(pt: IndicatorPoint) -> IndicatorPointResponse:
+    return IndicatorPointResponse(
+        session_date=pt.session_date,
+        price=pt.price,
+        values=pt.values,
+        is_warmup=pt.is_warmup,
+    )
+
+
+def _indicator_series_response(
+    series: IndicatorSeries,
+    *,
+    dataset_version_id: str,
+    symbol: str,
+) -> IndicatorSeriesResponse:
+    return IndicatorSeriesResponse(
+        indicator_name=series.indicator_name,
+        dataset_version_id=dataset_version_id,
+        symbol=symbol,
+        parameters=series.parameters,
+        total_bars=series.total_bars,
+        warmup_period=series.warmup_period,
+        valid_bars=series.valid_bars,
+        points=[_indicator_point_response(p) for p in series.points],
+    )
 
 
 def _project_response(project: Project) -> ProjectResponse:
@@ -483,16 +606,23 @@ def _comparable_valuation_response(
     )
 
 
+class FactSortKey(NamedTuple):
+    priority: int
+    key: str
+
+
 def _fact_order(
     available_at: str | None, filed_at: str | None, fiscal_period: str
-) -> tuple[int, str]:
+) -> FactSortKey:
     for timestamp in (available_at, filed_at):
         if timestamp:
             try:
-                return (1, datetime.fromisoformat(timestamp.replace("Z", "+00:00")).isoformat())
+                return FactSortKey(
+                    1, datetime.fromisoformat(timestamp.replace("Z", "+00:00")).isoformat()
+                )
             except ValueError:
-                return (1, timestamp)
-    return (0, fiscal_period)
+                return FactSortKey(1, timestamp)
+    return FactSortKey(0, fiscal_period)
 
 
 def _calculate_comparable_result(
@@ -521,13 +651,7 @@ def _build_watchlist_response(
     store: ProjectStore,
     market_store: MarketDataStore,
     *,
-    query: str | None = None,
-    exchange: str | None = None,
-    thesis_status: str | None = None,
-    sort_by: str = "symbol",
-    sort_order: str = "asc",
-    offset: int = 0,
-    limit: int = 50,
+    options: WatchlistQueryOptions = WatchlistQueryOptions(),
 ) -> WatchlistResponse:
     security_ids = store.get_watchlist(project_id)
     all_theses = store.list_theses(project_id)
@@ -563,49 +687,49 @@ def _build_watchlist_response(
 
     # Filtering (RES-006)
     filtered = raw_items
-    if query and query.strip():
-        q_lower = query.strip().lower()
+    if options.query and options.query.strip():
+        q_lower = options.query.strip().lower()
         filtered = [
             item
             for item in filtered
             if q_lower in item.security.symbol.lower() or q_lower in item.security.name.lower()
         ]
-    if exchange and exchange.strip() and exchange.lower() != "all":
-        ex_lower = exchange.strip().lower()
+    if options.exchange and options.exchange.strip() and options.exchange.lower() != "all":
+        ex_lower = options.exchange.strip().lower()
         filtered = [
             item
             for item in filtered
             if item.security.exchange and item.security.exchange.lower() == ex_lower
         ]
-    if thesis_status:
-        st = thesis_status.strip().lower()
+    if options.thesis_status:
+        st = options.thesis_status.strip().lower()
         if st == "has_thesis":
             filtered = [item for item in filtered if item.has_thesis]
         elif st == "no_thesis":
             filtered = [item for item in filtered if not item.has_thesis]
 
     # Sorting (RES-006)
-    reverse = sort_order.lower() == "desc"
-    if sort_by == "name":
+    reverse = options.sort_order.lower() == "desc"
+    if options.sort_by == "name":
         filtered.sort(key=lambda item: item.security.name.lower(), reverse=reverse)
-    elif sort_by == "exchange":
+    elif options.sort_by == "exchange":
         filtered.sort(
             key=lambda item: (item.security.exchange or "").lower(), reverse=reverse
         )
-    elif sort_by == "thesis_updated_at":
+    elif options.sort_by == "thesis_updated_at":
         filtered.sort(key=lambda item: item.thesis_updated_at or "", reverse=reverse)
     else:  # default 'symbol'
         filtered.sort(key=lambda item: item.security.symbol.lower(), reverse=reverse)
 
     total = len(filtered)
-    paged = filtered[offset : offset + limit]
+    paged = filtered[options.offset : options.offset + options.limit]
 
     return WatchlistResponse(
         project_id=project_id,
         items=paged,
         total=total,
-        offset=offset,
-        limit=limit,
+        offset=options.offset,
+        limit=options.limit,
     )
 
 
@@ -708,6 +832,32 @@ def create_app(
             ).model_dump(),
         )
 
+    @app.exception_handler(ParameterValidationError)
+    async def parameter_validation_error(
+        _: Request, error: ParameterValidationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content=ErrorResponse(
+                code="parameter_validation_error",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(IndicatorCalculationError)
+    async def indicator_calculation_error(
+        _: Request, error: IndicatorCalculationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="indicator_calculation_error",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
     @app.get("/api/health", response_model=HealthResponse, tags=["application"])
     def health() -> HealthResponse:
         return HealthResponse(status="ok")
@@ -729,7 +879,12 @@ def create_app(
     def get_project(project_id: UUID) -> ProjectResponse:
         return _project_response(store.get_project(str(project_id)))
 
-    @app.patch("/api/projects/{project_id}", response_model=ProjectResponse, tags=["projects"])
+    @app.api_route(
+        "/api/projects/{project_id}",
+        methods=["PATCH"],
+        response_model=ProjectResponse,
+        tags=["projects"],
+    )
     def rename_project(project_id: UUID, request: ProjectRenameRequest) -> ProjectResponse:
         return _project_response(store.rename_project(str(project_id), request.name.strip()))
 
@@ -827,10 +982,12 @@ def create_app(
         method_revision = f"trading_comparables:{revision}"
         run_id = store.create_valuation_result(
             str(project_id),
-            method_revision=method_revision,
-            dataset_version_ids=result.dataset_version_ids,
-            parameters=definition,
-            result=_comparable_valuation_response(result).model_dump(),
+            ValuationRunRecord(
+                method_revision=method_revision,
+                dataset_version_ids=result.dataset_version_ids,
+                parameters=definition,
+                result=_comparable_valuation_response(result).model_dump(),
+            ),
         )
         return _comparable_valuation_response(
             result, method_revision=method_revision, run_id=run_id
@@ -863,15 +1020,13 @@ def create_app(
         valuations: list[dict[str, JsonValue]] = []
         runs: list[dict[str, JsonValue]] = []
         if project_id:
-            try:
+            with contextlib.suppress(ProjectNotFoundError, OSError, KeyError):
                 valuations = store.list_valuations_for_security(
                     str(project_id), summary.security.security_id
                 )
                 runs = store.list_runs_for_security(
                     str(project_id), summary.security.security_id
                 )
-            except Exception:
-                pass
 
         return SecuritySummaryResponse(
             security=SecurityResponse(
@@ -903,29 +1058,13 @@ def create_app(
     )
     def get_project_watchlist(
         project_id: UUID,
-        query: str | None = Query(default=None, description="Filter symbol or name"),
-        exchange: str | None = Query(default=None, description="Filter exchange"),
-        thesis_status: str | None = Query(
-            default=None, description="all | has_thesis | no_thesis"
-        ),
-        sort_by: str = Query(
-            default="symbol", description="symbol | name | exchange | thesis_updated_at"
-        ),
-        sort_order: str = Query(default="asc", description="asc | desc"),
-        offset: int = Query(default=0, ge=0),
-        limit: int = Query(default=50, ge=1, le=200),
+        options: Annotated[WatchlistQueryOptions, Query()] = WatchlistQueryOptions(),
     ) -> WatchlistResponse:
         return _build_watchlist_response(
             str(project_id),
             store,
             market_store,
-            query=query,
-            exchange=exchange,
-            thesis_status=thesis_status,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            offset=offset,
-            limit=limit,
+            options=options,
         )
 
     @app.post(
@@ -1140,6 +1279,68 @@ def create_app(
             CorporateActionResponse.model_validate(action, from_attributes=True)
             for action in actions
         ]
+
+    @app.get(
+        "/api/indicators",
+        response_model=list[IndicatorMetadataResponse],
+        tags=["indicators"],
+    )
+    def get_indicators() -> list[IndicatorMetadataResponse]:
+        return [_indicator_meta_response(spec) for spec in list_indicators()]
+
+    @app.get(
+        "/api/indicators/{name}",
+        response_model=IndicatorMetadataResponse,
+        tags=["indicators"],
+    )
+    def get_indicator_by_name(
+        name: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_]{1,64}$"),
+    ) -> IndicatorMetadataResponse:
+        return _indicator_meta_response(get_indicator_spec(name))
+
+    @app.post(
+        "/api/indicators/calculate",
+        response_model=IndicatorSeriesResponse,
+        tags=["indicators"],
+    )
+    def calculate_indicator_endpoint(
+        request: IndicatorCalculateRequest,
+    ) -> IndicatorSeriesResponse:
+        bars = market_store.history(
+            request.dataset_version_id,
+            symbol=request.symbol,
+            as_of=request.as_of,
+        )
+        if not bars:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"No price history found for symbol '{request.symbol}' "
+                    f"in dataset '{request.dataset_version_id}'."
+                ),
+            )
+        sorted_bars = sorted(bars, key=lambda b: b.session_date)
+        session_dates = [b.session_date for b in sorted_bars]
+        if request.price_field == "open":
+            prices = [b.open for b in sorted_bars]
+        elif request.price_field == "high":
+            prices = [b.high for b in sorted_bars]
+        elif request.price_field == "low":
+            prices = [b.low for b in sorted_bars]
+        else:
+            prices = [b.close for b in sorted_bars]
+
+        series = calculate_indicator(
+            name=request.name,
+            session_dates=session_dates,
+            prices=prices,
+            parameters=request.parameters,
+        )
+        return _indicator_series_response(
+            series,
+            dataset_version_id=request.dataset_version_id,
+            symbol=request.symbol,
+        )
 
     built_interface = static_dir or repository_root / "web" / "dist"
     if built_interface.is_dir():

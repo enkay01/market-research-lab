@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -33,6 +34,16 @@ def _timestamp() -> str:
 def _slug(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return slug or "definition"
+
+
+@dataclass(frozen=True)
+class ValuationRunRecord:
+    """Record describing a completed Valuation to persist as a Run artifact."""
+
+    method_revision: str
+    dataset_version_ids: list[str]
+    parameters: dict[str, JsonValue]
+    result: dict[str, JsonValue]
 
 
 class ProjectStore:
@@ -154,11 +165,7 @@ class ProjectStore:
     def create_valuation_result(
         self,
         project_id: str,
-        *,
-        method_revision: str,
-        dataset_version_ids: list[str],
-        parameters: dict[str, JsonValue],
-        result: dict[str, JsonValue],
+        record: ValuationRunRecord,
     ) -> str:
         """Persist one completed Valuation as a reproducible Run artifact."""
         run_id = self.create_run(project_id)
@@ -168,15 +175,15 @@ class ProjectStore:
             {
                 "id": run_id,
                 "kind": "valuation",
-                "definition_revisions": [method_revision],
-                "dataset_versions": dataset_version_ids,
-                "parameters": parameters,
+                "definition_revisions": [record.method_revision],
+                "dataset_versions": record.dataset_version_ids,
+                "parameters": record.parameters,
                 "software_revision": "uncommitted",
                 "environment": {"python": os.sys.version},
             },
         )
-        persisted_result = dict(result)
-        persisted_result["method_revision"] = method_revision
+        persisted_result = dict(record.result)
+        persisted_result["method_revision"] = record.method_revision
         persisted_result["run_id"] = run_id
         self._write_json(run_directory / "artifacts" / "valuation.json", persisted_result)
         self._write_json(run_directory / "status.json", {"id": run_id, "status": "completed"})
@@ -303,10 +310,11 @@ class ProjectStore:
                 def_file = rev_dir / "definition.json"
                 if not def_file.is_file():
                     continue
-                try:
+                with contextlib.suppress(json.JSONDecodeError, OSError, KeyError, AttributeError):
                     data = json.loads(def_file.read_text(encoding="utf-8"))
-                    definition = data.get("definition", {})
-                    if isinstance(definition, dict) and definition.get("security_id") == valid_id:
+                    raw_def = data.get("definition")
+                    def_sec_id = raw_def.get("security_id") if raw_def is not None else None
+                    if def_sec_id == valid_id:
                         results.append(
                             {
                                 "name": data.get("name", model_dir.name),
@@ -315,8 +323,6 @@ class ProjectStore:
                                 "saved_at": data.get("saved_at", ""),
                             }
                         )
-                except Exception:
-                    pass
         return results
 
     def list_runs_for_security(
@@ -337,20 +343,21 @@ class ProjectStore:
             manifest_file = run_dir / "manifest.json"
             status_file = run_dir / "status.json"
             if manifest_file.is_file() and status_file.is_file():
-                try:
+                with contextlib.suppress(json.JSONDecodeError, OSError, KeyError, AttributeError):
                     manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
                     status_data = json.loads(status_file.read_text(encoding="utf-8"))
-                    params = manifest.get("parameters", {})
-                    if isinstance(params, dict) and params.get("security_id") == valid_id:
+                    raw_params = manifest.get("parameters")
+                    params_sec_id = (
+                        raw_params.get("security_id") if raw_params is not None else None
+                    )
+                    if params_sec_id == valid_id:
                         results.append(
                             {
                                 "id": run_dir.name,
                                 "status": status_data.get("status", "unknown"),
-                                "parameters": params,
+                                "parameters": raw_params or {},
                             }
                         )
-                except Exception:
-                    pass
         return results
 
     def _directory(self, project_id: str) -> Path:
