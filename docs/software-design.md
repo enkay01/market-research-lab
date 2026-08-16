@@ -184,10 +184,14 @@ The interface returns desired weights rather than orders. This keeps Indicators 
 The backtest module is a deep module with one primary interface:
 
 ```python
-run_backtest(specification) -> BacktestResult
+run_backtest(specification, *, bars) -> BacktestResult
 ```
 
-The implementation owns the event loop, calendar, Strategy evaluation, target reconciliation, simulated orders and fills, corporate actions, portfolio ledger, constraints, metrics, and artifacts.
+The caller supplies the point-in-time-eligible `DailyBar` history (mirroring the
+Indicators seam: the module never queries the catalogue itself), so the engine
+stays testable with synthetic data. The implementation owns the event loop,
+calendar, Strategy evaluation, target reconciliation, simulated orders and fills,
+corporate actions, portfolio ledger, constraints, metrics, and artifacts.
 
 Daily event order is explicit:
 

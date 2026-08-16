@@ -566,6 +566,18 @@ class BacktestResultResponse(BaseModel):
     manifest: dict[str, JsonValue]
 
 
+def _backtest_result_response(
+    result: dict[str, JsonValue],
+    *,
+    run_id: str | None = None,
+    strategy_revision: str | None = None,
+) -> BacktestResultResponse:
+    """Merge Run identity onto a Backtest result payload and validate it."""
+    return BacktestResultResponse.model_validate(
+        {**result, "run_id": run_id, "strategy_revision": strategy_revision}
+    )
+
+
 def _indicator_param_response(param: IndicatorParameter) -> IndicatorParameterResponse:
     return IndicatorParameterResponse(
         name=param.name,
@@ -1386,12 +1398,10 @@ def create_app(
                 result=result.to_json(),
             ),
         )
-        return BacktestResultResponse.model_validate(
-            {
-                **result.to_json(),
-                "run_id": run_id,
-                "strategy_revision": request.strategy_revision,
-            }
+        return _backtest_result_response(
+            result.to_json(),
+            run_id=run_id,
+            strategy_revision=request.strategy_revision,
         )
 
     @app.get(
@@ -1402,12 +1412,10 @@ def create_app(
     def list_project_backtests(project_id: UUID) -> list[BacktestResultResponse]:
         results = store.list_backtest_results(str(project_id))
         return [
-            BacktestResultResponse.model_validate(
-                {
-                    **item["result"],
-                    "run_id": item["run_id"],
-                    "strategy_revision": item["strategy_revision"],
-                }
+            _backtest_result_response(
+                item["result"],
+                run_id=item["run_id"],
+                strategy_revision=item["strategy_revision"],
             )
             for item in results
         ]
@@ -1424,12 +1432,10 @@ def create_app(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Backtest Run not found.",
             )
-        return BacktestResultResponse.model_validate(
-            {
-                **item["result"],
-                "run_id": run_id,
-                "strategy_revision": item["strategy_revision"],
-            }
+        return _backtest_result_response(
+            item["result"],
+            run_id=run_id,
+            strategy_revision=item["strategy_revision"],
         )
 
     @app.get(

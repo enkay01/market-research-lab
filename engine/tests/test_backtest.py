@@ -266,6 +266,9 @@ def test_manifest_records_specification():
     assert manifest["security_id"] == "AAPL"
     assert manifest["starting_cash"] == 100000.0
     assert manifest["execution"]["fill_price"] == "next_open"
+    assert manifest["costs"]["total_costs"] >= 0
+    assert "total_commission" in manifest["costs"]
+    assert "total_slippage" in manifest["costs"]
 
 
 def test_hold_does_not_emit_new_fill():

@@ -270,38 +270,26 @@ class ProjectStore:
             return []
         results: list[dict[str, JsonValue]] = []
         for run_dir in sorted(runs_dir.iterdir(), key=lambda path: path.name):
-            manifest_path = run_dir / "manifest.json"
-            status_path = run_dir / "status.json"
-            artifact_path = run_dir / "artifacts" / "backtest.json"
-            if not (manifest_path.is_file() and status_path.is_file() and artifact_path.is_file()):
+            if not run_dir.is_dir():
                 continue
-            try:
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                status_data = json.loads(status_path.read_text(encoding="utf-8"))
-                result = json.loads(artifact_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if manifest.get("kind") != "backtest" or status_data.get("status") != "completed":
-                continue
-            revisions = manifest.get("definition_revisions", [])
-            strategy_revision = str(revisions[0]) if revisions else ""
-            results.append(
-                {
-                    "run_id": run_dir.name,
-                    "strategy_revision": strategy_revision,
-                    "result": result,
-                }
-            )
+            item = self._read_backtest_result(run_dir)
+            if item is not None:
+                results.append(item)
         return results
 
     def get_backtest_result(
         self, project_id: str, run_id: str
     ) -> dict[str, JsonValue] | None:
         """Read one completed Backtest Run artifact, or None when not completed."""
-        run_directory = self._directory(project_id) / "runs" / run_id
-        manifest_path = run_directory / "manifest.json"
-        status_path = run_directory / "status.json"
-        artifact_path = run_directory / "artifacts" / "backtest.json"
+        self.get_project(project_id)
+        return self._read_backtest_result(self._directory(project_id) / "runs" / run_id)
+
+    @staticmethod
+    def _read_backtest_result(run_dir: Path) -> dict[str, JsonValue] | None:
+        """Parse one completed Backtest Run directory into a result record."""
+        manifest_path = run_dir / "manifest.json"
+        status_path = run_dir / "status.json"
+        artifact_path = run_dir / "artifacts" / "backtest.json"
         if not (manifest_path.is_file() and status_path.is_file() and artifact_path.is_file()):
             return None
         try:
@@ -315,7 +303,7 @@ class ProjectStore:
         revisions = manifest.get("definition_revisions", [])
         strategy_revision = str(revisions[0]) if revisions else ""
         return {
-            "run_id": run_id,
+            "run_id": run_dir.name,
             "strategy_revision": strategy_revision,
             "result": result,
         }

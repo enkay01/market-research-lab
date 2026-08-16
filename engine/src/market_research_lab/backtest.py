@@ -176,6 +176,17 @@ class FillOutcome:
     closed_position: bool  # went long -> flat
 
 
+@dataclass(frozen=True)
+class OpenTrade:
+    """Entry half of a round trip, held until the position is closed."""
+
+    trade_id: str
+    entry_date: str
+    entry_price: float
+    quantity: float
+    entry_cost: float
+
+
 def _valid_date(value: str) -> bool:
     """Return True when value has the YYYY-MM-DD shape."""
     return _DATE_PATTERN.fullmatch(value) is not None
@@ -311,23 +322,22 @@ def _execute_fill(
     )
 
 
-def _build_trade(open_trade: dict[str, str | float], fill: Fill) -> Trade:
+def _build_trade(open_trade: OpenTrade, fill: Fill) -> Trade:
     """Close an open trade with the shared trade id and the closing fill."""
-    entry_cost = float(open_trade["entry_cost"])
     exit_proceeds = -fill.notional - fill.commission
-    pnl = exit_proceeds - entry_cost
+    pnl = exit_proceeds - open_trade.entry_cost
     return Trade(
-        trade_id=str(open_trade["trade_id"]),
+        trade_id=open_trade.trade_id,
         security_id=fill.security_id,
-        entry_date=str(open_trade["entry_date"]),
+        entry_date=open_trade.entry_date,
         exit_date=fill.session_date,
-        entry_price=float(open_trade["entry_price"]),
+        entry_price=open_trade.entry_price,
         exit_price=fill.price,
-        quantity=float(open_trade["quantity"]),
-        entry_cost=entry_cost,
+        quantity=open_trade.quantity,
+        entry_cost=open_trade.entry_cost,
         exit_proceeds=exit_proceeds,
         pnl=pnl,
-        return_pct=pnl / entry_cost,
+        return_pct=pnl / open_trade.entry_cost,
     )
 
 
@@ -349,9 +359,9 @@ def _compute_metrics(
     mean_return = statistics.mean(returns) if returns else 0.0
     volatility = statistics.stdev(returns) if len(returns) >= 2 else 0.0
 
-    if len(equities) >= 2:
+    if returns:
         base = 1.0 + total_return
-        annualized_return = base ** (252.0 / len(equities)) - 1.0 if base > 0.0 else 0.0
+        annualized_return = base ** (252.0 / len(returns)) - 1.0 if base > 0.0 else 0.0
     else:
         annualized_return = total_return
 
@@ -427,7 +437,7 @@ def run_backtest(
     cash = specification.starting_cash
     shares = 0.0
     pending: PendingTarget | None = None
-    open_trade: dict[str, str | float] | None = None
+    open_trade: OpenTrade | None = None
     trade_counter = 0
     signals: list[StrategyTarget] = []
     fills: list[Fill] = []
@@ -448,15 +458,15 @@ def run_backtest(
                     trade_counter += 1
                     trade_id = f"trade-{trade_counter}"
                     fill = replace(fill, trade_id=trade_id)
-                    open_trade = {
-                        "trade_id": trade_id,
-                        "entry_date": bar.session_date,
-                        "entry_price": fill.price,
-                        "quantity": fill.quantity,
-                        "entry_cost": fill.notional + fill.commission,
-                    }
+                    open_trade = OpenTrade(
+                        trade_id=trade_id,
+                        entry_date=bar.session_date,
+                        entry_price=fill.price,
+                        quantity=fill.quantity,
+                        entry_cost=fill.notional + fill.commission,
+                    )
                 elif outcome.closed_position and open_trade is not None:
-                    fill = replace(fill, trade_id=str(open_trade["trade_id"]))
+                    fill = replace(fill, trade_id=open_trade.trade_id)
                 fills.append(fill)
                 if outcome.closed_position and open_trade is not None:
                     trades.append(_build_trade(open_trade, fill))
@@ -544,6 +554,13 @@ def run_backtest(
         "signal_count": len(signals),
         "fill_count": len(fills),
         "trade_count": len(trades),
+        "costs": {
+            "total_commission": round(sum(fill.commission for fill in fills), 4),
+            "total_slippage": round(sum(fill.slippage_cost for fill in fills), 4),
+            "total_costs": round(
+                sum(fill.commission + fill.slippage_cost for fill in fills), 4
+            ),
+        },
     }
 
     return BacktestResult(
