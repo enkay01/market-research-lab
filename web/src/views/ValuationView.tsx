@@ -1,61 +1,147 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  Layout,
-  LayoutHeader,
-  LayoutContent,
-  LayoutPanel,
-  Table,
-  TableHeader,
-  TableHeaderCell,
-  TableBody,
-  TableRow,
-  TableCell,
-  VStack,
-  HStack,
+  Banner,
   Button,
   Heading,
-  Text,
-  Badge,
-  Token,
-  Banner,
+  HStack,
+  Layout,
+  LayoutContent,
+  LayoutHeader,
   SegmentedControl,
   SegmentedControlItem,
+  Table,
+  TableBody,
+  TableCell,
+  TableHeader,
+  TableHeaderCell,
+  TableRow,
+  Text,
   TextInput,
+  Token,
+  VStack,
 } from "@astryxdesign/core";
-import { api, type Project } from "../api/client";
+import { CheckboxList, CheckboxListItem } from "@astryxdesign/core/CheckboxList";
+import { Selector } from "@astryxdesign/core/Selector";
+import {
+  api,
+  type ComparableValuation,
+  type Project,
+  type Security,
+} from "../api/client";
 
 interface ValuationViewProps {
   project?: Project;
 }
 
+function multiple(value: number | null | undefined): string {
+  return value === null || value === undefined ? "—" : `${value.toFixed(2)}x`;
+}
+
+function percentage(value: number | null | undefined): string {
+  return value === null || value === undefined ? "—" : `${(value * 100).toFixed(2)}%`;
+}
+
 export function ValuationView({ project }: ValuationViewProps) {
-  const [method, setMethod] = useState<"fcff_dcf" | "comparables">("fcff_dcf");
-  const [scenario, setScenario] = useState<"base" | "bull" | "bear">("base");
+  const [method, setMethod] = useState<"fcff_dcf" | "comparables">("comparables");
   const [wacc, setWacc] = useState("8.5");
   const [terminalGrowth, setTerminalGrowth] = useState("2.5");
   const [revenueGrowth, setRevenueGrowth] = useState("7.0");
+  const [securities, setSecurities] = useState<Security[]>([]);
+  const [targetId, setTargetId] = useState("");
+  const [peerIds, setPeerIds] = useState<string[]>([]);
+  const [result, setResult] = useState<ComparableValuation | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [isCalculating, setIsCalculating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  async function handleSaveRevision() {
-    if (!project) return;
-    setIsSaving(true);
-    try {
-      const result = await api.saveDefinition(project.id, {
-        kind: "valuation",
-        name: `${method === "fcff_dcf" ? "FCFF DCF" : "Trading Comps"} - AAPL`,
-        definition: {
-          method,
-          scenario,
-          wacc: parseFloat(wacc),
-          terminal_growth: parseFloat(terminalGrowth),
-          revenue_growth: parseFloat(revenueGrowth),
-          currency: "USD",
-        },
+  useEffect(() => {
+    api.listSecurities({ limit: 500 })
+      .then((available) => {
+        setSecurities(available);
+        setTargetId((current) => current || available[0]?.security_id || "");
+      })
+      .catch((error: unknown) => {
+        setMessage(error instanceof Error ? error.message : "Could not load local Securities.");
       });
-      setStatusMessage(`Saved revision ${result.revision} successfully.`);
-    } catch (err: unknown) {
-      setStatusMessage(err instanceof Error ? err.message : "Failed to save valuation revision.");
+  }, []);
+
+  useEffect(() => {
+    if (!project) return;
+    api.listValuations(project.id)
+      .then((valuations) => {
+        const latest = valuations.at(-1);
+        if (!latest) return;
+        setResult(latest.result);
+        setTargetId(latest.result.target.security_id);
+        setPeerIds(latest.result.peers.map((peer) => peer.security_id));
+      })
+      .catch((error: unknown) => {
+        setMessage(error instanceof Error ? error.message : "Could not reload saved Valuations.");
+      });
+  }, [project?.id]);
+
+  const peers = useMemo(
+    () => securities.filter((security) => security.security_id !== targetId),
+    [securities, targetId],
+  );
+
+  async function calculate() {
+    if (method !== "comparables") {
+      setMessage("FCFF DCF calculation is not available in this view yet.");
+      return;
+    }
+    if (!targetId || peerIds.length === 0) {
+      setMessage("Select one target Security and at least one peer Security.");
+      return;
+    }
+    setIsCalculating(true);
+    setMessage(null);
+    try {
+      const valuation = await api.calculateComparableValuation({
+        target_security_id: targetId,
+        peer_security_ids: peerIds,
+      });
+      setResult(valuation);
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : "Could not calculate the comparable-company Valuation.");
+    } finally {
+      setIsCalculating(false);
+    }
+  }
+
+  async function saveRevision() {
+    if (!project) return;
+    if (!targetId) {
+      setMessage("Select a target Security before saving the Valuation.");
+      return;
+    }
+    setIsSaving(true);
+    setMessage(null);
+    try {
+      if (method === "fcff_dcf") {
+        const saved = await api.saveDefinition(project.id, {
+          kind: "valuation",
+          name: "FCFF DCF valuation",
+          definition: {
+            method: "fcff_dcf",
+            target_security_id: targetId,
+            wacc: Number(wacc),
+            terminal_growth: Number(terminalGrowth),
+            revenue_growth: Number(revenueGrowth),
+            currency: "USD",
+          },
+        });
+        setMessage(`Saved FCFF DCF revision ${saved.revision}.`);
+      } else {
+        const saved = await api.saveComparableValuation(project.id, {
+          target_security_id: targetId,
+          peer_security_ids: peerIds,
+        });
+        setResult(saved);
+        setMessage(`Saved ${saved.method_revision ?? "comparable"} in Run ${saved.run_id ?? ""}.`);
+      }
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : "Could not save the Valuation revision.");
     } finally {
       setIsSaving(false);
     }
@@ -66,243 +152,159 @@ export function ValuationView({ project }: ValuationViewProps) {
       height="fill"
       header={
         <LayoutHeader hasDivider padding={2}>
-          <HStack justify="between" align="center" style={{ width: "100%" }}>
-            <HStack align="center" gap={3}>
+            <HStack justify="between" align="center">
+            <VStack gap={0}>
               <Heading level={2}>
-                Valuation Workspace
+                {method === "comparables" ? "Comparable-company Valuation" : "Valuation Workspace"}
               </Heading>
-              <Token label="Target: AAPL" color="blue" />
-              {project && <Badge label={`Project: ${project.name}`} variant="purple" />}
-            </HStack>
-
+              <Text type="supporting">
+                {method === "comparables"
+                  ? "Use locally available Securities and their recorded inputs."
+                  : "Save FCFF DCF assumptions as a Definition Revision."}
+              </Text>
+            </VStack>
             <HStack gap={2}>
               <SegmentedControl
-                label="Valuation Method"
+                label="Valuation method"
                 value={method}
-                onChange={(val) => setMethod(val as "fcff_dcf" | "comparables")}
+                onChange={(value) => setMethod(value as "fcff_dcf" | "comparables")}
               >
-                <SegmentedControlItem value="fcff_dcf" label="FCFF DCF Model" />
+                <SegmentedControlItem value="fcff_dcf" label="FCFF DCF" />
                 <SegmentedControlItem value="comparables" label="Trading Comparables" />
               </SegmentedControl>
-              <Button label="Save Revision" variant="primary" size="sm" onClick={handleSaveRevision} isLoading={isSaving} />
+              <Button
+                label="Calculate"
+                variant="primary"
+                onClick={calculate}
+                isLoading={isCalculating}
+                isDisabled={method === "fcff_dcf"}
+              />
+              <Button
+                label="Save Revision"
+                variant="secondary"
+                onClick={saveRevision}
+                isLoading={isSaving}
+                isDisabled={!project || (method === "comparables" && !result)}
+              />
             </HStack>
           </HStack>
         </LayoutHeader>
       }
       content={
         <LayoutContent padding={3} isScrollable>
-          <VStack gap={4}>
-            {statusMessage && (
-              <Banner status="success" title="Valuation Status">
-                {statusMessage}
-              </Banner>
-            )}
-
+          <VStack gap={5}>
+            {message && <Banner status="warning" title="Valuation status">{message}</Banner>}
             {method === "fcff_dcf" ? (
-              <VStack gap={4}>
-                <HStack justify="between" align="center">
-                  <VStack gap={0}>
-                    <Heading level={3}>
-                      Discounted Free Cash Flow to Firm (FCFF)
-                    </Heading>
-                    <Text type="supporting">
-                      Explicit 5-year forecast horizon with Gordon Growth terminal value.
-                    </Text>
-                  </VStack>
-                  <SegmentedControl
-                    label="Scenario Selection"
-                    value={scenario}
-                    onChange={(val) => setScenario(val as "base" | "bull" | "bear")}
-                  >
-                    <SegmentedControlItem value="bear" label="Bear Case" />
-                    <SegmentedControlItem value="base" label="Base Case" />
-                    <SegmentedControlItem value="bull" label="Bull Case" />
-                  </SegmentedControl>
-                </HStack>
-
-                {/* DCF Forecast Cash Flows Table */}
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHeaderCell>Line Item ($M)</TableHeaderCell>
-                      <TableHeaderCell>Year 1</TableHeaderCell>
-                      <TableHeaderCell>Year 2</TableHeaderCell>
-                      <TableHeaderCell>Year 3</TableHeaderCell>
-                      <TableHeaderCell>Year 4</TableHeaderCell>
-                      <TableHeaderCell>Year 5</TableHeaderCell>
-                      <TableHeaderCell>Terminal</TableHeaderCell>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    <TableRow>
-                      <TableCell><Text weight="medium">Projected Revenue</Text></TableCell>
-                      <TableCell>$412,000</TableCell>
-                      <TableCell>$440,840</TableCell>
-                      <TableCell>$471,698</TableCell>
-                      <TableCell>$504,717</TableCell>
-                      <TableCell>$540,047</TableCell>
-                      <TableCell>—</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell><Text weight="medium">Operating Income (EBIT)</Text></TableCell>
-                      <TableCell>$125,660</TableCell>
-                      <TableCell>$134,456</TableCell>
-                      <TableCell>$143,868</TableCell>
-                      <TableCell>$153,939</TableCell>
-                      <TableCell>$164,714</TableCell>
-                      <TableCell>—</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell><Text weight="medium">Unlevered Free Cash Flow</Text></TableCell>
-                      <TableCell>$102,400</TableCell>
-                      <TableCell>$109,568</TableCell>
-                      <TableCell>$117,237</TableCell>
-                      <TableCell>$125,444</TableCell>
-                      <TableCell>$134,225</TableCell>
-                      <TableCell>$2,281,825</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell><Text weight="medium">Discount Factor (WACC {wacc}%)</Text></TableCell>
-                      <TableCell>0.922</TableCell>
-                      <TableCell>0.849</TableCell>
-                      <TableCell>0.783</TableCell>
-                      <TableCell>0.722</TableCell>
-                      <TableCell>0.665</TableCell>
-                      <TableCell>0.665</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell><Text weight="bold">Present Value of FCFF</Text></TableCell>
-                      <TableCell><Text weight="bold">$94,413</Text></TableCell>
-                      <TableCell><Text weight="bold">$93,023</Text></TableCell>
-                      <TableCell><Text weight="bold">$91,797</Text></TableCell>
-                      <TableCell><Text weight="bold">$90,571</Text></TableCell>
-                      <TableCell><Text weight="bold">$89,260</Text></TableCell>
-                      <TableCell><Text weight="bold">$1,517,414</Text></TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
+              <VStack gap={3}>
+                <Heading level={3}>FCFF DCF</Heading>
+                <Text type="supporting">Save the current forecast assumptions as a Definition Revision.</Text>
+                <Selector
+                  label="Target Security"
+                  value={targetId}
+                  onChange={setTargetId}
+                  options={securities.map((security) => ({
+                    value: security.security_id,
+                    label: `${security.symbol} — ${security.name}`,
+                  }))}
+                  placeholder="Select a target Security"
+                  hasSearch
+                />
+                <TextInput
+                  label="WACC (%)"
+                  value={wacc}
+                  onChange={(value) => setWacc(typeof value === "string" ? value : "")}
+                />
+                <TextInput
+                  label="Terminal growth (%)"
+                  value={terminalGrowth}
+                  onChange={(value) => setTerminalGrowth(typeof value === "string" ? value : "")}
+                />
+                <TextInput
+                  label="Revenue growth (%)"
+                  value={revenueGrowth}
+                  onChange={(value) => setRevenueGrowth(typeof value === "string" ? value : "")}
+                />
               </VStack>
             ) : (
-              <VStack gap={4}>
-                <Heading level={3}>
-                  Trading Multiples & Peer Comparables
-                </Heading>
+              <VStack gap={3}>
+              <Heading level={3}>Selection</Heading>
+              <Selector
+                label="Target Security"
+                value={targetId}
+                onChange={(value) => {
+                  setTargetId(value);
+                  setPeerIds((current) => current.filter((peerId) => peerId !== value));
+                  setResult(null);
+                }}
+                options={securities.map((security) => ({
+                  value: security.security_id,
+                  label: `${security.symbol} — ${security.name}`,
+                }))}
+                placeholder="Select a target Security"
+                hasSearch
+              />
+              <CheckboxList
+                label="Peer Securities"
+                description="Only peers with the target currency contribute to peer medians."
+                value={peerIds}
+                onChange={setPeerIds}
+                hasDividers
+              >
+                {peers.map((security) => (
+                  <CheckboxListItem
+                    key={security.security_id}
+                    value={security.security_id}
+                    label={`${security.symbol} — ${security.name}`}
+                    description={security.currency}
+                  />
+                ))}
+              </CheckboxList>
+              </VStack>
+            )}
+
+            {method === "comparables" && result && (
+              <VStack gap={3}>
+                <HStack justify="between" align="center">
+                  <Heading level={3}>Results</Heading>
+                  <Token label={`${result.dataset_version_ids.length} Dataset Versions`} color="blue" />
+                </HStack>
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHeaderCell>Peer Company</TableHeaderCell>
-                      <TableHeaderCell>Ticker</TableHeaderCell>
+                      <TableHeaderCell>Security</TableHeaderCell>
+                      <TableHeaderCell>P/E</TableHeaderCell>
                       <TableHeaderCell>EV / Revenue</TableHeaderCell>
                       <TableHeaderCell>EV / EBITDA</TableHeaderCell>
-                      <TableHeaderCell>P / E (LTM)</TableHeaderCell>
-                      <TableHeaderCell>FCF Yield</TableHeaderCell>
+                      <TableHeaderCell>Free-cash-flow Yield</TableHeaderCell>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    <TableRow>
-                      <TableCell><Text weight="bold">Target: Apple Inc.</Text></TableCell>
-                      <TableCell>AAPL</TableCell>
-                      <TableCell>7.8x</TableCell>
-                      <TableCell>23.4x</TableCell>
-                      <TableCell>31.2x</TableCell>
-                      <TableCell>3.7%</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell>Microsoft Corp.</TableCell>
-                      <TableCell>MSFT</TableCell>
-                      <TableCell>11.2x</TableCell>
-                      <TableCell>21.8x</TableCell>
-                      <TableCell>34.5x</TableCell>
-                      <TableCell>3.1%</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell>Alphabet Inc.</TableCell>
-                      <TableCell>GOOGL</TableCell>
-                      <TableCell>5.9x</TableCell>
-                      <TableCell>16.2x</TableCell>
-                      <TableCell>23.8x</TableCell>
-                      <TableCell>4.6%</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell><Text weight="bold">Peer Median</Text></TableCell>
-                      <TableCell>—</TableCell>
-                      <TableCell><Text weight="bold">8.5x</Text></TableCell>
-                      <TableCell><Text weight="bold">19.0x</Text></TableCell>
-                      <TableCell><Text weight="bold">29.1x</Text></TableCell>
-                      <TableCell><Text weight="bold">3.8%</Text></TableCell>
-                    </TableRow>
+                    {[result.target, ...result.peers, result.peer_medians].map((company) => (
+                      <TableRow key={company.security_id}>
+                        <TableCell><Text weight="medium">{company.name}</Text></TableCell>
+                        <TableCell>{multiple(company.price_to_earnings)}</TableCell>
+                        <TableCell>{multiple(company.ev_to_revenue)}</TableCell>
+                        <TableCell>{multiple(company.ev_to_ebitda)}</TableCell>
+                        <TableCell>{percentage(company.free_cash_flow_yield)}</TableCell>
+                      </TableRow>
+                    ))}
                   </TableBody>
                 </Table>
+                <Text type="supporting">
+                  Calculated {new Date(result.calculated_at).toLocaleString()}.
+                  {result.method_revision ? ` Method revision: ${result.method_revision}.` : ""}
+                  {result.run_id ? ` Run: ${result.run_id}.` : ""}
+                </Text>
+                {result.warnings.length > 0 && (
+                  <Banner status="warning" title="Input warnings">
+                    {result.warnings.join(" ")}
+                  </Banner>
+                )}
               </VStack>
             )}
           </VStack>
         </LayoutContent>
       }
-      end={
-        <LayoutPanel
-          width={380}
-          hasDivider
-          isScrollable
-          label="Valuation Parameters"
-        >
-          <VStack gap={4} style={{ padding: "16px" }}>
-            <Heading level={3}>
-              Model Assumptions
-            </Heading>
-
-            <VStack gap={1}>
-              <TextInput
-                label="WACC (%)"
-                value={wacc}
-                onChange={(val) => setWacc(typeof val === "string" ? val : "")}
-              />
-            </VStack>
-
-            <VStack gap={1}>
-              <TextInput
-                label="Terminal Growth Rate (%)"
-                value={terminalGrowth}
-                onChange={(val) => setTerminalGrowth(typeof val === "string" ? val : "")}
-              />
-            </VStack>
-
-            <VStack gap={1}>
-              <TextInput
-                label="Revenue Growth (% CAGR)"
-                value={revenueGrowth}
-                onChange={(val) => setRevenueGrowth(typeof val === "string" ? val : "")}
-              />
-            </VStack>
-
-            <VStack gap={2}>
-              <Text weight="semibold">
-                Valuation Output Summary
-              </Text>
-              <Table>
-                <TableBody>
-                  <TableRow>
-                    <TableCell><Text type="supporting">Enterprise Value</Text></TableCell>
-                    <TableCell><Text weight="bold">$1,976,479 M</Text></TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell><Text type="supporting">Net Cash / (Debt)</Text></TableCell>
-                    <TableCell><Text>($45,200 M)</Text></TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell><Text type="supporting">Implied Equity Value</Text></TableCell>
-                    <TableCell><Text weight="bold">$1,931,279 M</Text></TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell><Text weight="bold">Fair Value Per Share</Text></TableCell>
-                    <TableCell><Token label="$218.45 / share" color="green" /></TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            </VStack>
-          </VStack>
-        </LayoutPanel>
-      }
     />
   );
 }
-

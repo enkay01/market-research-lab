@@ -127,6 +127,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/valuations/comparables": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Calculate Comparable Valuation */
+        post: operations["calculate_comparable_valuation_api_valuations_comparables_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/valuations/comparables": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Save Comparable Valuation */
+        post: operations["save_comparable_valuation_api_projects__project_id__valuations_comparables_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/valuations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Saved Valuations */
+        get: operations["list_saved_valuations_api_projects__project_id__valuations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/securities/{security_id}": {
         parameters: {
             query?: never;
@@ -327,6 +378,93 @@ export interface components {
             source: string;
             /** File */
             file: string;
+        };
+        /** ComparableCompanyInputResponse */
+        ComparableCompanyInputResponse: {
+            /** Security Id */
+            security_id: string;
+            /** Symbol */
+            symbol: string;
+            /** Name */
+            name: string;
+            /** Currency */
+            currency: string;
+            /** Market Cap */
+            market_cap: number | null;
+            /** Total Debt */
+            total_debt: number | null;
+            /** Cash */
+            cash: number | null;
+            /** Revenue */
+            revenue: number | null;
+            /** Ebitda */
+            ebitda: number | null;
+            /** Net Income */
+            net_income: number | null;
+            /** Free Cash Flow */
+            free_cash_flow: number | null;
+            /** Dataset Version Ids */
+            dataset_version_ids: string[];
+            /** Provenance */
+            provenance: {
+                [key: string]: string;
+            };
+            /** Units */
+            units: {
+                [key: string]: string;
+            };
+            /** Input Dataset Versions */
+            input_dataset_versions: {
+                [key: string]: string[];
+            };
+        };
+        /** ComparableCompanyValuationResponse */
+        ComparableCompanyValuationResponse: {
+            /** Security Id */
+            security_id: string;
+            /** Symbol */
+            symbol: string;
+            /** Name */
+            name: string;
+            /** Currency */
+            currency: string;
+            /** Market Cap */
+            market_cap: number | null;
+            /** Enterprise Value */
+            enterprise_value: number | null;
+            /** Price To Earnings */
+            price_to_earnings: number | null;
+            /** Ev To Revenue */
+            ev_to_revenue: number | null;
+            /** Ev To Ebitda */
+            ev_to_ebitda: number | null;
+            /** Free Cash Flow Yield */
+            free_cash_flow_yield: number | null;
+            inputs: components["schemas"]["ComparableCompanyInputResponse"];
+        };
+        /** ComparableValuationRequest */
+        ComparableValuationRequest: {
+            /** Target Security Id */
+            target_security_id: string;
+            /** Peer Security Ids */
+            peer_security_ids: string[];
+        };
+        /** ComparableValuationResponse */
+        ComparableValuationResponse: {
+            target: components["schemas"]["ComparableCompanyValuationResponse"];
+            /** Peers */
+            peers: components["schemas"]["ComparableCompanyValuationResponse"][];
+            peer_medians: components["schemas"]["ComparableCompanyValuationResponse"];
+            /** Warnings */
+            warnings: string[];
+            /** Dataset Version Ids */
+            dataset_version_ids: string[];
+            /** Calculated At */
+            calculated_at: string;
+            /** Method Revision */
+            method_revision?: string | null;
+            /** Run Id */
+            run_id?: string | null;
         };
         /** CorporateActionResponse */
         CorporateActionResponse: {
@@ -581,6 +719,16 @@ export interface components {
             id: string;
             /** Status */
             status: string;
+        };
+        /** SavedValuationResponse */
+        SavedValuationResponse: {
+            /** Run Id */
+            run_id: string;
+            /** Method Revision */
+            method_revision: string;
+            /** Calculated At */
+            calculated_at: string;
+            result: components["schemas"]["ComparableValuationResponse"];
         };
         /** SecEdgarDownloadRequest */
         SecEdgarDownloadRequest: {
@@ -1049,6 +1197,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SecurityResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    calculate_comparable_valuation_api_valuations_comparables_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ComparableValuationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComparableValuationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_comparable_valuation_api_projects__project_id__valuations_comparables_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ComparableValuationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComparableValuationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_saved_valuations_api_projects__project_id__valuations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedValuationResponse"][];
                 };
             };
             /** @description Validation Error */
