@@ -368,6 +368,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/indicators": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Indicators */
+        get: operations["get_indicators_api_indicators_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/indicators/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Indicator By Name */
+        get: operations["get_indicator_by_name_api_indicators__name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/indicators/calculate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Calculate Indicator Endpoint */
+        post: operations["calculate_indicator_endpoint_api_indicators_calculate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -652,6 +703,89 @@ export interface components {
         HealthResponse: {
             /** Status */
             status: string;
+        };
+        /** IndicatorCalculateRequest */
+        IndicatorCalculateRequest: {
+            /** Name */
+            name: string;
+            /** Dataset Version Id */
+            dataset_version_id: string;
+            /** Symbol */
+            symbol: string;
+            /** Parameters */
+            parameters?: {
+                [key: string]: components["schemas"]["JsonValue-Input"];
+            };
+            /** As Of */
+            as_of?: string | null;
+            /**
+             * Price Field
+             * @default close
+             */
+            price_field: string;
+        };
+        /** IndicatorMetadataResponse */
+        IndicatorMetadataResponse: {
+            /** Name */
+            name: string;
+            /** Display Name */
+            display_name: string;
+            /** Description */
+            description: string;
+            /** Parameters */
+            parameters: components["schemas"]["IndicatorParameterResponse"][];
+            /** Outputs */
+            outputs: string[];
+        };
+        /** IndicatorParameterResponse */
+        IndicatorParameterResponse: {
+            /** Name */
+            name: string;
+            /** Param Type */
+            param_type: string;
+            default: components["schemas"]["JsonValue-Output"];
+            /** Description */
+            description: string;
+            /** Min Value */
+            min_value?: number | null;
+            /** Max Value */
+            max_value?: number | null;
+            /** Options */
+            options?: string[] | null;
+        };
+        /** IndicatorPointResponse */
+        IndicatorPointResponse: {
+            /** Session Date */
+            session_date: string;
+            /** Price */
+            price: number;
+            /** Values */
+            values: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Is Warmup */
+            is_warmup: boolean;
+        };
+        /** IndicatorSeriesResponse */
+        IndicatorSeriesResponse: {
+            /** Indicator Name */
+            indicator_name: string;
+            /** Dataset Version Id */
+            dataset_version_id: string;
+            /** Symbol */
+            symbol: string;
+            /** Parameters */
+            parameters: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Total Bars */
+            total_bars: number;
+            /** Warmup Period */
+            warmup_period: number;
+            /** Valid Bars */
+            valid_bars: number;
+            /** Points */
+            points: components["schemas"]["IndicatorPointResponse"][];
         };
         "JsonValue-Input": boolean | number | string | components["schemas"]["JsonValue-Input"][] | {
             [key: string]: components["schemas"]["JsonValue-Input"];
@@ -1767,6 +1901,90 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CorporateActionResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_indicators_api_indicators_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndicatorMetadataResponse"][];
+                };
+            };
+        };
+    };
+    get_indicator_by_name_api_indicators__name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndicatorMetadataResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    calculate_indicator_endpoint_api_indicators_calculate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IndicatorCalculateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndicatorSeriesResponse"];
                 };
             };
             /** @description Validation Error */

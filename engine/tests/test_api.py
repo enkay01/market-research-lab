@@ -707,3 +707,111 @@ def test_comparable_valuation_uses_local_inputs_and_keeps_provenance(tmp_path) -
         [price_import.json()["dataset_version_id"], fundamental_import.json()["dataset_version_id"]]
     )
 
+
+def test_indicator_endpoints_and_definition_lifecycle(tmp_path: pytest.TempPathFactory) -> None:
+    client = TestClient(create_app(workspace_root=tmp_path))
+
+    # 1. List indicators
+    res = client.get("/api/indicators")
+    assert res.status_code == 200
+    indicators = res.json()
+    names = [ind["name"] for ind in indicators]
+    assert "sma" in names
+    assert "ema" in names
+    assert "moving_average_crossover" in names
+
+    # 2. Get single indicator metadata
+    cross_res = client.get("/api/indicators/moving_average_crossover")
+    assert cross_res.status_code == 200
+    cross_meta = cross_res.json()
+    assert cross_meta["name"] == "moving_average_crossover"
+    assert len(cross_meta["parameters"]) == 3
+
+    # 3. Ingest market data for indicator calculation
+    csv_content = (
+        "symbol,name,exchange,session_date,open,high,low,close,volume,available_at\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-02,100,105,99,102,1000,2024-01-02T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-03,102,108,101,106,1200,2024-01-03T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-04,106,110,105,108,1100,2024-01-04T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-05,108,112,107,110,1300,2024-01-05T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-08,110,111,103,104,1500,2024-01-08T20:00:00Z\n"
+    )
+    import_res = client.post(
+        "/api/datasets",
+        data={"source": "test_provider"},
+        files={"file": ("bars.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
+    )
+    assert import_res.status_code == 201
+    dataset_version_id = import_res.json()["dataset_version_id"]
+
+    # 4. Calculate indicator
+    calc_res = client.post(
+        "/api/indicators/calculate",
+        json={
+            "name": "moving_average_crossover",
+            "dataset_version_id": dataset_version_id,
+            "symbol": "AAPL",
+            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+        },
+    )
+    assert calc_res.status_code == 200
+    series = calc_res.json()
+    assert series["indicator_name"] == "moving_average_crossover"
+    assert series["symbol"] == "AAPL"
+    assert series["total_bars"] == 5
+    assert series["warmup_period"] == 3
+    assert series["valid_bars"] == 2
+    assert len(series["points"]) == 5
+
+    # Check first point (warmup)
+    assert series["points"][0]["is_warmup"] is True
+    assert series["points"][0]["session_date"] == "2024-01-02"
+    assert series["points"][0]["price"] == 102.0
+
+    # Check 4th point (index 3, first valid bar)
+    # Fast SMA(2) of [108, 110] = 109.0
+    # Slow SMA(4) of [102, 106, 108, 110] = 106.5
+    # Spread = +2.5
+    p3 = series["points"][3]
+    assert p3["is_warmup"] is False
+    assert p3["values"]["fast_ma"] == 109.0
+    assert p3["values"]["slow_ma"] == 106.5
+    assert p3["values"]["spread"] == 2.5
+    assert p3["values"]["state"] == "bullish_above"
+
+    # 5. Invalid parameters return 422
+    bad_param_res = client.post(
+        "/api/indicators/calculate",
+        json={
+            "name": "moving_average_crossover",
+            "dataset_version_id": dataset_version_id,
+            "symbol": "AAPL",
+            "parameters": {"fast_period": 10, "slow_period": 5},
+        },
+    )
+    assert bad_param_res.status_code == 422
+    assert bad_param_res.json()["code"] == "parameter_validation_error"
+
+    # 6. Save indicator definition and revision in a project
+    proj_res = client.post("/api/projects", json={"name": "Indicator Research"})
+    assert proj_res.status_code == 201
+    proj_id = proj_res.json()["id"]
+
+    save_def_res = client.post(
+        f"/api/projects/{proj_id}/definitions",
+        json={
+            "kind": "indicator",
+            "name": "aapl_trend_crossover",
+            "definition": {
+                "indicator": "moving_average_crossover",
+                "symbol": "AAPL",
+                "dataset_version_id": dataset_version_id,
+                "fast_period": 20,
+                "slow_period": 50,
+                "ma_type": "sma",
+            },
+        },
+    )
+    assert save_def_res.status_code == 201
+    assert save_def_res.json()["revision"] == "v1"
+

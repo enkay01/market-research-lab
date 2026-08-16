@@ -22,6 +22,12 @@ export type ResearchThesis = components["schemas"]["ResearchThesisResponse"];
 export type ComparableValuation = components["schemas"]["ComparableValuationResponse"];
 export type SavedValuation = components["schemas"]["SavedValuationResponse"];
 
+export type IndicatorMetadata = components["schemas"]["IndicatorMetadataResponse"];
+export type IndicatorParameter = components["schemas"]["IndicatorParameterResponse"];
+export type IndicatorPoint = components["schemas"]["IndicatorPointResponse"];
+export type IndicatorSeries = components["schemas"]["IndicatorSeriesResponse"];
+export type IndicatorCalculateRequest = components["schemas"]["IndicatorCalculateRequest"];
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -223,6 +229,19 @@ export const api = {
         params: {
           path: { project_id: projectId, security_id: securityId },
         },
+        body: request,
+      }),
+    ),
+  listIndicators: () => dataOrThrow(client.GET("/api/indicators")),
+  getIndicator: (name: string) =>
+    dataOrThrow(
+      client.GET("/api/indicators/{name}", {
+        params: { path: { name } },
+      }),
+    ),
+  calculateIndicator: (request: IndicatorCalculateRequest) =>
+    dataOrThrow(
+      client.POST("/api/indicators/calculate", {
         body: request,
       }),
     ),
