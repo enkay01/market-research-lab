@@ -626,3 +626,61 @@ def test_securities_watchlist_and_research_workflow(tmp_path) -> None:
     restarted_thesis = restarted_client.get(f"/api/projects/{project_id}/research/{aapl_id}").json()
     assert restarted_thesis["summary"] == "High ecosystem retention."
 
+
+def test_comparable_valuation_uses_local_inputs_and_keeps_provenance(tmp_path) -> None:
+    client = TestClient(create_app(workspace_root=tmp_path))
+    prices = (
+        "symbol,name,exchange,currency,date,open,high,low,close,volume\n"
+        "AAPL,Apple Inc.,NASDAQ,USD,2023-01-01,100,100,100,100,10\n"
+        "MSFT,Microsoft Corp.,NASDAQ,USD,2023-01-01,200,200,200,200,10\n"
+    )
+    price_import = client.post(
+        "/api/datasets",
+        data={"source": "prices"},
+        files={"file": ("prices.csv", prices, "text/csv")},
+    )
+    assert price_import.status_code == 201
+
+    fundamentals = (
+        "security_id,field,fiscal_period,value,unit,filed_at\n"
+        "AAPL,shares_outstanding,2023FY,3,shares,2023-01-01T00:00:00Z\n"
+        "AAPL,total_debt,2023FY,50,USD,2023-01-01T00:00:00Z\n"
+        "AAPL,cash,2023FY,20,USD,2023-01-01T00:00:00Z\n"
+        "AAPL,revenue,2023FY,100,USD,2023-01-01T00:00:00Z\n"
+        "AAPL,ebitda,2023FY,25,USD,2023-01-01T00:00:00Z\n"
+        "AAPL,net_income,2023FY,10,USD,2023-01-01T00:00:00Z\n"
+        "AAPL,free_cash_flow,2023FY,15,USD,2023-01-01T00:00:00Z\n"
+        "MSFT,shares_outstanding,2023FY,3,shares,2023-01-01T00:00:00Z\n"
+        "MSFT,total_debt,2023FY,100,USD,2023-01-01T00:00:00Z\n"
+        "MSFT,cash,2023FY,50,USD,2023-01-01T00:00:00Z\n"
+        "MSFT,revenue,2023FY,200,USD,2023-01-01T00:00:00Z\n"
+        "MSFT,ebitda,2023FY,50,USD,2023-01-01T00:00:00Z\n"
+        "MSFT,net_income,2023FY,20,USD,2023-01-01T00:00:00Z\n"
+        "MSFT,free_cash_flow,2023FY,30,USD,2023-01-01T00:00:00Z\n"
+    )
+    fundamental_import = client.post(
+        "/api/datasets",
+        data={"source": "fundamentals"},
+        files={"file": ("fundamentals.csv", fundamentals, "text/csv")},
+    )
+    assert fundamental_import.status_code == 201
+
+    response = client.post(
+        "/api/valuations/comparables",
+        json={"target_security_id": "AAPL", "peer_security_ids": ["MSFT"]},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["target"]["price_to_earnings"] == 30
+    assert result["target"]["ev_to_revenue"] == 3.3
+    assert result["peers"][0]["ev_to_ebitda"] == 13
+    assert result["peer_medians"]["free_cash_flow_yield"] == 0.05
+    assert result["target"]["inputs"]["provenance"]["revenue"] == (
+        fundamental_import.json()["dataset_version_id"]
+    )
+    assert result["target"]["inputs"]["units"]["revenue"] == "USD"
+    assert result["dataset_version_ids"] == sorted(
+        [price_import.json()["dataset_version_id"], fundamental_import.json()["dataset_version_id"]]
+    )
+
