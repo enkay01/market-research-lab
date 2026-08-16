@@ -36,6 +36,16 @@ def _slug(value: str) -> str:
     return slug or "definition"
 
 
+@dataclass(frozen=True)
+class ValuationRunRecord:
+    """Record describing a completed Valuation to persist as a Run artifact."""
+
+    method_revision: str
+    dataset_version_ids: list[str]
+    parameters: dict[str, JsonValue]
+    result: dict[str, JsonValue]
+
+
 class ProjectStore:
     """Owns Project paths, atomic file writes, revisions, and Run directories."""
 
@@ -155,11 +165,7 @@ class ProjectStore:
     def create_valuation_result(
         self,
         project_id: str,
-        *,
-        method_revision: str,
-        dataset_version_ids: list[str],
-        parameters: dict[str, JsonValue],
-        result: dict[str, JsonValue],
+        record: ValuationRunRecord,
     ) -> str:
         """Persist one completed Valuation as a reproducible Run artifact."""
         run_id = self.create_run(project_id)
@@ -169,15 +175,15 @@ class ProjectStore:
             {
                 "id": run_id,
                 "kind": "valuation",
-                "definition_revisions": [method_revision],
-                "dataset_versions": dataset_version_ids,
-                "parameters": parameters,
+                "definition_revisions": [record.method_revision],
+                "dataset_versions": record.dataset_version_ids,
+                "parameters": record.parameters,
                 "software_revision": "uncommitted",
                 "environment": {"python": os.sys.version},
             },
         )
-        persisted_result = dict(result)
-        persisted_result["method_revision"] = method_revision
+        persisted_result = dict(record.result)
+        persisted_result["method_revision"] = record.method_revision
         persisted_result["run_id"] = run_id
         self._write_json(run_directory / "artifacts" / "valuation.json", persisted_result)
         self._write_json(run_directory / "status.json", {"id": run_id, "status": "completed"})

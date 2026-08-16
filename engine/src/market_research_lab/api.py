@@ -7,7 +7,7 @@ import shutil
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NamedTuple
 from uuid import UUID
 
 from fastapi import (
@@ -48,7 +48,7 @@ from .market_data import (
     IngestionRequest,
     MarketDataStore,
 )
-from .projects import Project, ProjectNotFoundError, ProjectStore
+from .projects import Project, ProjectNotFoundError, ProjectStore, ValuationRunRecord
 from .provider_routes import register_provider_download_route
 from .providers import JsonFetcher
 from .research import (
@@ -303,6 +303,8 @@ class ComparableCompanyValuationResponse(BaseModel):
     ev_to_ebitda: float | None
     free_cash_flow_yield: float | None
     inputs: ComparableCompanyInputResponse
+    status: str = "ok"
+    has_valuation: bool = True
 
 
 class ComparableValuationResponse(BaseModel):
@@ -604,16 +606,23 @@ def _comparable_valuation_response(
     )
 
 
+class FactSortKey(NamedTuple):
+    priority: int
+    key: str
+
+
 def _fact_order(
     available_at: str | None, filed_at: str | None, fiscal_period: str
-) -> tuple[int, str]:
+) -> FactSortKey:
     for timestamp in (available_at, filed_at):
         if timestamp:
             try:
-                return (1, datetime.fromisoformat(timestamp.replace("Z", "+00:00")).isoformat())
+                return FactSortKey(
+                    1, datetime.fromisoformat(timestamp.replace("Z", "+00:00")).isoformat()
+                )
             except ValueError:
-                return (1, timestamp)
-    return (0, fiscal_period)
+                return FactSortKey(1, timestamp)
+    return FactSortKey(0, fiscal_period)
 
 
 def _calculate_comparable_result(
@@ -973,10 +982,12 @@ def create_app(
         method_revision = f"trading_comparables:{revision}"
         run_id = store.create_valuation_result(
             str(project_id),
-            method_revision=method_revision,
-            dataset_version_ids=result.dataset_version_ids,
-            parameters=definition,
-            result=_comparable_valuation_response(result).model_dump(),
+            ValuationRunRecord(
+                method_revision=method_revision,
+                dataset_version_ids=result.dataset_version_ids,
+                parameters=definition,
+                result=_comparable_valuation_response(result).model_dump(),
+            ),
         )
         return _comparable_valuation_response(
             result, method_revision=method_revision, run_id=run_id

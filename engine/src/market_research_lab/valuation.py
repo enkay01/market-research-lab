@@ -44,6 +44,8 @@ class ComparableCompanyResult:
     ev_to_ebitda: float | None
     free_cash_flow_yield: float | None
     inputs: ComparableCompanyInput
+    status: str = "ok"
+    has_valuation: bool = True
 
 
 @dataclass(frozen=True)

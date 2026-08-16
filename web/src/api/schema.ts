@@ -492,6 +492,16 @@ export interface components {
             /** Free Cash Flow Yield */
             free_cash_flow_yield: number | null;
             inputs: components["schemas"]["ComparableCompanyInputResponse"];
+            /**
+             * Status
+             * @default ok
+             */
+            status: string;
+            /**
+             * Has Valuation
+             * @default true
+             */
+            has_valuation: boolean;
         };
         /** ComparableValuationRequest */
         ComparableValuationRequest: {
