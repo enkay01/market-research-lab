@@ -50,6 +50,16 @@ class ValuationRunRecord:
     result: dict[str, JsonValue]
 
 
+@dataclass(frozen=True)
+class BacktestRunRecord:
+    """Record describing a completed Backtest to persist as a Run artifact."""
+
+    strategy_revision: str
+    dataset_version_ids: list[str]
+    parameters: dict[str, JsonValue]
+    result: dict[str, JsonValue]
+
+
 class ProjectStore:
     """Owns Project paths, atomic file writes, revisions, and Run directories."""
 
@@ -225,6 +235,90 @@ class ProjectStore:
                 }
             )
         return results
+
+    def create_backtest_result(
+        self,
+        project_id: str,
+        record: BacktestRunRecord,
+    ) -> str:
+        """Persist one completed Backtest as a reproducible Run artifact."""
+        run_id = self.create_run(project_id)
+        run_directory = self._directory(project_id) / "runs" / run_id
+        self._write_json(
+            run_directory / "manifest.json",
+            {
+                "id": run_id,
+                "kind": "backtest",
+                "definition_revisions": [record.strategy_revision],
+                "dataset_versions": record.dataset_version_ids,
+                "parameters": record.parameters,
+                "software_revision": "uncommitted",
+                "environment": {"python": os.sys.version},
+            },
+        )
+        persisted_result = dict(record.result)
+        persisted_result["run_id"] = run_id
+        self._write_json(run_directory / "artifacts" / "backtest.json", persisted_result)
+        self._write_json(run_directory / "status.json", {"id": run_id, "status": "completed"})
+        return run_id
+
+    def list_backtest_results(self, project_id: str) -> list[dict[str, JsonValue]]:
+        """Read completed Backtest Run artifacts for Project reloads."""
+        self.get_project(project_id)
+        runs_dir = self._directory(project_id) / "runs"
+        if not runs_dir.is_dir():
+            return []
+        results: list[dict[str, JsonValue]] = []
+        for run_dir in sorted(runs_dir.iterdir(), key=lambda path: path.name):
+            manifest_path = run_dir / "manifest.json"
+            status_path = run_dir / "status.json"
+            artifact_path = run_dir / "artifacts" / "backtest.json"
+            if not (manifest_path.is_file() and status_path.is_file() and artifact_path.is_file()):
+                continue
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                status_data = json.loads(status_path.read_text(encoding="utf-8"))
+                result = json.loads(artifact_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if manifest.get("kind") != "backtest" or status_data.get("status") != "completed":
+                continue
+            revisions = manifest.get("definition_revisions", [])
+            strategy_revision = str(revisions[0]) if revisions else ""
+            results.append(
+                {
+                    "run_id": run_dir.name,
+                    "strategy_revision": strategy_revision,
+                    "result": result,
+                }
+            )
+        return results
+
+    def get_backtest_result(
+        self, project_id: str, run_id: str
+    ) -> dict[str, JsonValue] | None:
+        """Read one completed Backtest Run artifact, or None when not completed."""
+        run_directory = self._directory(project_id) / "runs" / run_id
+        manifest_path = run_directory / "manifest.json"
+        status_path = run_directory / "status.json"
+        artifact_path = run_directory / "artifacts" / "backtest.json"
+        if not (manifest_path.is_file() and status_path.is_file() and artifact_path.is_file()):
+            return None
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            status_data = json.loads(status_path.read_text(encoding="utf-8"))
+            result = json.loads(artifact_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if manifest.get("kind") != "backtest" or status_data.get("status") != "completed":
+            return None
+        revisions = manifest.get("definition_revisions", [])
+        strategy_revision = str(revisions[0]) if revisions else ""
+        return {
+            "run_id": run_id,
+            "strategy_revision": strategy_revision,
+            "result": result,
+        }
 
     def get_watchlist(self, project_id: str) -> list[str]:
         self.get_project(project_id)

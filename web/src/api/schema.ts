@@ -178,6 +178,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/backtests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Project Backtests */
+        get: operations["list_project_backtests_api_projects__project_id__backtests_get"];
+        put?: never;
+        /** Run Project Backtest */
+        post: operations["run_project_backtest_api_projects__project_id__backtests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/backtests/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Project Backtest */
+        get: operations["get_project_backtest_api_projects__project_id__backtests__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/securities/{security_id}": {
         parameters: {
             query?: never;
@@ -491,6 +526,95 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** BacktestMetricsResponse */
+        BacktestMetricsResponse: {
+            /** Total Return */
+            total_return: number;
+            /** Annualized Return */
+            annualized_return: number;
+            /** Annualized Volatility */
+            annualized_volatility: number;
+            /** Sharpe Ratio */
+            sharpe_ratio: number;
+            /** Sortino Ratio */
+            sortino_ratio: number;
+            /** Max Drawdown */
+            max_drawdown: number;
+            /** Calmar Ratio */
+            calmar_ratio: number;
+            /** Hit Rate */
+            hit_rate?: number | null;
+            /** Turnover */
+            turnover: number;
+            /** Gross Exposure */
+            gross_exposure: number;
+            /** Net Exposure */
+            net_exposure: number;
+            /** Benchmark Relative Return */
+            benchmark_relative_return?: number | null;
+            /** Num Trades */
+            num_trades: number;
+            /** Num Fills */
+            num_fills: number;
+        };
+        /** BacktestResultResponse */
+        BacktestResultResponse: {
+            /** Run Id */
+            run_id?: string | null;
+            /** Strategy Revision */
+            strategy_revision?: string | null;
+            /** Specification */
+            specification: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Signals */
+            signals: components["schemas"]["StrategyTargetResponse"][];
+            /** Fills */
+            fills: components["schemas"]["FillResponse"][];
+            /** Trades */
+            trades: components["schemas"]["TradeResponse"][];
+            /** Ledger */
+            ledger: components["schemas"]["LedgerRowResponse"][];
+            /** Equity Curve */
+            equity_curve: components["schemas"]["EquityPointResponse"][];
+            /** Drawdown Curve */
+            drawdown_curve: components["schemas"]["EquityPointResponse"][];
+            metrics: components["schemas"]["BacktestMetricsResponse"];
+            /** Warnings */
+            warnings: string[];
+            /** Manifest */
+            manifest: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+        };
+        /** BacktestRunRequest */
+        BacktestRunRequest: {
+            /** Strategy Name */
+            strategy_name: string;
+            /** Strategy Revision */
+            strategy_revision: string;
+            /** Dataset Version Id */
+            dataset_version_id: string;
+            /** Symbol */
+            symbol: string;
+            /** Start Date */
+            start_date: string;
+            /** End Date */
+            end_date: string;
+            /** Starting Cash */
+            starting_cash: number;
+            /** Parameters */
+            parameters?: {
+                [key: string]: components["schemas"]["JsonValue-Input"];
+            };
+            /**
+             * Price Field
+             * @default close
+             * @enum {string}
+             */
+            price_field: "close" | "open" | "high" | "low";
+            execution?: components["schemas"]["ExecutionModelAssumptionsRequest"];
+        };
         /** Body_import_dataset_api_datasets_post */
         Body_import_dataset_api_datasets_post: {
             /** Source */
@@ -743,6 +867,62 @@ export interface components {
             /** Saved At */
             saved_at: string;
         };
+        /** EquityPointResponse */
+        EquityPointResponse: {
+            /** Session Date */
+            session_date: string;
+            /** Equity */
+            equity: number;
+            /** Drawdown */
+            drawdown: number;
+        };
+        /** ExecutionModelAssumptionsRequest */
+        ExecutionModelAssumptionsRequest: {
+            /**
+             * Schedule
+             * @default daily
+             * @constant
+             */
+            schedule: "daily";
+            /**
+             * Commission Rate
+             * @default 0
+             */
+            commission_rate: number;
+            /**
+             * Slippage Rate
+             * @default 0
+             */
+            slippage_rate: number;
+        };
+        /** FillResponse */
+        FillResponse: {
+            /** Trade Id */
+            trade_id: string;
+            /** Security Id */
+            security_id: string;
+            /** Session Date */
+            session_date: string;
+            /** Decision Time */
+            decision_time: string;
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "buy" | "sell";
+            /** Quantity */
+            quantity: number;
+            /** Price */
+            price: number;
+            /** Notional */
+            notional: number;
+            /** Commission */
+            commission: number;
+            /** Slippage Cost */
+            slippage_cost: number;
+            /** Rationale */
+            rationale: string;
+        };
         /** FundamentalFactResponse */
         FundamentalFactResponse: {
             /** Security Id */
@@ -871,6 +1051,26 @@ export interface components {
         "JsonValue-Output": boolean | number | string | components["schemas"]["JsonValue-Output"][] | {
             [key: string]: components["schemas"]["JsonValue-Output"];
         } | null;
+        /** LedgerRowResponse */
+        LedgerRowResponse: {
+            /** Session Date */
+            session_date: string;
+            /** Signal Weight */
+            signal_weight?: number | null;
+            /** Signal Decision Time */
+            signal_decision_time?: string | null;
+            fill?: components["schemas"]["FillResponse"] | null;
+            /** Shares */
+            shares: number;
+            /** Close Price */
+            close_price: number;
+            /** Cash */
+            cash: number;
+            /** Position Value */
+            position_value: number;
+            /** Portfolio Value */
+            portfolio_value: number;
+        };
         /** ProjectCreateRequest */
         ProjectCreateRequest: {
             /** Name */
@@ -1144,6 +1344,31 @@ export interface components {
             provider: "tiingo";
             /** Symbols */
             symbols: string[];
+        };
+        /** TradeResponse */
+        TradeResponse: {
+            /** Trade Id */
+            trade_id: string;
+            /** Security Id */
+            security_id: string;
+            /** Entry Date */
+            entry_date: string;
+            /** Exit Date */
+            exit_date: string;
+            /** Entry Price */
+            entry_price: number;
+            /** Exit Price */
+            exit_price: number;
+            /** Quantity */
+            quantity: number;
+            /** Entry Cost */
+            entry_cost: number;
+            /** Exit Proceeds */
+            exit_proceeds: number;
+            /** Pnl */
+            pnl: number;
+            /** Return Pct */
+            return_pct: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -1624,6 +1849,104 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SavedValuationResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_project_backtests_api_projects__project_id__backtests_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BacktestResultResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_project_backtest_api_projects__project_id__backtests_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BacktestRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BacktestResultResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_project_backtest_api_projects__project_id__backtests__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BacktestResultResponse"];
                 };
             };
             /** @description Validation Error */

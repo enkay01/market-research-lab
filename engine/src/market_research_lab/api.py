@@ -7,7 +7,7 @@ import shutil
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, NamedTuple
+from typing import Annotated, Literal, NamedTuple
 from uuid import UUID
 
 from fastapi import (
@@ -29,6 +29,13 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+from .backtest import (
+    BacktestError,
+    BacktestParameterError,
+    BacktestSpecification,
+    ExecutionModelAssumptions,
+    run_backtest,
+)
 from .configuration import load_provider_credentials
 from .indicators import (
     IndicatorCalculationError,
@@ -48,7 +55,13 @@ from .market_data import (
     IngestionRequest,
     MarketDataStore,
 )
-from .projects import Project, ProjectNotFoundError, ProjectStore, ValuationRunRecord
+from .projects import (
+    BacktestRunRecord,
+    Project,
+    ProjectNotFoundError,
+    ProjectStore,
+    ValuationRunRecord,
+)
 from .provider_routes import register_provider_download_route
 from .providers import JsonFetcher
 from .research import (
@@ -452,6 +465,105 @@ class StrategyEvaluationResponse(BaseModel):
 class SavedStrategyEvaluationResponse(StrategyEvaluationResponse):
     revision: str
     strategy_revision: str
+
+
+class ExecutionModelAssumptionsRequest(BaseModel):
+    schedule: Literal["daily"] = "daily"
+    commission_rate: float = Field(default=0.0, ge=0)
+    slippage_rate: float = Field(default=0.0, ge=0, lt=1)
+
+
+class BacktestRunRequest(BaseModel):
+    strategy_name: str = Field(min_length=1, max_length=64)
+    strategy_revision: str = Field(min_length=1, max_length=64)
+    dataset_version_id: str = Field(min_length=1)
+    symbol: str = Field(min_length=1, max_length=32)
+    start_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    end_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    starting_cash: float = Field(gt=0)
+    parameters: dict[str, JsonValue] = Field(default_factory=dict)
+    price_field: Literal["close", "open", "high", "low"] = "close"
+    execution: ExecutionModelAssumptionsRequest = Field(
+        default_factory=ExecutionModelAssumptionsRequest
+    )
+
+
+class FillResponse(BaseModel):
+    trade_id: str
+    security_id: str
+    session_date: str
+    decision_time: str
+    side: Literal["buy", "sell"]
+    quantity: float
+    price: float
+    notional: float
+    commission: float
+    slippage_cost: float
+    rationale: str
+
+
+class LedgerRowResponse(BaseModel):
+    session_date: str
+    signal_weight: float | None = None
+    signal_decision_time: str | None = None
+    fill: FillResponse | None = None
+    shares: float
+    close_price: float
+    cash: float
+    position_value: float
+    portfolio_value: float
+
+
+class TradeResponse(BaseModel):
+    trade_id: str
+    security_id: str
+    entry_date: str
+    exit_date: str
+    entry_price: float
+    exit_price: float
+    quantity: float
+    entry_cost: float
+    exit_proceeds: float
+    pnl: float
+    return_pct: float
+
+
+class EquityPointResponse(BaseModel):
+    session_date: str
+    equity: float
+    drawdown: float
+
+
+class BacktestMetricsResponse(BaseModel):
+    total_return: float
+    annualized_return: float
+    annualized_volatility: float
+    sharpe_ratio: float
+    sortino_ratio: float
+    max_drawdown: float
+    calmar_ratio: float
+    hit_rate: float | None = None
+    turnover: float
+    gross_exposure: float
+    net_exposure: float
+    benchmark_relative_return: float | None = None
+    num_trades: int
+    num_fills: int
+
+
+class BacktestResultResponse(BaseModel):
+    run_id: str | None = None
+    strategy_revision: str | None = None
+    specification: dict[str, JsonValue]
+    signals: list[StrategyTargetResponse]
+    fills: list[FillResponse]
+    trades: list[TradeResponse]
+    ledger: list[LedgerRowResponse]
+    equity_curve: list[EquityPointResponse]
+    drawdown_curve: list[EquityPointResponse]
+    metrics: BacktestMetricsResponse
+    warnings: list[str]
+    manifest: dict[str, JsonValue]
 
 
 def _indicator_param_response(param: IndicatorParameter) -> IndicatorParameterResponse:
@@ -1053,6 +1165,30 @@ def create_app(
             ).model_dump(),
         )
 
+    @app.exception_handler(BacktestParameterError)
+    async def backtest_parameter_error(
+        _: Request, error: BacktestParameterError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content=ErrorResponse(
+                code="parameter_validation_error",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(BacktestError)
+    async def backtest_error(_: Request, error: BacktestError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="backtest_error",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
     @app.get("/api/health", response_model=HealthResponse, tags=["application"])
     def health() -> HealthResponse:
         return HealthResponse(status="ok")
@@ -1196,6 +1332,105 @@ def create_app(
     def list_saved_valuations(project_id: UUID) -> list[SavedValuationResponse]:
         results = store.list_valuation_results(str(project_id))
         return [SavedValuationResponse.model_validate(item) for item in results]
+
+    @app.post(
+        "/api/projects/{project_id}/backtests",
+        response_model=BacktestResultResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["backtests"],
+    )
+    def run_project_backtest(
+        project_id: UUID, request: BacktestRunRequest
+    ) -> BacktestResultResponse:
+        if request.start_date > request.end_date:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="start_date must not be after end_date.",
+            )
+        security = market_store.get_security(request.symbol)
+        if not security:
+            raise SecurityNotFoundError(request.symbol)
+        market_store.ensure_historical_eligibility(request.dataset_version_id)
+        bars = market_store.history(request.dataset_version_id, symbol=security.security_id)
+        if not bars:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"No price history found for symbol '{request.symbol}' "
+                    f"in dataset '{request.dataset_version_id}'."
+                ),
+            )
+        spec = BacktestSpecification(
+            strategy_name=request.strategy_name,
+            strategy_revision=request.strategy_revision,
+            dataset_version_id=request.dataset_version_id,
+            security_id=security.security_id,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            starting_cash=request.starting_cash,
+            parameters=request.parameters,
+            price_field=request.price_field,
+            execution=ExecutionModelAssumptions(
+                schedule=request.execution.schedule,
+                commission_rate=request.execution.commission_rate,
+                slippage_rate=request.execution.slippage_rate,
+            ),
+        )
+        result = run_backtest(spec, bars=bars)
+        run_id = store.create_backtest_result(
+            str(project_id),
+            BacktestRunRecord(
+                strategy_revision=request.strategy_revision,
+                dataset_version_ids=[request.dataset_version_id],
+                parameters=dict(request.parameters),
+                result=result.to_json(),
+            ),
+        )
+        return BacktestResultResponse.model_validate(
+            {
+                **result.to_json(),
+                "run_id": run_id,
+                "strategy_revision": request.strategy_revision,
+            }
+        )
+
+    @app.get(
+        "/api/projects/{project_id}/backtests",
+        response_model=list[BacktestResultResponse],
+        tags=["backtests"],
+    )
+    def list_project_backtests(project_id: UUID) -> list[BacktestResultResponse]:
+        results = store.list_backtest_results(str(project_id))
+        return [
+            BacktestResultResponse.model_validate(
+                {
+                    **item["result"],
+                    "run_id": item["run_id"],
+                    "strategy_revision": item["strategy_revision"],
+                }
+            )
+            for item in results
+        ]
+
+    @app.get(
+        "/api/projects/{project_id}/backtests/{run_id}",
+        response_model=BacktestResultResponse,
+        tags=["backtests"],
+    )
+    def get_project_backtest(project_id: UUID, run_id: str) -> BacktestResultResponse:
+        item = store.get_backtest_result(str(project_id), run_id)
+        if item is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Backtest Run not found.",
+            )
+        return BacktestResultResponse.model_validate(
+            {
+                **item["result"],
+                "run_id": run_id,
+                "strategy_revision": item["strategy_revision"],
+            }
+        )
 
     @app.get(
         "/api/securities/{security_id}",
