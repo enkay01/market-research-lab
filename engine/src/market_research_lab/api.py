@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import (
@@ -173,6 +175,20 @@ class WatchlistResponse(BaseModel):
     total: int
     offset: int
     limit: int
+
+
+class WatchlistQueryOptions(BaseModel):
+    query: str | None = Field(default=None, description="Filter symbol or name")
+    exchange: str | None = Field(default=None, description="Filter exchange")
+    thesis_status: str | None = Field(
+        default=None, description="all | has_thesis | no_thesis"
+    )
+    sort_by: str = Field(
+        default="symbol", description="symbol | name | exchange | thesis_updated_at"
+    )
+    sort_order: str = Field(default="asc", description="asc | desc")
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=50, ge=1, le=200)
 
 
 class WatchlistAddRequest(BaseModel):
@@ -626,13 +642,7 @@ def _build_watchlist_response(
     store: ProjectStore,
     market_store: MarketDataStore,
     *,
-    query: str | None = None,
-    exchange: str | None = None,
-    thesis_status: str | None = None,
-    sort_by: str = "symbol",
-    sort_order: str = "asc",
-    offset: int = 0,
-    limit: int = 50,
+    options: WatchlistQueryOptions = WatchlistQueryOptions(),
 ) -> WatchlistResponse:
     security_ids = store.get_watchlist(project_id)
     all_theses = store.list_theses(project_id)
@@ -668,49 +678,49 @@ def _build_watchlist_response(
 
     # Filtering (RES-006)
     filtered = raw_items
-    if query and query.strip():
-        q_lower = query.strip().lower()
+    if options.query and options.query.strip():
+        q_lower = options.query.strip().lower()
         filtered = [
             item
             for item in filtered
             if q_lower in item.security.symbol.lower() or q_lower in item.security.name.lower()
         ]
-    if exchange and exchange.strip() and exchange.lower() != "all":
-        ex_lower = exchange.strip().lower()
+    if options.exchange and options.exchange.strip() and options.exchange.lower() != "all":
+        ex_lower = options.exchange.strip().lower()
         filtered = [
             item
             for item in filtered
             if item.security.exchange and item.security.exchange.lower() == ex_lower
         ]
-    if thesis_status:
-        st = thesis_status.strip().lower()
+    if options.thesis_status:
+        st = options.thesis_status.strip().lower()
         if st == "has_thesis":
             filtered = [item for item in filtered if item.has_thesis]
         elif st == "no_thesis":
             filtered = [item for item in filtered if not item.has_thesis]
 
     # Sorting (RES-006)
-    reverse = sort_order.lower() == "desc"
-    if sort_by == "name":
+    reverse = options.sort_order.lower() == "desc"
+    if options.sort_by == "name":
         filtered.sort(key=lambda item: item.security.name.lower(), reverse=reverse)
-    elif sort_by == "exchange":
+    elif options.sort_by == "exchange":
         filtered.sort(
             key=lambda item: (item.security.exchange or "").lower(), reverse=reverse
         )
-    elif sort_by == "thesis_updated_at":
+    elif options.sort_by == "thesis_updated_at":
         filtered.sort(key=lambda item: item.thesis_updated_at or "", reverse=reverse)
     else:  # default 'symbol'
         filtered.sort(key=lambda item: item.security.symbol.lower(), reverse=reverse)
 
     total = len(filtered)
-    paged = filtered[offset : offset + limit]
+    paged = filtered[options.offset : options.offset + options.limit]
 
     return WatchlistResponse(
         project_id=project_id,
         items=paged,
         total=total,
-        offset=offset,
-        limit=limit,
+        offset=options.offset,
+        limit=options.limit,
     )
 
 
@@ -860,7 +870,12 @@ def create_app(
     def get_project(project_id: UUID) -> ProjectResponse:
         return _project_response(store.get_project(str(project_id)))
 
-    @app.patch("/api/projects/{project_id}", response_model=ProjectResponse, tags=["projects"])
+    @app.api_route(
+        "/api/projects/{project_id}",
+        methods=["PATCH"],
+        response_model=ProjectResponse,
+        tags=["projects"],
+    )
     def rename_project(project_id: UUID, request: ProjectRenameRequest) -> ProjectResponse:
         return _project_response(store.rename_project(str(project_id), request.name.strip()))
 
@@ -994,15 +1009,13 @@ def create_app(
         valuations: list[dict[str, JsonValue]] = []
         runs: list[dict[str, JsonValue]] = []
         if project_id:
-            try:
+            with contextlib.suppress(ProjectNotFoundError, OSError, KeyError):
                 valuations = store.list_valuations_for_security(
                     str(project_id), summary.security.security_id
                 )
                 runs = store.list_runs_for_security(
                     str(project_id), summary.security.security_id
                 )
-            except Exception:
-                pass
 
         return SecuritySummaryResponse(
             security=SecurityResponse(
@@ -1034,29 +1047,13 @@ def create_app(
     )
     def get_project_watchlist(
         project_id: UUID,
-        query: str | None = Query(default=None, description="Filter symbol or name"),
-        exchange: str | None = Query(default=None, description="Filter exchange"),
-        thesis_status: str | None = Query(
-            default=None, description="all | has_thesis | no_thesis"
-        ),
-        sort_by: str = Query(
-            default="symbol", description="symbol | name | exchange | thesis_updated_at"
-        ),
-        sort_order: str = Query(default="asc", description="asc | desc"),
-        offset: int = Query(default=0, ge=0),
-        limit: int = Query(default=50, ge=1, le=200),
+        options: Annotated[WatchlistQueryOptions, Query()] = WatchlistQueryOptions(),
     ) -> WatchlistResponse:
         return _build_watchlist_response(
             str(project_id),
             store,
             market_store,
-            query=query,
-            exchange=exchange,
-            thesis_status=thesis_status,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            offset=offset,
-            limit=limit,
+            options=options,
         )
 
     @app.post(

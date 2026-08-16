@@ -8,6 +8,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TypedDict
 
 SECURITY_ID_REGEX = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
@@ -18,6 +19,18 @@ class InvalidSecurityIdError(ValueError):
 
 class SecurityNotWatchedError(Exception):
     """Raised when an operation requires a watched security that is not in the project watchlist."""
+
+
+class ParsedThesisSections(TypedDict):
+    """Structured sections parsed from a Markdown Research Thesis."""
+
+    summary: str | None
+    evidence: list[str]
+    risks: list[str]
+    catalysts: list[str]
+    assumptions: list[str]
+    sources: list[str]
+    dated_updates: list[str]
 
 
 @dataclass(frozen=True)
@@ -55,7 +68,7 @@ def resolve_thesis_path(project_dir: Path, security_id: str) -> Path:
     return target_path
 
 
-def parse_thesis_sections(content: str) -> dict[str, object]:
+def parse_thesis_sections(content: str) -> ParsedThesisSections:
     """Extract optional structured sections from a Markdown thesis."""
     lines = content.splitlines()
     sections: dict[str, list[str]] = {
@@ -154,15 +167,13 @@ def get_thesis(project_dir: Path, security_id: str) -> ResearchThesis | None:
         security_id=security_id,
         content=content,
         updated_at=mtime,
-        summary=parsed["summary"] if isinstance(parsed["summary"], str) else None,
-        evidence=list(parsed["evidence"]) if isinstance(parsed["evidence"], list) else [],
-        risks=list(parsed["risks"]) if isinstance(parsed["risks"], list) else [],
-        catalysts=list(parsed["catalysts"]) if isinstance(parsed["catalysts"], list) else [],
-        assumptions=list(parsed["assumptions"]) if isinstance(parsed["assumptions"], list) else [],
-        sources=list(parsed["sources"]) if isinstance(parsed["sources"], list) else [],
-        dated_updates=(
-            list(parsed["dated_updates"]) if isinstance(parsed["dated_updates"], list) else []
-        ),
+        summary=parsed["summary"],
+        evidence=list(parsed["evidence"]),
+        risks=list(parsed["risks"]),
+        catalysts=list(parsed["catalysts"]),
+        assumptions=list(parsed["assumptions"]),
+        sources=list(parsed["sources"]),
+        dated_updates=list(parsed["dated_updates"]),
     )
 
 

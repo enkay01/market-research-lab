@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -303,10 +304,11 @@ class ProjectStore:
                 def_file = rev_dir / "definition.json"
                 if not def_file.is_file():
                     continue
-                try:
+                with contextlib.suppress(json.JSONDecodeError, OSError, KeyError, AttributeError):
                     data = json.loads(def_file.read_text(encoding="utf-8"))
-                    definition = data.get("definition", {})
-                    if isinstance(definition, dict) and definition.get("security_id") == valid_id:
+                    raw_def = data.get("definition")
+                    def_sec_id = raw_def.get("security_id") if raw_def is not None else None
+                    if def_sec_id == valid_id:
                         results.append(
                             {
                                 "name": data.get("name", model_dir.name),
@@ -315,8 +317,6 @@ class ProjectStore:
                                 "saved_at": data.get("saved_at", ""),
                             }
                         )
-                except Exception:
-                    pass
         return results
 
     def list_runs_for_security(
@@ -337,20 +337,21 @@ class ProjectStore:
             manifest_file = run_dir / "manifest.json"
             status_file = run_dir / "status.json"
             if manifest_file.is_file() and status_file.is_file():
-                try:
+                with contextlib.suppress(json.JSONDecodeError, OSError, KeyError, AttributeError):
                     manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
                     status_data = json.loads(status_file.read_text(encoding="utf-8"))
-                    params = manifest.get("parameters", {})
-                    if isinstance(params, dict) and params.get("security_id") == valid_id:
+                    raw_params = manifest.get("parameters")
+                    params_sec_id = (
+                        raw_params.get("security_id") if raw_params is not None else None
+                    )
+                    if params_sec_id == valid_id:
                         results.append(
                             {
                                 "id": run_dir.name,
                                 "status": status_data.get("status", "unknown"),
-                                "parameters": params,
+                                "parameters": raw_params or {},
                             }
                         )
-                except Exception:
-                    pass
         return results
 
     def _directory(self, project_id: str) -> Path:
