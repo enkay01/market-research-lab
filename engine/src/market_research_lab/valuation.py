@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import csv
+import html
+import io
+from dataclasses import dataclass, field
 from statistics import median
-from typing import Callable
+from typing import Any, Callable
 
 
 @dataclass(frozen=True)
@@ -58,6 +61,115 @@ class ComparableValuationResult:
     warnings: list[str]
     dataset_version_ids: list[str]
     calculated_at: str
+    method_revision: str | None = None
+    run_id: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# FCFF DCF Dataclasses
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FCFFDCFInput:
+    """Forecast and balance-sheet assumptions for an FCFF DCF Valuation."""
+
+    security_id: str
+    symbol: str
+    name: str
+    currency: str
+    base_revenue: float
+    revenue_growth_rate: float
+    operating_margin: float
+    tax_rate: float
+    reinvestment_rate: float
+    wacc: float
+    terminal_growth_rate: float
+    shares_outstanding: float
+    total_debt: float = 0.0
+    cash: float = 0.0
+    forecast_years: int = 5
+    revenue_growth_rates: tuple[float, ...] = ()
+    operating_margins: tuple[float, ...] = ()
+    reinvestment_rates: tuple[float, ...] = ()
+    dataset_version_ids: tuple[str, ...] = ()
+    provenance: dict[str, str] = field(default_factory=dict)
+    units: dict[str, str] = field(default_factory=dict)
+    input_warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CashFlowForecastYear:
+    """One forecast year in an FCFF DCF projection."""
+
+    year: int
+    revenue: float
+    revenue_growth: float
+    operating_income: float
+    tax: float
+    nopat: float
+    reinvestment: float
+    free_cash_flow: float
+    discount_factor: float
+    present_value: float
+
+
+@dataclass(frozen=True)
+class ScenarioResult:
+    """Valuation outcome under one scenario (Bear, Base, Bull)."""
+
+    name: str
+    wacc: float
+    terminal_growth_rate: float
+    revenue_growth_rate: float
+    operating_margin: float
+    enterprise_value: float | None
+    equity_value: float | None
+    value_per_share: float | None
+
+
+@dataclass(frozen=True)
+class SensitivityMatrix:
+    """Valuation per share across a grid of WACC and terminal growth rates."""
+
+    wacc_values: tuple[float, ...]
+    terminal_growth_values: tuple[float, ...]
+    grid: tuple[tuple[float | None, ...], ...]
+
+
+@dataclass(frozen=True)
+class FCFFDCFResult:
+    """Complete Free Cash Flow to Firm DCF Valuation result."""
+
+    security_id: str
+    symbol: str
+    name: str
+    currency: str
+    forecast_years: int
+    forecast_cash_flows: list[CashFlowForecastYear]
+    terminal_cash_flow: float | None
+    terminal_value: float | None
+    pv_terminal_value: float | None
+    terminal_value_contribution: float | None
+    enterprise_value: float | None
+    cash: float
+    total_debt: float
+    equity_value: float | None
+    shares_outstanding: float
+    value_per_share: float | None
+    scenarios: list[ScenarioResult]
+    sensitivity: SensitivityMatrix
+    warnings: list[str]
+    dataset_version_ids: list[str]
+    calculated_at: str
+    inputs: FCFFDCFInput
+    method_revision: str | None = None
+    run_id: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Valuation Pure Functions
+# ---------------------------------------------------------------------------
 
 
 def _positive_multiple(numerator: float | None, denominator: float | None) -> float | None:
@@ -100,7 +212,8 @@ def _company_result(
 
     free_cash_flow_yield = (
         company.free_cash_flow / company.market_cap
-        if company.free_cash_flow is not None and company.market_cap is not None
+        if company.free_cash_flow is not None
+        and company.market_cap is not None
         and company.market_cap > 0
         else None
     )
@@ -194,21 +307,509 @@ def evaluate_comparables(
     )
 
 
-ValuationMethod = Callable[..., ComparableValuationResult]
+def _compute_dcf_values(
+    base_revenue: float,
+    growth_rate: float,
+    operating_margin: float,
+    tax_rate: float,
+    reinvestment_rate: float,
+    wacc: float,
+    terminal_growth_rate: float,
+    forecast_years: int,
+    cash: float,
+    total_debt: float,
+    shares_outstanding: float,
+) -> tuple[float | None, float | None, float | None]:
+    """Helper calculating (EV, Equity Value, Value Per Share) for given parameters."""
+    if wacc <= 0 or wacc <= terminal_growth_rate:
+        return None, None, None
+
+    pv_sum = 0.0
+    current_revenue = base_revenue
+    last_fcf = 0.0
+    for year in range(1, forecast_years + 1):
+        current_revenue *= 1.0 + growth_rate
+        ebit = current_revenue * operating_margin
+        tax = ebit * tax_rate
+        nopat = ebit - tax
+        reinvest = nopat * reinvestment_rate
+        fcf = nopat - reinvest
+        df = 1.0 / ((1.0 + wacc) ** year)
+        pv_sum += fcf * df
+        last_fcf = fcf
+
+    terminal_fcf = last_fcf * (1.0 + terminal_growth_rate)
+    terminal_value = terminal_fcf / (wacc - terminal_growth_rate)
+    pv_terminal_value = terminal_value / ((1.0 + wacc) ** forecast_years)
+    enterprise_value = pv_sum + pv_terminal_value
+    equity_value = enterprise_value + cash - total_debt
+    value_per_share = equity_value / shares_outstanding if shares_outstanding > 0 else None
+
+    return enterprise_value, equity_value, value_per_share
+
+
+def evaluate_fcff_dcf(
+    inputs: FCFFDCFInput,
+    *,
+    calculated_at: str,
+) -> FCFFDCFResult:
+    """Calculate FCFF discounted cash flow valuation, scenarios, and sensitivity."""
+    warnings: list[str] = list(inputs.input_warnings)
+
+    if inputs.base_revenue <= 0:
+        warnings.append(f"{inputs.symbol}: base revenue is non-positive ({inputs.base_revenue}).")
+    if inputs.shares_outstanding <= 0:
+        warnings.append(
+            f"{inputs.symbol}: shares outstanding must be positive ({inputs.shares_outstanding})."
+        )
+    if inputs.wacc <= 0:
+        warnings.append(f"{inputs.symbol}: WACC must be positive ({inputs.wacc:.1%}).")
+    elif inputs.wacc <= inputs.terminal_growth_rate:
+        warnings.append(
+            f"{inputs.symbol}: WACC ({inputs.wacc:.1%}) must exceed terminal growth rate "
+            f"({inputs.terminal_growth_rate:.1%})."
+        )
+
+    forecast_years = max(1, inputs.forecast_years)
+
+    # Build year-by-year projections
+    forecast_cash_flows: list[CashFlowForecastYear] = []
+    current_revenue = inputs.base_revenue
+    pv_fcff_sum = 0.0
+    last_fcff = 0.0
+
+    for year in range(1, forecast_years + 1):
+        idx = year - 1
+        growth = (
+            inputs.revenue_growth_rates[idx]
+            if idx < len(inputs.revenue_growth_rates)
+            else inputs.revenue_growth_rate
+        )
+        margin = (
+            inputs.operating_margins[idx]
+            if idx < len(inputs.operating_margins)
+            else inputs.operating_margin
+        )
+        reinvest_rate = (
+            inputs.reinvestment_rates[idx]
+            if idx < len(inputs.reinvestment_rates)
+            else inputs.reinvestment_rate
+        )
+
+        current_revenue *= 1.0 + growth
+        ebit = current_revenue * margin
+        tax = ebit * inputs.tax_rate
+        nopat = ebit - tax
+        reinvestment = nopat * reinvest_rate
+        fcff = nopat - reinvestment
+
+        df = 1.0 / ((1.0 + inputs.wacc) ** year) if inputs.wacc > 0 else 0.0
+        pv = fcff * df
+        pv_fcff_sum += pv
+        last_fcff = fcff
+
+        forecast_cash_flows.append(
+            CashFlowForecastYear(
+                year=year,
+                revenue=current_revenue,
+                revenue_growth=growth,
+                operating_income=ebit,
+                tax=tax,
+                nopat=nopat,
+                reinvestment=reinvestment,
+                free_cash_flow=fcff,
+                discount_factor=df,
+                present_value=pv,
+            )
+        )
+
+    terminal_cash_flow: float | None = None
+    terminal_value: float | None = None
+    pv_terminal_value: float | None = None
+    enterprise_value: float | None = None
+    terminal_value_contribution: float | None = None
+    equity_value: float | None = None
+    value_per_share: float | None = None
+
+    if inputs.wacc > 0 and inputs.wacc > inputs.terminal_growth_rate:
+        terminal_cash_flow = last_fcff * (1.0 + inputs.terminal_growth_rate)
+        terminal_value = terminal_cash_flow / (inputs.wacc - inputs.terminal_growth_rate)
+        pv_terminal_value = terminal_value / ((1.0 + inputs.wacc) ** forecast_years)
+        enterprise_value = pv_fcff_sum + pv_terminal_value
+        if enterprise_value > 0:
+            terminal_value_contribution = pv_terminal_value / enterprise_value
+        equity_value = enterprise_value + inputs.cash - inputs.total_debt
+        if equity_value < 0:
+            warnings.append(
+                f"{inputs.symbol}: calculated equity value is negative ({equity_value:.2f} {inputs.currency})."
+            )
+        if inputs.shares_outstanding > 0:
+            value_per_share = equity_value / inputs.shares_outstanding
+
+    # Calculate Scenarios (Bear, Base, Bull)
+    scenarios: list[ScenarioResult] = []
+
+    # Bear scenario
+    bear_wacc = inputs.wacc + 0.01
+    bear_g = max(0.0, inputs.terminal_growth_rate - 0.005)
+    bear_rev_g = inputs.revenue_growth_rate - 0.02
+    bear_margin = max(0.0, inputs.operating_margin - 0.03)
+    bear_ev, bear_eq, bear_vps = _compute_dcf_values(
+        inputs.base_revenue,
+        bear_rev_g,
+        bear_margin,
+        inputs.tax_rate,
+        inputs.reinvestment_rate,
+        bear_wacc,
+        bear_g,
+        forecast_years,
+        inputs.cash,
+        inputs.total_debt,
+        inputs.shares_outstanding,
+    )
+    scenarios.append(
+        ScenarioResult(
+            name="Bear",
+            wacc=bear_wacc,
+            terminal_growth_rate=bear_g,
+            revenue_growth_rate=bear_rev_g,
+            operating_margin=bear_margin,
+            enterprise_value=bear_ev,
+            equity_value=bear_eq,
+            value_per_share=bear_vps,
+        )
+    )
+
+    # Base scenario
+    scenarios.append(
+        ScenarioResult(
+            name="Base",
+            wacc=inputs.wacc,
+            terminal_growth_rate=inputs.terminal_growth_rate,
+            revenue_growth_rate=inputs.revenue_growth_rate,
+            operating_margin=inputs.operating_margin,
+            enterprise_value=enterprise_value,
+            equity_value=equity_value,
+            value_per_share=value_per_share,
+        )
+    )
+
+    # Bull scenario
+    bull_wacc = max(0.02, inputs.wacc - 0.01)
+    bull_g = inputs.terminal_growth_rate + 0.005
+    bull_rev_g = inputs.revenue_growth_rate + 0.02
+    bull_margin = inputs.operating_margin + 0.03
+    bull_ev, bull_eq, bull_vps = _compute_dcf_values(
+        inputs.base_revenue,
+        bull_rev_g,
+        bull_margin,
+        inputs.tax_rate,
+        inputs.reinvestment_rate,
+        bull_wacc,
+        bull_g,
+        forecast_years,
+        inputs.cash,
+        inputs.total_debt,
+        inputs.shares_outstanding,
+    )
+    scenarios.append(
+        ScenarioResult(
+            name="Bull",
+            wacc=bull_wacc,
+            terminal_growth_rate=bull_g,
+            revenue_growth_rate=bull_rev_g,
+            operating_margin=bull_margin,
+            enterprise_value=bull_ev,
+            equity_value=bull_eq,
+            value_per_share=bull_vps,
+        )
+    )
+
+    # Build Sensitivity Matrix (WACC vs Terminal Growth)
+    wacc_steps = (
+        round(inputs.wacc - 0.010, 4),
+        round(inputs.wacc - 0.005, 4),
+        round(inputs.wacc, 4),
+        round(inputs.wacc + 0.005, 4),
+        round(inputs.wacc + 0.010, 4),
+    )
+    growth_steps = (
+        round(inputs.terminal_growth_rate - 0.010, 4),
+        round(inputs.terminal_growth_rate - 0.005, 4),
+        round(inputs.terminal_growth_rate, 4),
+        round(inputs.terminal_growth_rate + 0.005, 4),
+        round(inputs.terminal_growth_rate + 0.010, 4),
+    )
+
+    grid: list[tuple[float | None, ...]] = []
+    for w in wacc_steps:
+        row: list[float | None] = []
+        for g in growth_steps:
+            if w > g and w > 0:
+                _, _, vps = _compute_dcf_values(
+                    inputs.base_revenue,
+                    inputs.revenue_growth_rate,
+                    inputs.operating_margin,
+                    inputs.tax_rate,
+                    inputs.reinvestment_rate,
+                    w,
+                    g,
+                    forecast_years,
+                    inputs.cash,
+                    inputs.total_debt,
+                    inputs.shares_outstanding,
+                )
+                row.append(vps)
+            else:
+                row.append(None)
+        grid.append(tuple(row))
+
+    sensitivity = SensitivityMatrix(
+        wacc_values=wacc_steps,
+        terminal_growth_values=growth_steps,
+        grid=tuple(grid),
+    )
+
+    dataset_version_ids = sorted(set(inputs.dataset_version_ids))
+
+    return FCFFDCFResult(
+        security_id=inputs.security_id,
+        symbol=inputs.symbol,
+        name=inputs.name,
+        currency=inputs.currency,
+        forecast_years=forecast_years,
+        forecast_cash_flows=forecast_cash_flows,
+        terminal_cash_flow=terminal_cash_flow,
+        terminal_value=terminal_value,
+        pv_terminal_value=pv_terminal_value,
+        terminal_value_contribution=terminal_value_contribution,
+        enterprise_value=enterprise_value,
+        cash=inputs.cash,
+        total_debt=inputs.total_debt,
+        equity_value=equity_value,
+        shares_outstanding=inputs.shares_outstanding,
+        value_per_share=value_per_share,
+        scenarios=scenarios,
+        sensitivity=sensitivity,
+        warnings=warnings,
+        dataset_version_ids=dataset_version_ids,
+        calculated_at=calculated_at,
+        inputs=inputs,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Method Registry & Domain Evaluator
+# ---------------------------------------------------------------------------
+
+ValuationMethod = Callable[..., Any]
 VALUATION_METHODS: dict[str, ValuationMethod] = {
     "trading_comparables": evaluate_comparables,
+    "fcff_dcf": evaluate_fcff_dcf,
 }
 
 
 def evaluate(
     method: str,
-    target: ComparableCompanyInput,
-    peers: list[ComparableCompanyInput],
-    *,
+    *args: Any,
     calculated_at: str,
-) -> ComparableValuationResult:
+    **kwargs: Any,
+) -> Any:
     """Evaluate a named Valuation method through the domain registry."""
     evaluator = VALUATION_METHODS.get(method)
     if evaluator is None:
         raise ValueError(f"Unknown Valuation method '{method}'.")
-    return evaluator(target, peers, calculated_at=calculated_at)
+    return evaluator(*args, calculated_at=calculated_at, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Report & Data Export Generators
+# ---------------------------------------------------------------------------
+
+
+def generate_valuation_html_report(
+    result_data: dict[str, Any],
+    manifest_data: dict[str, Any],
+) -> str:
+    """Generate a self-contained, human-readable HTML valuation report."""
+    method_rev = html.escape(str(result_data.get("method_revision") or "unversioned"))
+    run_id = html.escape(str(manifest_data.get("id") or result_data.get("run_id") or "N/A"))
+    calc_at = html.escape(str(result_data.get("calculated_at") or "N/A"))
+    dataset_versions = result_data.get("dataset_version_ids", [])
+    warnings = result_data.get("warnings", [])
+
+    is_dcf = "forecast_cash_flows" in result_data or "value_per_share" in result_data
+    symbol = html.escape(str(result_data.get("symbol") or result_data.get("target", {}).get("symbol", "")))
+    name = html.escape(str(result_data.get("name") or result_data.get("target", {}).get("name", "")))
+    currency = html.escape(str(result_data.get("currency") or result_data.get("target", {}).get("currency", "USD")))
+
+    doc = [
+        "<!DOCTYPE html>",
+        "<html lang=\"en\">",
+        "<head>",
+        "  <meta charset=\"utf-8\">",
+        f"  <title>Valuation Report — {symbol} ({method_rev})</title>",
+        "  <style>",
+        "    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.5; color: #1e293b; max-width: 960px; margin: 40px auto; padding: 0 20px; }",
+        "    h1, h2, h3 { color: #0f172a; margin-top: 28px; }",
+        "    .meta { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 24px; }",
+        "    .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }",
+        "    .metric-card { background: #f1f5f9; border-radius: 6px; padding: 12px 16px; }",
+        "    .metric-value { font-size: 1.5rem; font-weight: 700; color: #0f172a; }",
+        "    .metric-label { font-size: 0.85rem; color: #64748b; text-transform: uppercase; }",
+        "    table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: 0.95rem; }",
+        "    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #e2e8f0; }",
+        "    th { background: #f8fafc; font-weight: 600; color: #475569; }",
+        "    .num { text-align: right; font-variant-numeric: tabular-nums; }",
+        "    .warning { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; border-radius: 4px; }",
+        "    .badge { display: inline-block; background: #e0e7ff; color: #3730a3; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; margin: 2px; }",
+        "  </style>",
+        "</head>",
+        "<body>",
+        f"  <h1>Valuation Report: {symbol} — {name}</h1>",
+        "  <div class=\"meta\">",
+        "    <div class=\"meta-grid\">",
+        f"      <div><strong>Method:</strong> {method_rev}</div>",
+        f"      <div><strong>Run ID:</strong> {run_id}</div>",
+        f"      <div><strong>Calculated:</strong> {calc_at}</div>",
+        f"      <div><strong>Currency:</strong> {currency}</div>",
+        "    </div>",
+        "    <div style=\"margin-top: 12px;\"><strong>Dataset Versions:</strong> " +
+        "".join(f"<span class=\"badge\">{html.escape(str(ds))}</span>" for ds in dataset_versions) +
+        "    </div>",
+        "  </div>",
+    ]
+
+    if warnings:
+        doc.append("  <div class=\"warning\"><strong>Warnings:</strong><ul>")
+        for w in warnings:
+            doc.append(f"    <li>{html.escape(str(w))}</li>")
+        doc.append("  </ul></div>")
+
+    if is_dcf:
+        vps = result_data.get("value_per_share")
+        ev = result_data.get("enterprise_value")
+        eq_val = result_data.get("equity_value")
+        tv_contrib = result_data.get("terminal_value_contribution")
+        vps_str = f"{currency} {vps:.2f}" if vps is not None else "—"
+        ev_str = f"{currency} {ev:.2f}" if ev is not None else "—"
+        eq_str = f"{currency} {eq_val:.2f}" if eq_val is not None else "—"
+        tv_str = f"{tv_contrib * 100:.1f}%" if tv_contrib is not None else "—"
+
+        doc.append("  <h2>Valuation Summary</h2>")
+        doc.append("  <div class=\"meta-grid\">")
+        doc.append(f"    <div class=\"metric-card\"><div class=\"metric-label\">Value Per Share</div><div class=\"metric-value\">{vps_str}</div></div>")
+        doc.append(f"    <div class=\"metric-card\"><div class=\"metric-label\">Enterprise Value</div><div class=\"metric-value\">{ev_str}</div></div>")
+        doc.append(f"    <div class=\"metric-card\"><div class=\"metric-label\">Equity Value</div><div class=\"metric-value\">{eq_str}</div></div>")
+        doc.append(f"    <div class=\"metric-card\"><div class=\"metric-label\">Terminal Contribution</div><div class=\"metric-value\">{tv_str}</div></div>")
+        doc.append("  </div>")
+
+        # Forecast Cash Flows Table
+        cfs = result_data.get("forecast_cash_flows", [])
+        if cfs:
+            doc.append("  <h3>Forecast Cash Flows</h3>")
+            doc.append("  <table>")
+            doc.append("    <thead><tr><th>Year</th><th class=\"num\">Revenue</th><th class=\"num\">Growth</th><th class=\"num\">EBIT</th><th class=\"num\">NOPAT</th><th class=\"num\">Reinvestment</th><th class=\"num\">FCFF</th><th class=\"num\">DF</th><th class=\"num\">PV</th></tr></thead>")
+            doc.append("    <tbody>")
+            for cf in cfs:
+                doc.append(f"      <tr><td>Year {cf.get('year')}</td><td class=\"num\">{cf.get('revenue', 0):.2f}</td><td class=\"num\">{cf.get('revenue_growth', 0)*100:.1f}%</td><td class=\"num\">{cf.get('operating_income', 0):.2f}</td><td class=\"num\">{cf.get('nopat', 0):.2f}</td><td class=\"num\">{cf.get('reinvestment', 0):.2f}</td><td class=\"num\">{cf.get('free_cash_flow', 0):.2f}</td><td class=\"num\">{cf.get('discount_factor', 0):.4f}</td><td class=\"num\">{cf.get('present_value', 0):.2f}</td></tr>")
+            doc.append("    </tbody>")
+            doc.append("  </table>")
+
+        # Scenarios Table
+        scenarios = result_data.get("scenarios", [])
+        if scenarios:
+            doc.append("  <h3>Scenario Analysis</h3>")
+            doc.append("  <table>")
+            doc.append("    <thead><tr><th>Scenario</th><th class=\"num\">WACC</th><th class=\"num\">Terminal Growth</th><th class=\"num\">Revenue Growth</th><th class=\"num\">Operating Margin</th><th class=\"num\">Per Share Value</th></tr></thead>")
+            doc.append("    <tbody>")
+            for sc in scenarios:
+                svps = sc.get("value_per_share")
+                svps_str = f"{currency} {svps:.2f}" if svps is not None else "—"
+                wacc_sc = sc.get("wacc", 0) * 100
+                tg_sc = sc.get("terminal_growth_rate", 0) * 100
+                rg_sc = sc.get("revenue_growth_rate", 0) * 100
+                om_sc = sc.get("operating_margin", 0) * 100
+                doc.append(f"      <tr><td><strong>{html.escape(str(sc.get('name')))}</strong></td><td class=\"num\">{wacc_sc:.1f}%</td><td class=\"num\">{tg_sc:.1f}%</td><td class=\"num\">{rg_sc:.1f}%</td><td class=\"num\">{om_sc:.1f}%</td><td class=\"num\"><strong>{svps_str}</strong></td></tr>")
+            doc.append("    </tbody>")
+            doc.append("  </table>")
+
+    else:
+        # Comparable Company Multiples Table
+        target = result_data.get("target", {})
+        peers = result_data.get("peers", [])
+        medians = result_data.get("peer_medians", {})
+
+        doc.append("  <h2>Trading Multiples</h2>")
+        doc.append("  <table>")
+        doc.append("    <thead><tr><th>Security</th><th class=\"num\">P/E</th><th class=\"num\">EV / Revenue</th><th class=\"num\">EV / EBITDA</th><th class=\"num\">FCF Yield</th></tr></thead>")
+        doc.append("    <tbody>")
+        for comp in [target, *peers, medians]:
+            c_name = html.escape(str(comp.get("name", "")))
+            pe = comp.get("price_to_earnings")
+            ev_rev = comp.get("ev_to_revenue")
+            ev_ebitda = comp.get("ev_to_ebitda")
+            fcf_y = comp.get("free_cash_flow_yield")
+            pe_str = f"{pe:.2f}x" if pe is not None else "—"
+            ev_rev_str = f"{ev_rev:.2f}x" if ev_rev is not None else "—"
+            ev_ebitda_str = f"{ev_ebitda:.2f}x" if ev_ebitda is not None else "—"
+            fcf_y_str = f"{fcf_y * 100:.2f}%" if fcf_y is not None else "—"
+            doc.append(f"      <tr><td>{c_name}</td><td class=\"num\">{pe_str}</td><td class=\"num\">{ev_rev_str}</td><td class=\"num\">{ev_ebitda_str}</td><td class=\"num\">{fcf_y_str}</td></tr>")
+        doc.append("    </tbody>")
+        doc.append("  </table>")
+
+    doc.append("  <footer style=\"margin-top: 40px; color: #94a3b8; font-size: 0.8rem;\">Market Research Lab — Personal Investment Analysis Monolith</footer>")
+    doc.append("</body>")
+    doc.append("</html>")
+
+    return "\n".join(doc)
+
+
+def generate_valuation_csv(result_data: dict[str, Any]) -> str:
+    """Generate a tabular CSV export for valuation results."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    is_dcf = "forecast_cash_flows" in result_data or "value_per_share" in result_data
+    if is_dcf:
+        writer.writerow(["Section", "Field", "Value", "Unit"])
+        writer.writerow(["Metadata", "Security ID", result_data.get("security_id"), ""])
+        writer.writerow(["Metadata", "Symbol", result_data.get("symbol"), ""])
+        writer.writerow(["Metadata", "Name", result_data.get("name"), ""])
+        writer.writerow(["Metadata", "Currency", result_data.get("currency"), ""])
+        writer.writerow(["Metadata", "Calculated At", result_data.get("calculated_at"), ""])
+        writer.writerow(["Metadata", "Method Revision", result_data.get("method_revision", ""), ""])
+        writer.writerow(["Summary", "Value Per Share", result_data.get("value_per_share"), result_data.get("currency")])
+        writer.writerow(["Summary", "Enterprise Value", result_data.get("enterprise_value"), result_data.get("currency")])
+        writer.writerow(["Summary", "Equity Value", result_data.get("equity_value"), result_data.get("currency")])
+        writer.writerow(["Summary", "Terminal Value Contribution", result_data.get("terminal_value_contribution"), "ratio"])
+        writer.writerow([])
+        writer.writerow(["Forecast Year", "Revenue", "Growth", "Operating Income", "Tax", "NOPAT", "Reinvestment", "FCFF", "Discount Factor", "Present Value"])
+        for cf in result_data.get("forecast_cash_flows", []):
+            writer.writerow([
+                cf.get("year"),
+                cf.get("revenue"),
+                cf.get("revenue_growth"),
+                cf.get("operating_income"),
+                cf.get("tax"),
+                cf.get("nopat"),
+                cf.get("reinvestment"),
+                cf.get("free_cash_flow"),
+                cf.get("discount_factor"),
+                cf.get("present_value"),
+            ])
+    else:
+        writer.writerow(["Security ID", "Symbol", "Name", "Currency", "P/E", "EV/Revenue", "EV/EBITDA", "FCF Yield"])
+        for comp in [result_data.get("target", {}), *result_data.get("peers", []), result_data.get("peer_medians", {})]:
+            writer.writerow([
+                comp.get("security_id"),
+                comp.get("symbol"),
+                comp.get("name"),
+                comp.get("currency"),
+                comp.get("price_to_earnings"),
+                comp.get("ev_to_revenue"),
+                comp.get("ev_to_ebitda"),
+                comp.get("free_cash_flow_yield"),
+            ])
+
+    return output.getvalue()

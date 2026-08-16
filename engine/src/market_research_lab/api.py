@@ -25,7 +25,7 @@ from fastapi import (
 )
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
@@ -69,7 +69,14 @@ from .strategies import (
     get_strategy_spec,
     list_strategies,
 )
-from .valuation import ComparableCompanyInput, ComparableValuationResult, evaluate
+from .valuation import (
+    ComparableCompanyInput,
+    ComparableValuationResult,
+    FCFFDCFInput,
+    FCFFDCFResult,
+    evaluate,
+    evaluate_fcff_dcf,
+)
 
 
 class SecurityNotFoundError(Exception):
@@ -332,11 +339,140 @@ class ComparableValuationResponse(BaseModel):
     run_id: str | None = None
 
 
+class FCFFDCFRequest(BaseModel):
+    target_security_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,64}$")
+    base_revenue: float = Field(gt=0, description="Base period revenue")
+    revenue_growth_rate: float = Field(ge=-0.99, le=10.0, description="Forecast revenue growth rate")
+    operating_margin: float = Field(ge=-1.0, le=1.0, description="Forecast operating margin")
+    tax_rate: float = Field(ge=0.0, le=1.0, description="Effective tax rate")
+    reinvestment_rate: float = Field(ge=0.0, le=2.0, description="Reinvestment rate as fraction of NOPAT")
+    wacc: float = Field(gt=0.0, le=1.0, description="Weighted Average Cost of Capital")
+    terminal_growth_rate: float = Field(ge=-0.1, le=0.2, description="Perpetual terminal growth rate")
+    shares_outstanding: float = Field(gt=0.0, description="Shares outstanding")
+    total_debt: float = Field(default=0.0, ge=0.0, description="Total debt")
+    cash: float = Field(default=0.0, ge=0.0, description="Cash and cash equivalents")
+    forecast_years: int = Field(default=5, ge=1, le=20, description="Number of forecast years")
+    revenue_growth_rates: list[float] | None = None
+    operating_margins: list[float] | None = None
+    reinvestment_rates: list[float] | None = None
+
+
+class FCFFDCFSeedResponse(BaseModel):
+    security_id: str
+    symbol: str
+    name: str
+    currency: str
+    base_revenue: float | None = None
+    operating_margin: float = 0.20
+    tax_rate: float = 0.21
+    reinvestment_rate: float = 0.20
+    wacc: float = 0.085
+    terminal_growth_rate: float = 0.025
+    revenue_growth_rate: float = 0.07
+    shares_outstanding: float | None = None
+    total_debt: float = 0.0
+    cash: float = 0.0
+    market_cap: float | None = None
+    latest_price: float | None = None
+    forecast_years: int = 5
+    dataset_version_ids: list[str] = Field(default_factory=list)
+    provenance: dict[str, str] = Field(default_factory=dict)
+    units: dict[str, str] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class CashFlowForecastYearResponse(BaseModel):
+    year: int
+    revenue: float
+    revenue_growth: float
+    operating_income: float
+    tax: float
+    nopat: float
+    reinvestment: float
+    free_cash_flow: float
+    discount_factor: float
+    present_value: float
+
+
+class ScenarioResponse(BaseModel):
+    name: str
+    wacc: float
+    terminal_growth_rate: float
+    revenue_growth_rate: float
+    operating_margin: float
+    enterprise_value: float | None
+    equity_value: float | None
+    value_per_share: float | None
+
+
+class SensitivityMatrixResponse(BaseModel):
+    wacc_values: list[float]
+    terminal_growth_values: list[float]
+    grid: list[list[float | None]]
+
+
+class FCFFDCFValuationResponse(BaseModel):
+    security_id: str
+    symbol: str
+    name: str
+    currency: str
+    forecast_years: int
+    forecast_cash_flows: list[CashFlowForecastYearResponse]
+    terminal_cash_flow: float | None
+    terminal_value: float | None
+    pv_terminal_value: float | None
+    terminal_value_contribution: float | None
+    enterprise_value: float | None
+    cash: float
+    total_debt: float
+    equity_value: float | None
+    shares_outstanding: float
+    value_per_share: float | None
+    scenarios: list[ScenarioResponse]
+    sensitivity: SensitivityMatrixResponse
+    warnings: list[str]
+    dataset_version_ids: list[str]
+    calculated_at: str
+    method_revision: str | None = None
+    run_id: str | None = None
+
+
+class ValuationComparisonItemResponse(BaseModel):
+    run_id: str
+    method: str
+    method_revision: str
+    security_id: str
+    symbol: str
+    name: str
+    currency: str
+    calculated_at: str
+    value_per_share: float | None = None
+    enterprise_value: float | None = None
+    equity_value: float | None = None
+    terminal_value_contribution: float | None = None
+    price_to_earnings: float | None = None
+    ev_to_revenue: float | None = None
+    ev_to_ebitda: float | None = None
+    free_cash_flow_yield: float | None = None
+    key_assumptions: dict[str, JsonValue] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    dataset_version_ids: list[str] = Field(default_factory=list)
+
+
+class ValuationComparisonRequest(BaseModel):
+    run_ids: list[str] = Field(min_length=1, max_length=10)
+
+
+class ValuationComparisonResponse(BaseModel):
+    items: list[ValuationComparisonItemResponse]
+    compared_at: str
+
+
 class SavedValuationResponse(BaseModel):
     run_id: str
     method_revision: str
     calculated_at: str
-    result: ComparableValuationResponse
+    result: dict[str, JsonValue]
 
 
 class CoverageResponse(BaseModel):
@@ -763,6 +899,153 @@ def _calculate_comparable_result(
     )
 
 
+def _dcf_company_seed(
+    market_store: MarketDataStore, security_id: str
+) -> FCFFDCFSeedResponse:
+    company = _comparable_company_input(market_store, security_id)
+    summary = market_store.get_security_summary(security_id)
+    latest_price = summary.latest_close if summary else None
+
+    shares = (
+        company.market_cap / latest_price
+        if (company.market_cap is not None and latest_price is not None and latest_price > 0)
+        else None
+    )
+
+    revenue = company.revenue
+    ebitda = company.ebitda
+    margin = (ebitda / revenue) if (revenue and ebitda and revenue > 0) else 0.20
+    margin = max(0.01, min(0.60, margin))
+
+    warnings = list(company.input_warnings)
+    if revenue is None or revenue <= 0:
+        warnings.append(f"{company.symbol}: Historical revenue not found; please specify base revenue.")
+    if shares is None or shares <= 0:
+        warnings.append(f"{company.symbol}: Shares outstanding not found; please specify shares outstanding.")
+
+    return FCFFDCFSeedResponse(
+        security_id=company.security_id,
+        symbol=company.symbol,
+        name=company.name,
+        currency=company.currency,
+        base_revenue=revenue,
+        operating_margin=margin,
+        tax_rate=0.21,
+        reinvestment_rate=0.20,
+        wacc=0.085,
+        terminal_growth_rate=0.025,
+        revenue_growth_rate=0.07,
+        shares_outstanding=shares,
+        total_debt=company.total_debt or 0.0,
+        cash=company.cash or 0.0,
+        market_cap=company.market_cap,
+        latest_price=latest_price,
+        forecast_years=5,
+        dataset_version_ids=list(company.dataset_version_ids),
+        provenance=company.provenance,
+        units=company.units,
+        warnings=warnings,
+    )
+
+
+def _calculate_dcf_result(
+    market_store: MarketDataStore, request: FCFFDCFRequest
+) -> FCFFDCFResult:
+    company = _comparable_company_input(market_store, request.target_security_id)
+    dcf_input = FCFFDCFInput(
+        security_id=company.security_id,
+        symbol=company.symbol,
+        name=company.name,
+        currency=company.currency,
+        base_revenue=request.base_revenue,
+        revenue_growth_rate=request.revenue_growth_rate,
+        operating_margin=request.operating_margin,
+        tax_rate=request.tax_rate,
+        reinvestment_rate=request.reinvestment_rate,
+        wacc=request.wacc,
+        terminal_growth_rate=request.terminal_growth_rate,
+        shares_outstanding=request.shares_outstanding,
+        total_debt=request.total_debt,
+        cash=request.cash,
+        forecast_years=request.forecast_years,
+        revenue_growth_rates=tuple(request.revenue_growth_rates or ()),
+        operating_margins=tuple(request.operating_margins or ()),
+        reinvestment_rates=tuple(request.reinvestment_rates or ()),
+        dataset_version_ids=company.dataset_version_ids,
+        provenance=company.provenance,
+        units=company.units,
+        input_warnings=company.input_warnings,
+    )
+    return evaluate(
+        "fcff_dcf",
+        dcf_input,
+        calculated_at=datetime.now(UTC).isoformat(),
+    )
+
+
+def _dcf_valuation_response(
+    result: FCFFDCFResult,
+    *,
+    method_revision: str | None = None,
+    run_id: str | None = None,
+) -> FCFFDCFValuationResponse:
+    return FCFFDCFValuationResponse(
+        security_id=result.security_id,
+        symbol=result.symbol,
+        name=result.name,
+        currency=result.currency,
+        forecast_years=result.forecast_years,
+        forecast_cash_flows=[
+            CashFlowForecastYearResponse(
+                year=cf.year,
+                revenue=cf.revenue,
+                revenue_growth=cf.revenue_growth,
+                operating_income=cf.operating_income,
+                tax=cf.tax,
+                nopat=cf.nopat,
+                reinvestment=cf.reinvestment,
+                free_cash_flow=cf.free_cash_flow,
+                discount_factor=cf.discount_factor,
+                present_value=cf.present_value,
+            )
+            for cf in result.forecast_cash_flows
+        ],
+        terminal_cash_flow=result.terminal_cash_flow,
+        terminal_value=result.terminal_value,
+        pv_terminal_value=result.pv_terminal_value,
+        terminal_value_contribution=result.terminal_value_contribution,
+        enterprise_value=result.enterprise_value,
+        cash=result.cash,
+        total_debt=result.total_debt,
+        equity_value=result.equity_value,
+        shares_outstanding=result.shares_outstanding,
+        value_per_share=result.value_per_share,
+        scenarios=[
+            ScenarioResponse(
+                name=sc.name,
+                wacc=sc.wacc,
+                terminal_growth_rate=sc.terminal_growth_rate,
+                revenue_growth_rate=sc.revenue_growth_rate,
+                operating_margin=sc.operating_margin,
+                enterprise_value=sc.enterprise_value,
+                equity_value=sc.equity_value,
+                value_per_share=sc.value_per_share,
+            )
+            for sc in result.scenarios
+        ],
+        sensitivity=SensitivityMatrixResponse(
+            wacc_values=list(result.sensitivity.wacc_values),
+            terminal_growth_values=list(result.sensitivity.terminal_growth_values),
+            grid=[list(row) for row in result.sensitivity.grid],
+        ),
+        warnings=result.warnings,
+        dataset_version_ids=result.dataset_version_ids,
+        calculated_at=result.calculated_at,
+        method_revision=method_revision,
+        run_id=run_id,
+    )
+
+
 class StrategyRequestContext(NamedTuple):
     """Eligible Market View and decision time resolved for a Strategy request."""
 
@@ -1186,6 +1469,190 @@ def create_app(
         )
         return _comparable_valuation_response(
             result, method_revision=method_revision, run_id=run_id
+        )
+
+    @app.get(
+        "/api/projects/{project_id}/valuations/seed/{security_id}",
+        response_model=FCFFDCFSeedResponse,
+        tags=["valuations"],
+    )
+    def seed_dcf_valuation(
+        project_id: UUID,
+        security_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
+    ) -> FCFFDCFSeedResponse:
+        store.get_project(str(project_id))
+        return _dcf_company_seed(market_store, security_id)
+
+    @app.post(
+        "/api/valuations/dcf",
+        response_model=FCFFDCFValuationResponse,
+        tags=["valuations"],
+    )
+    def calculate_dcf_valuation(
+        request: FCFFDCFRequest,
+    ) -> FCFFDCFValuationResponse:
+        return _dcf_valuation_response(
+            _calculate_dcf_result(market_store, request)
+        )
+
+    @app.post(
+        "/api/projects/{project_id}/valuations/dcf",
+        response_model=FCFFDCFValuationResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["valuations"],
+    )
+    def save_dcf_valuation(
+        project_id: UUID, request: FCFFDCFRequest
+    ) -> FCFFDCFValuationResponse:
+        result = _calculate_dcf_result(market_store, request)
+        definition = {
+            "method": "fcff_dcf",
+            "target_security_id": request.target_security_id,
+            "base_revenue": request.base_revenue,
+            "revenue_growth_rate": request.revenue_growth_rate,
+            "operating_margin": request.operating_margin,
+            "tax_rate": request.tax_rate,
+            "reinvestment_rate": request.reinvestment_rate,
+            "wacc": request.wacc,
+            "terminal_growth_rate": request.terminal_growth_rate,
+            "shares_outstanding": request.shares_outstanding,
+            "total_debt": request.total_debt,
+            "cash": request.cash,
+            "forecast_years": request.forecast_years,
+        }
+        name = f"FCFF DCF valuation - {result.symbol}"
+        revision = store.save_revision(
+            str(project_id), kind="valuation", name=name, definition=definition
+        )
+        method_revision = f"fcff_dcf:{revision}"
+        run_id = store.create_valuation_result(
+            str(project_id),
+            ValuationRunRecord(
+                method_revision=method_revision,
+                dataset_version_ids=result.dataset_version_ids,
+                parameters=definition,
+                result=_dcf_valuation_response(result).model_dump(),
+            ),
+        )
+        return _dcf_valuation_response(
+            result, method_revision=method_revision, run_id=run_id
+        )
+
+    @app.post(
+        "/api/projects/{project_id}/valuations/compare",
+        response_model=ValuationComparisonResponse,
+        tags=["valuations"],
+    )
+    def compare_valuations(
+        project_id: UUID, request: ValuationComparisonRequest
+    ) -> ValuationComparisonResponse:
+        saved_list = store.list_valuation_results(str(project_id))
+        runs_by_id = {
+            item["run_id"]: item
+            for item in saved_list
+            if isinstance(item, dict) and "run_id" in item
+        }
+
+        items: list[ValuationComparisonItemResponse] = []
+        for run_id in request.run_ids:
+            entry = runs_by_id.get(run_id)
+            if not entry:
+                continue
+            method_revision = str(entry.get("method_revision", ""))
+            calc_at = str(entry.get("calculated_at", ""))
+            result_dict = entry.get("result", {})
+            if not isinstance(result_dict, dict):
+                continue
+
+            is_dcf = "forecast_cash_flows" in result_dict or "value_per_share" in result_dict
+            method = "fcff_dcf" if is_dcf else "trading_comparables"
+
+            if is_dcf:
+                inputs = result_dict.get("inputs", {})
+                scenarios_list = result_dict.get("scenarios", [])
+                base_sc = scenarios_list[1] if len(scenarios_list) > 1 else {}
+                key_assump: dict[str, JsonValue] = {
+                    "wacc": inputs.get("wacc") or base_sc.get("wacc"),
+                    "terminal_growth_rate": inputs.get("terminal_growth_rate") or base_sc.get("terminal_growth_rate"),
+                    "revenue_growth_rate": inputs.get("revenue_growth_rate") or base_sc.get("revenue_growth_rate"),
+                    "operating_margin": inputs.get("operating_margin") or base_sc.get("operating_margin"),
+                    "tax_rate": inputs.get("tax_rate"),
+                    "reinvestment_rate": inputs.get("reinvestment_rate"),
+                    "forecast_years": result_dict.get("forecast_years"),
+                }
+                items.append(
+                    ValuationComparisonItemResponse(
+                        run_id=run_id,
+                        method=method,
+                        method_revision=method_revision,
+                        security_id=str(result_dict.get("security_id", "")),
+                        symbol=str(result_dict.get("symbol", "")),
+                        name=str(result_dict.get("name", "")),
+                        currency=str(result_dict.get("currency", "USD")),
+                        calculated_at=calc_at,
+                        value_per_share=result_dict.get("value_per_share"),
+                        enterprise_value=result_dict.get("enterprise_value"),
+                        equity_value=result_dict.get("equity_value"),
+                        terminal_value_contribution=result_dict.get("terminal_value_contribution"),
+                        key_assumptions=key_assump,
+                        warnings=result_dict.get("warnings", []),
+                        dataset_version_ids=result_dict.get("dataset_version_ids", []),
+                    )
+                )
+            else:
+                target = result_dict.get("target", {})
+                peers = result_dict.get("peers", [])
+                peer_syms: list[JsonValue] = [
+                    str(p.get("symbol"))
+                    for p in peers
+                    if isinstance(p, dict) and p.get("symbol")
+                ]
+                key_assump_comp: dict[str, JsonValue] = {
+                    "peer_count": len(peers),
+                    "peer_symbols": peer_syms,
+                }
+                items.append(
+                    ValuationComparisonItemResponse(
+                        run_id=run_id,
+                        method=method,
+                        method_revision=method_revision,
+                        security_id=str(target.get("security_id", "")),
+                        symbol=str(target.get("symbol", "")),
+                        name=str(target.get("name", "")),
+                        currency=str(target.get("currency", "USD")),
+                        calculated_at=calc_at,
+                        enterprise_value=target.get("enterprise_value"),
+                        price_to_earnings=target.get("price_to_earnings"),
+                        ev_to_revenue=target.get("ev_to_revenue"),
+                        ev_to_ebitda=target.get("ev_to_ebitda"),
+                        free_cash_flow_yield=target.get("free_cash_flow_yield"),
+                        key_assumptions=key_assump_comp,
+                        warnings=result_dict.get("warnings", []),
+                        dataset_version_ids=result_dict.get("dataset_version_ids", []),
+                    )
+                )
+
+        return ValuationComparisonResponse(
+            items=items,
+            compared_at=datetime.now(UTC).isoformat(),
+        )
+
+    @app.get(
+        "/api/projects/{project_id}/valuations/{run_id}/export/{format_type}",
+        tags=["valuations"],
+    )
+    def export_valuation(
+        project_id: UUID,
+        run_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
+        format_type: str = FastAPIPath(pattern=r"^(html|csv|json)$"),
+    ) -> Response:
+        content, media_type, filename = store.get_valuation_export(
+            str(project_id), run_id, format_type
+        )
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
     @app.get(

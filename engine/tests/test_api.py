@@ -708,6 +708,133 @@ def test_comparable_valuation_uses_local_inputs_and_keeps_provenance(tmp_path):
     )
 
 
+def test_dcf_valuation_endpoints_seed_revisions_and_durability(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    prices = (
+        "symbol,name,exchange,currency,date,open,high,low,close,volume\n"
+        "AAPL,Apple Inc.,NASDAQ,USD,2023-01-01,150,150,150,150,1000\n"
+    )
+    price_import = client.post(
+        "/api/datasets",
+        data={"source": "prices"},
+        files={"file": ("prices.csv", prices, "text/csv")},
+    )
+    assert price_import.status_code == 201
+
+    fundamentals = (
+        "security_id,field,fiscal_period,value,unit,filed_at\n"
+        "AAPL,shares_outstanding,2023FY,10,shares,2023-01-01T00:00:00Z\n"
+        "AAPL,total_debt,2023FY,50,USD,2023-01-01T00:00:00Z\n"
+        "AAPL,cash,2023FY,30,USD,2023-01-01T00:00:00Z\n"
+        "AAPL,revenue,2023FY,200,USD,2023-01-01T00:00:00Z\n"
+        "AAPL,ebitda,2023FY,60,USD,2023-01-01T00:00:00Z\n"
+        "AAPL,net_income,2023FY,40,USD,2023-01-01T00:00:00Z\n"
+    )
+    fundamental_import = client.post(
+        "/api/datasets",
+        data={"source": "fundamentals"},
+        files={"file": ("fundamentals.csv", fundamentals, "text/csv")},
+    )
+    assert fundamental_import.status_code == 201
+
+    project = client.post("/api/projects", json={"name": "Valuation DCF Lab"}).json()
+
+    # 1. Seed DCF inputs from local catalogue
+    seed_res = client.get(f"/api/projects/{project['id']}/valuations/seed/AAPL")
+    assert seed_res.status_code == 200
+    seed_data = seed_res.json()
+    assert seed_data["symbol"] == "AAPL"
+    assert seed_data["base_revenue"] == 200.0
+    assert seed_data["shares_outstanding"] == 10.0
+    assert seed_data["total_debt"] == 50.0
+    assert seed_data["cash"] == 30.0
+    assert seed_data["market_cap"] == 1500.0
+
+    # 2. Pure DCF calculation endpoint
+    dcf_req = {
+        "target_security_id": "AAPL",
+        "base_revenue": 200.0,
+        "revenue_growth_rate": 0.08,
+        "operating_margin": 0.30,
+        "tax_rate": 0.21,
+        "reinvestment_rate": 0.20,
+        "wacc": 0.085,
+        "terminal_growth_rate": 0.025,
+        "shares_outstanding": 10.0,
+        "total_debt": 50.0,
+        "cash": 30.0,
+        "forecast_years": 5,
+    }
+    calc_res = client.post("/api/valuations/dcf", json=dcf_req)
+    assert calc_res.status_code == 200
+    calc_data = calc_res.json()
+    assert calc_data["symbol"] == "AAPL"
+    assert calc_data["value_per_share"] is not None
+    assert calc_data["value_per_share"] > 0
+    assert len(calc_data["forecast_cash_flows"]) == 5
+    assert len(calc_data["scenarios"]) == 3
+    assert len(calc_data["sensitivity"]["grid"]) == 5
+
+    # 3. Save DCF revision v1
+    save1 = client.post(f"/api/projects/{project['id']}/valuations/dcf", json=dcf_req)
+    assert save1.status_code == 201
+    save1_data = save1.json()
+    assert save1_data["method_revision"] == "fcff_dcf:v1"
+    run1_id = save1_data["run_id"]
+    assert run1_id
+
+    # 4. Modify assumption (growth 0.12) and save DCF revision v2
+    dcf_req["revenue_growth_rate"] = 0.12
+    save2 = client.post(f"/api/projects/{project['id']}/valuations/dcf", json=dcf_req)
+    assert save2.status_code == 201
+    save2_data = save2.json()
+    assert save2_data["method_revision"] == "fcff_dcf:v2"
+    run2_id = save2_data["run_id"]
+    assert run2_id != run1_id
+
+    # 5. Check artifacts written to disk
+    runs_dir = tmp_path / "projects" / project["id"] / "runs"
+    assert (runs_dir / run1_id / "manifest.json").exists()
+    assert (runs_dir / run1_id / "artifacts" / "valuation.json").exists()
+    assert (runs_dir / run1_id / "artifacts" / "valuation_report.html").exists()
+    assert (runs_dir / run1_id / "artifacts" / "summary.csv").exists()
+
+    # 6. Test exports (HTML, CSV, JSON)
+    html_export = client.get(f"/api/projects/{project['id']}/valuations/{run1_id}/export/html")
+    assert html_export.status_code == 200
+    assert "<!DOCTYPE html>" in html_export.text
+    assert "fcff_dcf:v1" in html_export.text
+
+    csv_export = client.get(f"/api/projects/{project['id']}/valuations/{run1_id}/export/csv")
+    assert csv_export.status_code == 200
+    assert "Value Per Share" in csv_export.text
+
+    json_export = client.get(f"/api/projects/{project['id']}/valuations/{run1_id}/export/json")
+    assert json_export.status_code == 200
+    assert "manifest" in json_export.json()
+    assert "valuation" in json_export.json()
+
+    # 7. Side-by-side comparison endpoint
+    comp_res = client.post(
+        f"/api/projects/{project['id']}/valuations/compare",
+        json={"run_ids": [run1_id, run2_id]},
+    )
+    assert comp_res.status_code == 200
+    comp_data = comp_res.json()
+    assert len(comp_data["items"]) == 2
+    assert comp_data["items"][0]["method_revision"] == "fcff_dcf:v1"
+    assert comp_data["items"][1]["method_revision"] == "fcff_dcf:v2"
+    assert comp_data["items"][1]["value_per_share"] > comp_data["items"][0]["value_per_share"]
+
+    # 8. Test durability after restart/reloading app instance
+    reloaded_client = TestClient(create_app(workspace_root=tmp_path))
+    val_list = reloaded_client.get(f"/api/projects/{project['id']}/valuations")
+    assert val_list.status_code == 200
+    vals = val_list.json()
+    assert len(vals) == 2
+    assert {v["method_revision"] for v in vals} == {"fcff_dcf:v1", "fcff_dcf:v2"}
+
+
 def test_indicator_endpoints_and_definition_lifecycle(tmp_path: pytest.TempPathFactory):
     client = TestClient(create_app(workspace_root=tmp_path))
 

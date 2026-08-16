@@ -161,6 +161,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/valuations/seed/{security_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Seed Dcf Valuation */
+        get: operations["seed_dcf_valuation_api_projects__project_id__valuations_seed__security_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/valuations/dcf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Calculate Dcf Valuation */
+        post: operations["calculate_dcf_valuation_api_valuations_dcf_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/valuations/dcf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Save Dcf Valuation */
+        post: operations["save_dcf_valuation_api_projects__project_id__valuations_dcf_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/valuations/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Compare Valuations */
+        post: operations["compare_valuations_api_projects__project_id__valuations_compare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/valuations/{run_id}/export/{format_type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Valuation */
+        get: operations["export_valuation_api_projects__project_id__valuations__run_id__export__format_type__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/valuations": {
         parameters: {
             query?: never;
@@ -498,6 +583,29 @@ export interface components {
             /** File */
             file: string;
         };
+        /** CashFlowForecastYearResponse */
+        CashFlowForecastYearResponse: {
+            /** Year */
+            year: number;
+            /** Revenue */
+            revenue: number;
+            /** Revenue Growth */
+            revenue_growth: number;
+            /** Operating Income */
+            operating_income: number;
+            /** Tax */
+            tax: number;
+            /** Nopat */
+            nopat: number;
+            /** Reinvestment */
+            reinvestment: number;
+            /** Free Cash Flow */
+            free_cash_flow: number;
+            /** Discount Factor */
+            discount_factor: number;
+            /** Present Value */
+            present_value: number;
+        };
         /** ComparableCompanyInputResponse */
         ComparableCompanyInputResponse: {
             /** Security Id */
@@ -743,6 +851,199 @@ export interface components {
             /** Saved At */
             saved_at: string;
         };
+        /** FCFFDCFRequest */
+        FCFFDCFRequest: {
+            /** Target Security Id */
+            target_security_id: string;
+            /**
+             * Base Revenue
+             * @description Base period revenue
+             */
+            base_revenue: number;
+            /**
+             * Revenue Growth Rate
+             * @description Forecast revenue growth rate
+             */
+            revenue_growth_rate: number;
+            /**
+             * Operating Margin
+             * @description Forecast operating margin
+             */
+            operating_margin: number;
+            /**
+             * Tax Rate
+             * @description Effective tax rate
+             */
+            tax_rate: number;
+            /**
+             * Reinvestment Rate
+             * @description Reinvestment rate as fraction of NOPAT
+             */
+            reinvestment_rate: number;
+            /**
+             * Wacc
+             * @description Weighted Average Cost of Capital
+             */
+            wacc: number;
+            /**
+             * Terminal Growth Rate
+             * @description Perpetual terminal growth rate
+             */
+            terminal_growth_rate: number;
+            /**
+             * Shares Outstanding
+             * @description Shares outstanding
+             */
+            shares_outstanding: number;
+            /**
+             * Total Debt
+             * @description Total debt
+             * @default 0
+             */
+            total_debt: number;
+            /**
+             * Cash
+             * @description Cash and cash equivalents
+             * @default 0
+             */
+            cash: number;
+            /**
+             * Forecast Years
+             * @description Number of forecast years
+             * @default 5
+             */
+            forecast_years: number;
+            /** Revenue Growth Rates */
+            revenue_growth_rates?: number[] | null;
+            /** Operating Margins */
+            operating_margins?: number[] | null;
+            /** Reinvestment Rates */
+            reinvestment_rates?: number[] | null;
+        };
+        /** FCFFDCFSeedResponse */
+        FCFFDCFSeedResponse: {
+            /** Security Id */
+            security_id: string;
+            /** Symbol */
+            symbol: string;
+            /** Name */
+            name: string;
+            /** Currency */
+            currency: string;
+            /** Base Revenue */
+            base_revenue?: number | null;
+            /**
+             * Operating Margin
+             * @default 0.2
+             */
+            operating_margin: number;
+            /**
+             * Tax Rate
+             * @default 0.21
+             */
+            tax_rate: number;
+            /**
+             * Reinvestment Rate
+             * @default 0.2
+             */
+            reinvestment_rate: number;
+            /**
+             * Wacc
+             * @default 0.085
+             */
+            wacc: number;
+            /**
+             * Terminal Growth Rate
+             * @default 0.025
+             */
+            terminal_growth_rate: number;
+            /**
+             * Revenue Growth Rate
+             * @default 0.07
+             */
+            revenue_growth_rate: number;
+            /** Shares Outstanding */
+            shares_outstanding?: number | null;
+            /**
+             * Total Debt
+             * @default 0
+             */
+            total_debt: number;
+            /**
+             * Cash
+             * @default 0
+             */
+            cash: number;
+            /** Market Cap */
+            market_cap?: number | null;
+            /** Latest Price */
+            latest_price?: number | null;
+            /**
+             * Forecast Years
+             * @default 5
+             */
+            forecast_years: number;
+            /** Dataset Version Ids */
+            dataset_version_ids?: string[];
+            /** Provenance */
+            provenance?: {
+                [key: string]: string;
+            };
+            /** Units */
+            units?: {
+                [key: string]: string;
+            };
+            /** Warnings */
+            warnings?: string[];
+        };
+        /** FCFFDCFValuationResponse */
+        FCFFDCFValuationResponse: {
+            /** Security Id */
+            security_id: string;
+            /** Symbol */
+            symbol: string;
+            /** Name */
+            name: string;
+            /** Currency */
+            currency: string;
+            /** Forecast Years */
+            forecast_years: number;
+            /** Forecast Cash Flows */
+            forecast_cash_flows: components["schemas"]["CashFlowForecastYearResponse"][];
+            /** Terminal Cash Flow */
+            terminal_cash_flow: number | null;
+            /** Terminal Value */
+            terminal_value: number | null;
+            /** Pv Terminal Value */
+            pv_terminal_value: number | null;
+            /** Terminal Value Contribution */
+            terminal_value_contribution: number | null;
+            /** Enterprise Value */
+            enterprise_value: number | null;
+            /** Cash */
+            cash: number;
+            /** Total Debt */
+            total_debt: number;
+            /** Equity Value */
+            equity_value: number | null;
+            /** Shares Outstanding */
+            shares_outstanding: number;
+            /** Value Per Share */
+            value_per_share: number | null;
+            /** Scenarios */
+            scenarios: components["schemas"]["ScenarioResponse"][];
+            sensitivity: components["schemas"]["SensitivityMatrixResponse"];
+            /** Warnings */
+            warnings: string[];
+            /** Dataset Version Ids */
+            dataset_version_ids: string[];
+            /** Calculated At */
+            calculated_at: string;
+            /** Method Revision */
+            method_revision?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+        };
         /** FundamentalFactResponse */
         FundamentalFactResponse: {
             /** Security Id */
@@ -967,7 +1268,29 @@ export interface components {
             method_revision: string;
             /** Calculated At */
             calculated_at: string;
-            result: components["schemas"]["ComparableValuationResponse"];
+            /** Result */
+            result: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+        };
+        /** ScenarioResponse */
+        ScenarioResponse: {
+            /** Name */
+            name: string;
+            /** Wacc */
+            wacc: number;
+            /** Terminal Growth Rate */
+            terminal_growth_rate: number;
+            /** Revenue Growth Rate */
+            revenue_growth_rate: number;
+            /** Operating Margin */
+            operating_margin: number;
+            /** Enterprise Value */
+            enterprise_value: number | null;
+            /** Equity Value */
+            equity_value: number | null;
+            /** Value Per Share */
+            value_per_share: number | null;
         };
         /** SecEdgarDownloadRequest */
         SecEdgarDownloadRequest: {
@@ -1045,6 +1368,15 @@ export interface components {
             alerts?: {
                 [key: string]: components["schemas"]["JsonValue-Output"];
             }[];
+        };
+        /** SensitivityMatrixResponse */
+        SensitivityMatrixResponse: {
+            /** Wacc Values */
+            wacc_values: number[];
+            /** Terminal Growth Values */
+            terminal_growth_values: number[];
+            /** Grid */
+            grid: (number | null)[][];
         };
         /** StrategyEvaluateRequest */
         StrategyEvaluateRequest: {
@@ -1157,6 +1489,61 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** ValuationComparisonItemResponse */
+        ValuationComparisonItemResponse: {
+            /** Run Id */
+            run_id: string;
+            /** Method */
+            method: string;
+            /** Method Revision */
+            method_revision: string;
+            /** Security Id */
+            security_id: string;
+            /** Symbol */
+            symbol: string;
+            /** Name */
+            name: string;
+            /** Currency */
+            currency: string;
+            /** Calculated At */
+            calculated_at: string;
+            /** Value Per Share */
+            value_per_share?: number | null;
+            /** Enterprise Value */
+            enterprise_value?: number | null;
+            /** Equity Value */
+            equity_value?: number | null;
+            /** Terminal Value Contribution */
+            terminal_value_contribution?: number | null;
+            /** Price To Earnings */
+            price_to_earnings?: number | null;
+            /** Ev To Revenue */
+            ev_to_revenue?: number | null;
+            /** Ev To Ebitda */
+            ev_to_ebitda?: number | null;
+            /** Free Cash Flow Yield */
+            free_cash_flow_yield?: number | null;
+            /** Key Assumptions */
+            key_assumptions?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Warnings */
+            warnings?: string[];
+            /** Dataset Version Ids */
+            dataset_version_ids?: string[];
+        };
+        /** ValuationComparisonRequest */
+        ValuationComparisonRequest: {
+            /** Run Ids */
+            run_ids: string[];
+        };
+        /** ValuationComparisonResponse */
+        ValuationComparisonResponse: {
+            /** Items */
+            items: components["schemas"]["ValuationComparisonItemResponse"][];
+            /** Compared At */
+            compared_at: string;
         };
         /** WatchlistAddRequest */
         WatchlistAddRequest: {
@@ -1593,6 +1980,174 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ComparableValuationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    seed_dcf_valuation_api_projects__project_id__valuations_seed__security_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                security_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FCFFDCFSeedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    calculate_dcf_valuation_api_valuations_dcf_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FCFFDCFRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FCFFDCFValuationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_dcf_valuation_api_projects__project_id__valuations_dcf_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FCFFDCFRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FCFFDCFValuationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compare_valuations_api_projects__project_id__valuations_compare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ValuationComparisonRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValuationComparisonResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_valuation_api_projects__project_id__valuations__run_id__export__format_type__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                run_id: string;
+                format_type: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
