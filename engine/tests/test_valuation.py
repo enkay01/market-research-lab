@@ -78,7 +78,7 @@ def make_company_input(
     )
 
 
-def test_evaluate_comparables_calculates_supported_multiples_and_peer_medians() -> None:
+def test_evaluate_comparables_calculates_supported_multiples_and_peer_medians():
     target = make_company_input(
         "AAPL",
         name="Apple Inc.",
@@ -120,7 +120,7 @@ def test_evaluate_comparables_calculates_supported_multiples_and_peer_medians() 
     assert result.calculated_at == "2026-08-16T12:00:00Z"
 
 
-def test_evaluate_comparables_warns_for_missing_or_incompatible_inputs() -> None:
+def test_evaluate_comparables_warns_for_missing_or_incompatible_inputs():
     target = make_company_input(
         "AAPL",
         name="Apple Inc.",
@@ -164,7 +164,7 @@ def test_evaluate_comparables_warns_for_missing_or_incompatible_inputs() -> None
     assert "SAP: currency EUR is not compatible with target currency USD." in result.warnings
 
 
-def test_evaluate_comparables_warns_for_non_positive_ev_and_keeps_negative_fcf_yield() -> None:
+def test_evaluate_comparables_warns_for_non_positive_ev_and_keeps_negative_fcf_yield():
     target = make_company_input(
         symbol="CASH",
         security_id="NETCASH",

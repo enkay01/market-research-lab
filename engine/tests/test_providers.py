@@ -14,7 +14,7 @@ from market_research_lab.providers import (
 )
 
 
-def test_tiingo_payload_maps_prices_and_corporate_actions() -> None:
+def test_tiingo_payload_maps_prices_and_corporate_actions():
     calls: list[tuple[str, dict[str, str]]] = []
 
     def fetch_json(url: str, headers: dict[str, str]) -> JsonValue:
@@ -61,7 +61,7 @@ def test_tiingo_payload_maps_prices_and_corporate_actions() -> None:
     assert "secret-token" not in calls[0][0]
 
 
-def test_tiingo_uses_injected_fetcher() -> None:
+def test_tiingo_uses_injected_fetcher():
     calls: list[str] = []
 
     def fetch_json(url: str, _headers: dict[str, str]) -> JsonValue:
@@ -91,7 +91,7 @@ def test_tiingo_uses_injected_fetcher() -> None:
     assert result.daily_bars[0]["close"] == 104
 
 
-def test_sec_companyfacts_maps_facts_to_filing_eligibility() -> None:
+def test_sec_companyfacts_maps_facts_to_filing_eligibility():
 
     def fetch_json(url: str, headers: dict[str, str]) -> JsonValue:
         assert headers["User-Agent"] == "Market Research Lab test@example.com"
@@ -151,7 +151,7 @@ def test_sec_companyfacts_maps_facts_to_filing_eligibility() -> None:
     assert fact["available_at"] == "2023-04-20T13:30:00.000Z"
 
 
-def test_provider_requires_local_credentials() -> None:
+def test_provider_requires_local_credentials():
     with pytest.raises(ProviderDownloadError, match="TIINGO_API_TOKEN"):
         download_tiingo(
             TiingoDownloadSpec(symbols=("AAPL",)),
@@ -161,7 +161,7 @@ def test_provider_requires_local_credentials() -> None:
         )
 
 
-def test_sec_missing_acceptance_time_is_preserved_as_ineligible() -> None:
+def test_sec_missing_acceptance_time_is_preserved_as_ineligible():
     def fetch_json(url: str, _headers: dict[str, str]) -> JsonValue:
         if "/submissions/" in url:
             return {
@@ -205,7 +205,7 @@ def test_sec_missing_acceptance_time_is_preserved_as_ineligible() -> None:
     assert result.warnings
 
 
-def test_sec_defaulted_observation_fields_are_flagged_and_warned() -> None:
+def test_sec_defaulted_observation_fields_are_flagged_and_warned():
     def fetch_json(url: str, _headers: dict[str, str]) -> JsonValue:
         if "/submissions/" in url:
             return {
@@ -254,7 +254,7 @@ def test_sec_defaulted_observation_fields_are_flagged_and_warned() -> None:
     assert any("defaulted" in warning for warning in result.warnings)
 
 
-def test_sec_complete_observation_has_no_defaulted_fields() -> None:
+def test_sec_complete_observation_has_no_defaulted_fields():
     def fetch_json(url: str, _headers: dict[str, str]) -> JsonValue:
         if "/submissions/" in url:
             return {

@@ -127,7 +127,7 @@ def test_sec_download_without_acceptance_time_is_not_historically_eligible(tmp_p
     assert historical.status_code == 400
     assert historical.json()["code"] == "point_in_time_data_required"
 
-def test_download_removes_saved_versions_when_a_later_group_fails() -> None:
+def test_download_removes_saved_versions_when_a_later_group_fails():
     class StoredVersion:
         def __init__(self, version_id: str) -> None:
             self.id = version_id

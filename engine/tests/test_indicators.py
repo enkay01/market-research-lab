@@ -17,7 +17,7 @@ from market_research_lab.indicators import (
 )
 
 
-def test_list_indicators_exposes_typed_parameter_metadata() -> None:
+def test_list_indicators_exposes_typed_parameter_metadata():
     specs = list_indicators()
     names = {spec.name for spec in specs}
     assert "sma" in names
@@ -37,7 +37,7 @@ def test_list_indicators_exposes_typed_parameter_metadata() -> None:
     assert fast_param.min_value == 1
 
 
-def test_sma_calculation_warmup_and_accuracy() -> None:
+def test_sma_calculation_warmup_and_accuracy():
     prices = [10.0, 11.0, 12.0, 13.0, 14.0]
     period = 3
     result = calculate_sma(prices, period=period)
@@ -52,7 +52,7 @@ def test_sma_calculation_warmup_and_accuracy() -> None:
     assert result[4] == pytest.approx(13.0)
 
 
-def test_sma_rejects_invalid_period() -> None:
+def test_sma_rejects_invalid_period():
     with pytest.raises(ParameterValidationError):
         calculate_sma([10.0, 12.0], period=0)
 
@@ -60,7 +60,7 @@ def test_sma_rejects_invalid_period() -> None:
         calculate_sma([10.0, 12.0], period=-5)
 
 
-def test_ema_calculation_warmup_and_accuracy() -> None:
+def test_ema_calculation_warmup_and_accuracy():
     prices = [10.0, 11.0, 12.0, 13.0, 14.0]
     period = 3
     # Multiplier k = 2 / (3 + 1) = 0.5
@@ -77,7 +77,7 @@ def test_ema_calculation_warmup_and_accuracy() -> None:
     assert result[4] == pytest.approx(13.0)
 
 
-def test_ma_crossover_calculation_and_signals() -> None:
+def test_ma_crossover_calculation_and_signals():
     dates = [
         "2024-01-02",
         "2024-01-03",
@@ -140,7 +140,7 @@ def test_ma_crossover_calculation_and_signals() -> None:
     assert p6.values["state"] == "bearish_below"
 
 
-def test_ma_crossover_validates_periods() -> None:
+def test_ma_crossover_validates_periods():
     dates = ["2024-01-02", "2024-01-03"]
     prices = [10.0, 11.0]
 
@@ -159,7 +159,7 @@ def test_ma_crossover_validates_periods() -> None:
         )
 
 
-def test_calculate_indicator_dispatcher() -> None:
+def test_calculate_indicator_dispatcher():
     dates = ["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"]
     prices = [100.0, 102.0, 104.0, 106.0]
 

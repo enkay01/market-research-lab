@@ -470,7 +470,7 @@ def test_invalid_as_of_format_returns_422(tmp_path):
     assert res.json()["code"] == "validation_error"
 
 
-def test_securities_watchlist_and_research_workflow(tmp_path) -> None:
+def test_securities_watchlist_and_research_workflow(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
 
     # 1. Ingest market dataset to register securities in catalogue
@@ -627,7 +627,7 @@ def test_securities_watchlist_and_research_workflow(tmp_path) -> None:
     assert restarted_thesis["summary"] == "High ecosystem retention."
 
 
-def test_comparable_valuation_uses_local_inputs_and_keeps_provenance(tmp_path) -> None:
+def test_comparable_valuation_uses_local_inputs_and_keeps_provenance(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
     prices = (
         "symbol,name,exchange,currency,date,open,high,low,close,volume\n"
@@ -708,7 +708,7 @@ def test_comparable_valuation_uses_local_inputs_and_keeps_provenance(tmp_path) -
     )
 
 
-def test_indicator_endpoints_and_definition_lifecycle(tmp_path: pytest.TempPathFactory) -> None:
+def test_indicator_endpoints_and_definition_lifecycle(tmp_path: pytest.TempPathFactory):
     client = TestClient(create_app(workspace_root=tmp_path))
 
     # 1. List indicators
@@ -817,7 +817,7 @@ def test_indicator_endpoints_and_definition_lifecycle(tmp_path: pytest.TempPathF
 
 
 
-def test_strategy_endpoints_and_definition_lifecycle(tmp_path) -> None:
+def test_strategy_endpoints_and_definition_lifecycle(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
 
     # 1. List strategies
@@ -904,7 +904,7 @@ def test_strategy_endpoints_and_definition_lifecycle(tmp_path) -> None:
     assert any(path.is_file() for path in revision_files)
 
 
-def test_strategy_only_uses_observations_eligible_at_decision_time(tmp_path) -> None:
+def test_strategy_only_uses_observations_eligible_at_decision_time(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
 
     # A downtrend through 2024-01-06, then a sharp rally on 2024-01-09.

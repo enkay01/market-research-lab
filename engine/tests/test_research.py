@@ -18,7 +18,7 @@ from market_research_lab.research import (
 )
 
 
-def test_validate_security_id_accepts_valid_ids() -> None:
+def test_validate_security_id_accepts_valid_ids():
     assert validate_security_id("AAPL") == "AAPL"
     assert validate_security_id("sec-aapl") == "sec-aapl"
     assert validate_security_id("BRK_B") == "BRK_B"
@@ -38,12 +38,12 @@ def test_validate_security_id_accepts_valid_ids() -> None:
         "sec.aapl",
     ],
 )
-def test_validate_security_id_rejects_unsafe_or_invalid_ids(invalid_id: str) -> None:
+def test_validate_security_id_rejects_unsafe_or_invalid_ids(invalid_id: str):
     with pytest.raises(InvalidSecurityIdError):
         validate_security_id(invalid_id)
 
 
-def test_resolve_thesis_path_guarantees_containment(tmp_path: Path) -> None:
+def test_resolve_thesis_path_guarantees_containment(tmp_path: Path):
     project_dir = tmp_path / "test-project"
     project_dir.mkdir(parents=True)
     resolved = resolve_thesis_path(project_dir, "sec-aapl")
@@ -51,14 +51,14 @@ def test_resolve_thesis_path_guarantees_containment(tmp_path: Path) -> None:
     assert resolved.resolve().is_relative_to((project_dir / "research").resolve())
 
 
-def test_resolve_thesis_path_rejects_directory_traversal(tmp_path: Path) -> None:
+def test_resolve_thesis_path_rejects_directory_traversal(tmp_path: Path):
     project_dir = tmp_path / "test-project"
     project_dir.mkdir(parents=True)
     with pytest.raises(InvalidSecurityIdError):
         resolve_thesis_path(project_dir, "../../escaped")
 
 
-def test_save_and_get_thesis_roundtrip(tmp_path: Path) -> None:
+def test_save_and_get_thesis_roundtrip(tmp_path: Path):
     project_dir = tmp_path / "test-project"
     project_dir.mkdir(parents=True)
 
@@ -109,13 +109,13 @@ Strong ecosystem lock-in and high-margin services growth.
     assert loaded.updated_at == thesis.updated_at
 
 
-def test_get_thesis_returns_none_when_file_absent(tmp_path: Path) -> None:
+def test_get_thesis_returns_none_when_file_absent(tmp_path: Path):
     project_dir = tmp_path / "test-project"
     project_dir.mkdir(parents=True)
     assert get_thesis(project_dir, "sec-msft") is None
 
 
-def test_list_theses_returns_all_saved_theses(tmp_path: Path) -> None:
+def test_list_theses_returns_all_saved_theses(tmp_path: Path):
     project_dir = tmp_path / "test-project"
     project_dir.mkdir(parents=True)
 
@@ -130,7 +130,7 @@ def test_list_theses_returns_all_saved_theses(tmp_path: Path) -> None:
     assert theses["sec-msft"].summary == "Microsoft summary."
 
 
-def test_parse_thesis_sections_handles_partial_sections() -> None:
+def test_parse_thesis_sections_handles_partial_sections():
     content = """# Minimal Thesis
 
 ## Summary
@@ -149,7 +149,7 @@ Only summary and risks provided.
     assert sections["dated_updates"] == []
 
 
-def test_default_thesis_template_contains_all_optional_headers() -> None:
+def test_default_thesis_template_contains_all_optional_headers():
     template = default_thesis_template("NVDA")
     assert "# Research Thesis: NVDA" in template
     assert "## Summary" in template
