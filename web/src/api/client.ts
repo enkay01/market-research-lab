@@ -9,8 +9,16 @@ export type CoverageResponse = components["schemas"]["CoverageResponse"];
 export type CorporateActionResponse = components["schemas"]["CorporateActionResponse"];
 export type DailyBarResponse = components["schemas"]["DailyBarResponse"];
 export type FundamentalFactResponse = components["schemas"]["FundamentalFactResponse"];
-export type ProviderDownloadRequest = components["schemas"]["ProviderDownloadRequest"];
+export type ProviderDownloadRequest =
+  | components["schemas"]["TiingoDownloadRequest"]
+  | components["schemas"]["SecEdgarDownloadRequest"];
 export type ProviderDownloadResponse = components["schemas"]["ProviderDownloadResponse"];
+
+export type Security = components["schemas"]["SecurityResponse"];
+export type SecuritySummary = components["schemas"]["SecuritySummaryResponse"];
+export type Watchlist = components["schemas"]["WatchlistResponse"];
+export type WatchlistItem = components["schemas"]["WatchlistItemResponse"];
+export type ResearchThesis = components["schemas"]["ResearchThesisResponse"];
 
 export class ApiError extends Error {
   constructor(
@@ -122,6 +130,73 @@ export const api = {
           path: { dataset_version_id: datasetVersionId },
           query: params,
         },
+      }),
+    ),
+  listSecurities: (params?: { query?: string; limit?: number }) =>
+    dataOrThrow(
+      client.GET("/api/securities", {
+        params: { query: params },
+      }),
+    ),
+  getSecurityDetails: (securityId: string, params?: { project_id?: string }) =>
+    dataOrThrow(
+      client.GET("/api/securities/{security_id}", {
+        params: {
+          path: { security_id: securityId },
+          query: params,
+        },
+      }),
+    ),
+  getWatchlist: (
+    projectId: string,
+    params?: {
+      query?: string;
+      exchange?: string;
+      thesis_status?: string;
+      sort_by?: string;
+      sort_order?: string;
+      offset?: number;
+      limit?: number;
+    },
+  ) =>
+    dataOrThrow(
+      client.GET("/api/projects/{project_id}/watchlist", {
+        params: {
+          path: { project_id: projectId },
+          query: params,
+        },
+      }),
+    ),
+  addToWatchlist: (projectId: string, request: { identifier: string }) =>
+    dataOrThrow(
+      client.POST("/api/projects/{project_id}/watchlist", {
+        params: { path: { project_id: projectId } },
+        body: request,
+      }),
+    ),
+  removeFromWatchlist: (projectId: string, securityId: string) =>
+    dataOrThrow(
+      client.DELETE("/api/projects/{project_id}/watchlist/{security_id}", {
+        params: {
+          path: { project_id: projectId, security_id: securityId },
+        },
+      }),
+    ),
+  getThesis: (projectId: string, securityId: string) =>
+    dataOrThrow(
+      client.GET("/api/projects/{project_id}/research/{security_id}", {
+        params: {
+          path: { project_id: projectId, security_id: securityId },
+        },
+      }),
+    ),
+  saveThesis: (projectId: string, securityId: string, request: { content: string }) =>
+    dataOrThrow(
+      client.PUT("/api/projects/{project_id}/research/{security_id}", {
+        params: {
+          path: { project_id: projectId, security_id: securityId },
+        },
+        body: request,
       }),
     ),
 };

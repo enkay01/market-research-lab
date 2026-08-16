@@ -468,3 +468,161 @@ def test_invalid_as_of_format_returns_422(tmp_path):
     res = client.get("/api/datasets/dummy-id/fundamentals", params={"as_of": "invalid-timestamp"})
     assert res.status_code == 422
     assert res.json()["code"] == "validation_error"
+
+
+def test_securities_watchlist_and_research_workflow(tmp_path) -> None:
+    client = TestClient(create_app(workspace_root=tmp_path))
+
+    # 1. Ingest market dataset to register securities in catalogue
+    csv_content = (
+        "symbol,name,exchange,currency,date,open,high,low,close,volume\n"
+        "AAPL,Apple Inc.,NASDAQ,USD,2023-01-01,150.0,155.0,149.0,154.0,1000000\n"
+        "AAPL,Apple Inc.,NASDAQ,USD,2023-01-02,154.0,158.0,153.0,157.0,1200000\n"
+        "MSFT,Microsoft Corp.,NASDAQ,USD,2023-01-01,240.0,245.0,239.0,242.0,500000\n"
+        "SPY,SPDR S&P 500 ETF,NYSE Arca,USD,2023-01-01,380.0,385.0,379.0,382.0,5000000\n"
+    )
+    import_res = client.post(
+        "/api/datasets",
+        data={"source": "test_catalogue"},
+        files={"file": ("test.csv", csv_content, "text/csv")},
+    )
+    assert import_res.status_code == 201
+
+    # 2. Search securities (RES-001)
+    all_sec = client.get("/api/securities").json()
+    assert len(all_sec) == 3
+    assert [s["symbol"] for s in all_sec] == ["AAPL", "MSFT", "SPY"]
+
+    filtered_sec = client.get("/api/securities", params={"query": "apple"}).json()
+    assert len(filtered_sec) == 1
+    assert filtered_sec[0]["symbol"] == "AAPL"
+
+    # Security details with covering dataset summary (RES-005)
+    sec_details = client.get(f"/api/securities/{filtered_sec[0]['security_id']}").json()
+    assert sec_details["security"]["symbol"] == "AAPL"
+    assert sec_details["daily_bars_count"] == 2
+    assert sec_details["daily_bars_start"] == "2023-01-01"
+    assert sec_details["daily_bars_end"] == "2023-01-02"
+    assert len(sec_details["daily_bars_dataset_versions"]) == 1
+
+    # 3. Create a project and manage watchlist (RES-002)
+    project = client.post("/api/projects", json={"name": "Alpha Fund"}).json()
+    project_id = project["id"]
+
+    empty_wl = client.get(f"/api/projects/{project_id}/watchlist").json()
+    assert empty_wl["total"] == 0
+    assert empty_wl["items"] == []
+
+    # Attempting to add an uncatalogued security returns 404 security_not_found
+    missing_res = client.post(
+        f"/api/projects/{project_id}/watchlist",
+        json={"identifier": "UNREGISTERED"},
+    )
+    assert missing_res.status_code == 404
+    assert missing_res.json()["code"] == "security_not_found"
+
+    # Add valid securities by symbol or ID
+    wl_after_aapl = client.post(
+        f"/api/projects/{project_id}/watchlist",
+        json={"identifier": "AAPL"},
+    )
+    assert wl_after_aapl.status_code == 201
+    assert wl_after_aapl.json()["total"] == 1
+
+    client.post(
+        f"/api/projects/{project_id}/watchlist",
+        json={"identifier": "MSFT"},
+    )
+    client.post(
+        f"/api/projects/{project_id}/watchlist",
+        json={"identifier": "SPY"},
+    )
+
+    # 4. Watchlist filtering and sorting (RES-006)
+    # Filter by query
+    query_res = client.get(
+        f"/api/projects/{project_id}/watchlist",
+        params={"query": "micro"},
+    ).json()
+    assert query_res["total"] == 1
+    assert query_res["items"][0]["security"]["symbol"] == "MSFT"
+
+    # Filter by exchange
+    nyse_res = client.get(
+        f"/api/projects/{project_id}/watchlist",
+        params={"exchange": "NYSE Arca"},
+    ).json()
+    assert nyse_res["total"] == 1
+    assert nyse_res["items"][0]["security"]["symbol"] == "SPY"
+
+    # Sorting
+    sort_desc = client.get(
+        f"/api/projects/{project_id}/watchlist",
+        params={"sort_by": "symbol", "sort_order": "desc"},
+    ).json()
+    assert [item["security"]["symbol"] for item in sort_desc["items"]] == ["SPY", "MSFT", "AAPL"]
+
+    # 5. Research Thesis operations (RES-003, RES-004)
+    # Attempting thesis operation on unwatched security returns 400 security_not_watched
+    unwatched_res = client.get(f"/api/projects/{project_id}/research/UNWATCHED_ID")
+    assert unwatched_res.status_code == 400
+    assert unwatched_res.json()["code"] == "security_not_watched"
+
+    # Watched security returns starter template initially
+    aapl_id = filtered_sec[0]["security_id"]
+    thesis_initial = client.get(f"/api/projects/{project_id}/research/{aapl_id}").json()
+    assert "Research Thesis: AAPL" in thesis_initial["content"]
+
+    # Save thesis
+    thesis_md = (
+        "# Research Thesis: AAPL\n\n"
+        "## Summary\nHigh ecosystem retention.\n\n"
+        "## Evidence\n- 2B+ installed active devices.\n\n"
+        "## Risks\n- Regulatory pressure.\n"
+    )
+    save_res = client.put(
+        f"/api/projects/{project_id}/research/{aapl_id}",
+        json={"content": thesis_md},
+    )
+    assert save_res.status_code == 200
+    assert save_res.json()["summary"] == "High ecosystem retention."
+    assert save_res.json()["evidence"] == ["2B+ installed active devices."]
+    assert save_res.json()["risks"] == ["Regulatory pressure."]
+
+    # Watchlist now shows has_thesis=True and thesis preview
+    wl_updated = client.get(f"/api/projects/{project_id}/watchlist").json()
+    aapl_item = next(i for i in wl_updated["items"] if i["security"]["symbol"] == "AAPL")
+    assert aapl_item["has_thesis"] is True
+    assert aapl_item["thesis_preview"] == "High ecosystem retention."
+
+    # Filter by thesis status (RES-006)
+    has_thesis_wl = client.get(
+        f"/api/projects/{project_id}/watchlist",
+        params={"thesis_status": "has_thesis"},
+    ).json()
+    assert has_thesis_wl["total"] == 1
+    assert has_thesis_wl["items"][0]["security"]["symbol"] == "AAPL"
+
+    no_thesis_wl = client.get(
+        f"/api/projects/{project_id}/watchlist",
+        params={"thesis_status": "no_thesis"},
+    ).json()
+    assert no_thesis_wl["total"] == 2
+
+    # 6. Removing security retains thesis file, re-adding restores research
+    del_res = client.delete(f"/api/projects/{project_id}/watchlist/{aapl_id}")
+    assert del_res.status_code == 200
+    assert del_res.json()["total"] == 2
+
+    # Re-add AAPL
+    client.post(f"/api/projects/{project_id}/watchlist", json={"identifier": "AAPL"})
+    restored_thesis = client.get(f"/api/projects/{project_id}/research/{aapl_id}").json()
+    assert restored_thesis["summary"] == "High ecosystem retention."
+
+    # 7. Persistence across restart
+    restarted_client = TestClient(create_app(workspace_root=tmp_path))
+    restarted_wl = restarted_client.get(f"/api/projects/{project_id}/watchlist").json()
+    assert restarted_wl["total"] == 3
+    restarted_thesis = restarted_client.get(f"/api/projects/{project_id}/research/{aapl_id}").json()
+    assert restarted_thesis["summary"] == "High ecosystem retention."
+
