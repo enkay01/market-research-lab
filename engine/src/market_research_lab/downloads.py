@@ -26,7 +26,7 @@ def download_provider(
     """Fetch validated provider data before creating any Dataset Version."""
     retrieved_at = datetime.now(UTC).isoformat()
 
-    if request.provider == "tiingo":
+    if isinstance(request, TiingoDownloadSpec):
         downloaded = download_tiingo(
             request,
             token=credentials.tiingo_api_token,
@@ -63,9 +63,9 @@ def download_provider(
         for version in versions:
             store.discard_dataset_version(version)
         raise ProviderDownloadError(
-            f"{request.provider} data could not be persisted as a Dataset Version: {error}"
+            f"{source} data could not be persisted as a Dataset Version: {error}"
         ) from error
 
     if not versions:
-        raise ProviderDownloadError(f"{request.provider} returned no records.")
+        raise ProviderDownloadError(f"{source} returned no records.")
     return versions

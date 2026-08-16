@@ -164,6 +164,8 @@ class SecuritySummaryResponse(BaseModel):
 
 class WatchlistItemResponse(BaseModel):
     security: SecurityResponse
+    security_id: str
+    symbol: str
     has_thesis: bool
     thesis_updated_at: str | None = None
     thesis_preview: str | None = None
@@ -679,6 +681,8 @@ def _build_watchlist_response(
                     exchange=sec.exchange,
                     currency=sec.currency,
                 ),
+                security_id=sec.security_id,
+                symbol=sec.symbol,
                 has_thesis=has_thesis,
                 thesis_updated_at=thesis_updated,
                 thesis_preview=thesis_preview,

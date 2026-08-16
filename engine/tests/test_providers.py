@@ -4,7 +4,6 @@ from datetime import date
 
 import pytest
 
-import market_research_lab.providers as provider_module
 from market_research_lab.json_types import JsonValue
 from market_research_lab.providers import (
     ProviderDownloadError,
@@ -62,9 +61,7 @@ def test_tiingo_payload_maps_prices_and_corporate_actions() -> None:
     assert "secret-token" not in calls[0][0]
 
 
-def test_tiingo_uses_default_fetcher_when_none_is_injected(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_tiingo_uses_injected_fetcher() -> None:
     calls: list[str] = []
 
     def fetch_json(url: str, _headers: dict[str, str]) -> JsonValue:
@@ -82,12 +79,11 @@ def test_tiingo_uses_default_fetcher_when_none_is_injected(
             }
         ]
 
-    monkeypatch.setattr(provider_module, "_fetch_json", fetch_json)
-
     result = download_tiingo(
         TiingoDownloadSpec(symbols=("AAPL",)),
         token="secret-token",
         retrieval_time="2023-07-01T00:00:00Z",
+        fetch_json=fetch_json,
     )
 
     assert len(calls) == 2

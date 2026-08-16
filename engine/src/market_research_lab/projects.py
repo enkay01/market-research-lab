@@ -11,9 +11,13 @@ import tempfile
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from .json_types import JsonValue
+
+if TYPE_CHECKING:
+    from .research import ResearchThesis
 
 
 class ProjectNotFoundError(Exception):
@@ -262,7 +266,7 @@ class ProjectStore:
         valid_id = validate_security_id(security_id)
         return valid_id in self.get_watchlist(project_id)
 
-    def get_thesis(self, project_id: str, security_id: str):
+    def get_thesis(self, project_id: str, security_id: str) -> ResearchThesis | None:
         from .research import SecurityNotWatchedError, get_thesis, validate_security_id
 
         valid_id = validate_security_id(security_id)
@@ -272,7 +276,7 @@ class ProjectStore:
             )
         return get_thesis(self._directory(project_id), valid_id)
 
-    def save_thesis(self, project_id: str, security_id: str, content: str):
+    def save_thesis(self, project_id: str, security_id: str, content: str) -> ResearchThesis:
         from .research import SecurityNotWatchedError, save_thesis, validate_security_id
 
         valid_id = validate_security_id(security_id)
@@ -282,7 +286,7 @@ class ProjectStore:
             )
         return save_thesis(self._directory(project_id), valid_id, content)
 
-    def list_theses(self, project_id: str):
+    def list_theses(self, project_id: str) -> dict[str, ResearchThesis]:
         from .research import list_theses
 
         self.get_project(project_id)

@@ -466,13 +466,12 @@ class MarketDataStore:
                     if self._is_missing(raw_val):
                         raise ValueError("value is missing")
 
-                    try:
-                        val: float | str = float(raw_val)
-                    except (ValueError, TypeError):
-                        val = str(raw_val).strip()
-                    else:
-                        if not math.isfinite(val):
+                    val: float | str = str(raw_val).strip()
+                    with contextlib.suppress(ValueError, TypeError):
+                        numeric_val = float(raw_val)
+                        if not math.isfinite(numeric_val):
                             raise ValueError("value must be finite")
+                        val = numeric_val
 
                     unit = self._optional_text(row, "unit", "units", default="USD") or "USD"
                     filed_at = self._optional_text(row, "filed_at")
@@ -1191,10 +1190,9 @@ class MarketDataStore:
         facts: list[FundamentalFact] = []
         for _, row in df.iterrows():
             raw_val = row["value"]
-            try:
-                val: float | str = float(raw_val)
-            except (ValueError, TypeError):
-                val = str(raw_val)
+            val: float | str = str(raw_val)
+            with contextlib.suppress(ValueError, TypeError):
+                val = float(raw_val)
 
             raw_incomplete = row.get("incomplete_fields")
             incomplete_fields = _parse_incomplete_fields(raw_incomplete)

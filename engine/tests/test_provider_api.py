@@ -10,7 +10,6 @@ from market_research_lab.api import create_app
 from market_research_lab.market_data import MarketDataStore
 from market_research_lab.providers import (
     ProviderCredentials,
-    ProviderDownload,
     ProviderDownloadError,
     TiingoDownloadSpec,
 )
@@ -128,9 +127,7 @@ def test_sec_download_without_acceptance_time_is_not_historically_eligible(tmp_p
     assert historical.status_code == 400
     assert historical.json()["code"] == "point_in_time_data_required"
 
-def test_download_removes_saved_versions_when_a_later_group_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_download_removes_saved_versions_when_a_later_group_fails() -> None:
     class StoredVersion:
         def __init__(self, version_id: str) -> None:
             self.id = version_id
@@ -152,15 +149,22 @@ def test_download_removes_saved_versions_when_a_later_group_fails(
         def upsert_securities(self, *_args, **_kwargs) -> None:
             raise AssertionError("Securities must not be saved after a failed Dataset Version.")
 
-    downloaded = ProviderDownload(
-        daily_bars=[{"security_id": "AAPL"}],
-        corporate_actions=[{"security_id": "AAPL"}],
-    )
-    monkeypatch.setattr(
-        downloads_module,
-        "download_tiingo",
-        lambda *_args, **_kwargs: downloaded,
-    )
+    def fetch_json(url: str, _headers: dict[str, str]):
+        if "/prices" not in url:
+            return {"ticker": "AAPL", "name": "Apple Inc.", "exchangeCode": "NASDAQ"}
+        return [
+            {
+                "date": "2026-08-01T00:00:00.000Z",
+                "open": 100,
+                "high": 105,
+                "low": 99,
+                "close": 104,
+                "volume": 123,
+                "splitFactor": 2.0,
+                "divCash": 0.5,
+            }
+        ]
+
     store = Store()
 
     with pytest.raises(ProviderDownloadError, match="data could not be persisted"):
@@ -168,6 +172,7 @@ def test_download_removes_saved_versions_when_a_later_group_fails(
             store,
             TiingoDownloadSpec(symbols=("AAPL",)),
             credentials=ProviderCredentials(tiingo_api_token="token"),
+            fetch_json=fetch_json,
         )
 
     assert store.ingest_calls == 2

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Callable, Literal, Mapping
+from typing import Callable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -147,7 +147,6 @@ class TiingoDownloadSpec:
     symbols: tuple[str, ...]
     start_date: date | None = None
     end_date: date | None = None
-    provider: Literal["tiingo"] = field(init=False, default="tiingo")
 
 
 @dataclass(frozen=True)
@@ -155,7 +154,6 @@ class SecEdgarDownloadSpec:
     ciks: tuple[str, ...]
     start_date: date | None = None
     end_date: date | None = None
-    provider: Literal["sec_edgar"] = field(init=False, default="sec_edgar")
 
 
 @dataclass(frozen=True)

@@ -986,6 +986,10 @@ export interface components {
         /** WatchlistItemResponse */
         WatchlistItemResponse: {
             security: components["schemas"]["SecurityResponse"];
+            /** Security Id */
+            security_id: string;
+            /** Symbol */
+            symbol: string;
             /** Has Thesis */
             has_thesis: boolean;
             /** Thesis Updated At */
