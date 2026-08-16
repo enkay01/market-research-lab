@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from statistics import median
+from typing import Callable
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,8 @@ class ComparableCompanyInput:
     dataset_version_ids: tuple[str, ...]
     provenance: dict[str, str]
     units: dict[str, str]
+    input_dataset_versions: dict[str, tuple[str, ...]]
+    input_warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -64,6 +67,7 @@ def _positive_multiple(numerator: float | None, denominator: float | None) -> fl
 def _company_result(
     company: ComparableCompanyInput, warnings: list[str]
 ) -> ComparableCompanyResult:
+    warnings.extend(company.input_warnings)
     enterprise_value: float | None = None
     if company.market_cap is None:
         warnings.append(f"{company.symbol}: market capitalization is unavailable.")
@@ -71,6 +75,8 @@ def _company_result(
         warnings.append(f"{company.symbol}: enterprise value requires total debt and cash.")
     else:
         enterprise_value = company.market_cap + company.total_debt - company.cash
+        if enterprise_value <= 0:
+            warnings.append(f"{company.symbol}: enterprise value is not positive.")
 
     price_to_earnings = _positive_multiple(company.market_cap, company.net_income)
     if company.market_cap is None:
@@ -166,6 +172,7 @@ def evaluate_comparables(
             dataset_version_ids=(),
             provenance={},
             units={},
+            input_dataset_versions={},
         ),
     )
     dataset_version_ids = sorted(
@@ -183,3 +190,23 @@ def evaluate_comparables(
         dataset_version_ids=dataset_version_ids,
         calculated_at=calculated_at,
     )
+
+
+ValuationMethod = Callable[..., ComparableValuationResult]
+VALUATION_METHODS: dict[str, ValuationMethod] = {
+    "trading_comparables": evaluate_comparables,
+}
+
+
+def evaluate(
+    method: str,
+    target: ComparableCompanyInput,
+    peers: list[ComparableCompanyInput],
+    *,
+    calculated_at: str,
+) -> ComparableValuationResult:
+    """Evaluate a named Valuation method through the domain registry."""
+    evaluator = VALUATION_METHODS.get(method)
+    if evaluator is None:
+        raise ValueError(f"Unknown Valuation method '{method}'.")
+    return evaluator(target, peers, calculated_at=calculated_at)

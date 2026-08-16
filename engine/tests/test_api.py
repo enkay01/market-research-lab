@@ -680,6 +680,29 @@ def test_comparable_valuation_uses_local_inputs_and_keeps_provenance(tmp_path) -
         fundamental_import.json()["dataset_version_id"]
     )
     assert result["target"]["inputs"]["units"]["revenue"] == "USD"
+    project = client.post("/api/projects", json={"name": "Comparable research"}).json()
+    saved = client.post(
+        f"/api/projects/{project['id']}/valuations/comparables",
+        json={"target_security_id": "AAPL", "peer_security_ids": ["MSFT"]},
+    )
+    assert saved.status_code == 201
+    saved_result = saved.json()
+    assert saved_result["method_revision"] == "trading_comparables:v1"
+    assert saved_result["run_id"]
+    manifest = (
+        tmp_path
+        / "projects"
+        / project["id"]
+        / "runs"
+        / saved_result["run_id"]
+        / "manifest.json"
+    )
+    assert manifest.exists()
+    reloaded = client.get(f"/api/projects/{project['id']}/valuations")
+    assert reloaded.status_code == 200
+    assert reloaded.json()[0]["result"]["target"]["symbol"] == "AAPL"
+    assert reloaded.json()[0]["result"]["method_revision"] == "trading_comparables:v1"
+    assert reloaded.json()[0]["result"]["run_id"] == saved_result["run_id"]
     assert result["dataset_version_ids"] == sorted(
         [price_import.json()["dataset_version_id"], fundamental_import.json()["dataset_version_id"]]
     )

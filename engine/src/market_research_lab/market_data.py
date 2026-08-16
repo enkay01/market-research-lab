@@ -696,12 +696,24 @@ class MarketDataStore:
                     sec_id = self._security_id(raw_row)
                 except Exception:
                     continue
-                symbol = self._optional_text(raw_row, "symbol") or sec_id
-                name = self._optional_text(raw_row, "name", "company_name") or symbol
-                exchange = self._optional_text(raw_row, "exchange")
-                currency = (
-                    self._optional_text(raw_row, "currency", "units", "unit", default="USD")
-                    or "USD"
+                existing = self.get_security(sec_id)
+                symbol = (
+                    existing.symbol
+                    if existing
+                    else (self._optional_text(raw_row, "symbol") or sec_id)
+                )
+                name = (
+                    existing.name
+                    if existing
+                    else (self._optional_text(raw_row, "name", "company_name") or symbol)
+                )
+                exchange = (
+                    existing.exchange
+                    if existing
+                    else self._optional_text(raw_row, "exchange")
+                )
+                currency = existing.currency if existing else (
+                    self._optional_text(raw_row, "currency", default="USD") or "USD"
                 )
                 if sec_id not in distinct_securities:
                     distinct_securities[sec_id] = Security(

@@ -151,6 +151,70 @@ class ProjectStore:
         (run_directory / "logs.txt").write_text("", encoding="utf-8")
         return run_id
 
+    def create_valuation_result(
+        self,
+        project_id: str,
+        *,
+        method_revision: str,
+        dataset_version_ids: list[str],
+        parameters: dict[str, JsonValue],
+        result: dict[str, JsonValue],
+    ) -> str:
+        """Persist one completed Valuation as a reproducible Run artifact."""
+        run_id = self.create_run(project_id)
+        run_directory = self._directory(project_id) / "runs" / run_id
+        self._write_json(
+            run_directory / "manifest.json",
+            {
+                "id": run_id,
+                "kind": "valuation",
+                "definition_revisions": [method_revision],
+                "dataset_versions": dataset_version_ids,
+                "parameters": parameters,
+                "software_revision": "uncommitted",
+                "environment": {"python": os.sys.version},
+            },
+        )
+        persisted_result = dict(result)
+        persisted_result["method_revision"] = method_revision
+        persisted_result["run_id"] = run_id
+        self._write_json(run_directory / "artifacts" / "valuation.json", persisted_result)
+        self._write_json(run_directory / "status.json", {"id": run_id, "status": "completed"})
+        return run_id
+
+    def list_valuation_results(self, project_id: str) -> list[dict[str, JsonValue]]:
+        """Read completed Valuation Run artifacts for Project reloads."""
+        self.get_project(project_id)
+        runs_dir = self._directory(project_id) / "runs"
+        if not runs_dir.is_dir():
+            return []
+        results: list[dict[str, JsonValue]] = []
+        for run_dir in sorted(runs_dir.iterdir(), key=lambda path: path.name):
+            manifest_path = run_dir / "manifest.json"
+            status_path = run_dir / "status.json"
+            artifact_path = run_dir / "artifacts" / "valuation.json"
+            if not (manifest_path.is_file() and status_path.is_file() and artifact_path.is_file()):
+                continue
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                status_data = json.loads(status_path.read_text(encoding="utf-8"))
+                result = json.loads(artifact_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if manifest.get("kind") != "valuation" or status_data.get("status") != "completed":
+                continue
+            revisions = manifest.get("definition_revisions", [])
+            method_revision = str(revisions[0]) if revisions else ""
+            results.append(
+                {
+                    "run_id": run_dir.name,
+                    "method_revision": method_revision,
+                    "calculated_at": result.get("calculated_at", ""),
+                    "result": result,
+                }
+            )
+        return results
+
     def get_watchlist(self, project_id: str) -> list[str]:
         self.get_project(project_id)
         watchlist_path = self._directory(project_id) / "watchlist.json"

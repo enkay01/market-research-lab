@@ -20,6 +20,7 @@ export type Watchlist = components["schemas"]["WatchlistResponse"];
 export type WatchlistItem = components["schemas"]["WatchlistItemResponse"];
 export type ResearchThesis = components["schemas"]["ResearchThesisResponse"];
 export type ComparableValuation = components["schemas"]["ComparableValuationResponse"];
+export type SavedValuation = components["schemas"]["SavedValuationResponse"];
 
 export class ApiError extends Error {
   constructor(
@@ -146,6 +147,22 @@ export const api = {
     dataOrThrow(
       client.POST("/api/valuations/comparables", {
         body: request,
+      }),
+    ),
+  saveComparableValuation: (projectId: string, request: {
+    target_security_id: string;
+    peer_security_ids: string[];
+  }) =>
+    dataOrThrow(
+      client.POST("/api/projects/{project_id}/valuations/comparables", {
+        params: { path: { project_id: projectId } },
+        body: request,
+      }),
+    ),
+  listValuations: (projectId: string) =>
+    dataOrThrow(
+      client.GET("/api/projects/{project_id}/valuations", {
+        params: { path: { project_id: projectId } },
       }),
     ),
   getSecurityDetails: (securityId: string, params?: { project_id?: string }) =>

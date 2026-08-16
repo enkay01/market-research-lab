@@ -21,6 +21,7 @@ def test_evaluate_comparables_calculates_supported_multiples_and_peer_medians() 
         dataset_version_ids=("bars-aapl", "fundamentals-aapl"),
         provenance={"market_cap": "bars-aapl"},
         units={"market_cap": "USD"},
+        input_dataset_versions={"market_cap": ("bars-aapl",)},
     )
     peer = ComparableCompanyInput(
         security_id="MSFT",
@@ -37,6 +38,7 @@ def test_evaluate_comparables_calculates_supported_multiples_and_peer_medians() 
         dataset_version_ids=("bars-msft", "fundamentals-msft"),
         provenance={"market_cap": "bars-msft"},
         units={"market_cap": "USD"},
+        input_dataset_versions={"market_cap": ("bars-msft",)},
     )
 
     result = evaluate_comparables(target, [peer], calculated_at="2026-08-16T12:00:00Z")
@@ -73,6 +75,7 @@ def test_evaluate_comparables_warns_for_missing_or_incompatible_inputs() -> None
         dataset_version_ids=("bars-aapl",),
         provenance={},
         units={},
+        input_dataset_versions={},
     )
     peer = ComparableCompanyInput(
         security_id="SAP",
@@ -89,6 +92,7 @@ def test_evaluate_comparables_warns_for_missing_or_incompatible_inputs() -> None
         dataset_version_ids=("bars-sap",),
         provenance={},
         units={},
+        input_dataset_versions={},
     )
 
     result = evaluate_comparables(target, [peer], calculated_at="2026-08-16T12:00:00Z")
@@ -100,3 +104,31 @@ def test_evaluate_comparables_warns_for_missing_or_incompatible_inputs() -> None
     assert result.peers == []
     assert "AAPL: enterprise value requires total debt and cash." in result.warnings
     assert "SAP: currency EUR is not compatible with target currency USD." in result.warnings
+
+
+def test_evaluate_comparables_warns_for_non_positive_ev_and_keeps_negative_fcf_yield() -> None:
+    target = ComparableCompanyInput(
+        security_id="NETCASH",
+        symbol="CASH",
+        name="Cash Rich Co.",
+        currency="USD",
+        market_cap=100.0,
+        total_debt=10.0,
+        cash=200.0,
+        revenue=50.0,
+        ebitda=10.0,
+        net_income=5.0,
+        free_cash_flow=-2.0,
+        dataset_version_ids=("dataset",),
+        provenance={},
+        units={"market_cap": "USD", "total_debt": "USD", "cash": "USD"},
+        input_dataset_versions={},
+    )
+
+    result = evaluate_comparables(target, [], calculated_at="2026-08-16T12:00:00Z")
+
+    assert result.target.enterprise_value == -90.0
+    assert result.target.ev_to_revenue is None
+    assert result.target.ev_to_ebitda is None
+    assert result.target.free_cash_flow_yield == -0.02
+    assert "CASH: enterprise value is not positive." in result.warnings

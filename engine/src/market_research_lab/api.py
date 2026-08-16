@@ -44,7 +44,7 @@ from .research import (
     SecurityNotWatchedError,
     default_thesis_template,
 )
-from .valuation import ComparableCompanyInput, ComparableValuationResult, evaluate_comparables
+from .valuation import ComparableCompanyInput, ComparableValuationResult, evaluate
 
 
 class SecurityNotFoundError(Exception):
@@ -261,6 +261,7 @@ class ComparableCompanyInputResponse(BaseModel):
     dataset_version_ids: list[str]
     provenance: dict[str, str]
     units: dict[str, str]
+    input_dataset_versions: dict[str, list[str]]
 
 
 class ComparableCompanyValuationResponse(BaseModel):
@@ -284,6 +285,15 @@ class ComparableValuationResponse(BaseModel):
     warnings: list[str]
     dataset_version_ids: list[str]
     calculated_at: str
+    method_revision: str | None = None
+    run_id: str | None = None
+
+
+class SavedValuationResponse(BaseModel):
+    run_id: str
+    method_revision: str
+    calculated_at: str
+    result: ComparableValuationResponse
 
 
 class CoverageResponse(BaseModel):
@@ -364,7 +374,7 @@ def _comparable_company_input(
     if summary is None:
         raise SecurityNotFoundError(security_id)
 
-    latest_facts: dict[str, tuple[float, str, str, str]] = {}
+    latest_facts: dict[str, tuple[float, tuple[int, str], str, str]] = {}
     aliases = {
         alias.lower(): field_name
         for field_name, field_aliases in _FUNDAMENTAL_FIELDS.items()
@@ -382,7 +392,7 @@ def _comparable_company_input(
                 value = float(fact.value)
             except (TypeError, ValueError):
                 continue
-            timestamp = fact.available_at or fact.filed_at or fact.fiscal_period
+            timestamp = _fact_order(fact.available_at, fact.filed_at, fact.fiscal_period)
             current = latest_facts.get(field_name)
             if current is None or timestamp >= current[1]:
                 latest_facts[field_name] = (value, timestamp, fact.unit, dataset_version_id)
@@ -390,7 +400,32 @@ def _comparable_company_input(
     provenance = {
         field_name: fact[3] for field_name, fact in latest_facts.items()
     }
+    input_warnings: list[str] = []
+    financial_fields = (
+        "total_debt",
+        "cash",
+        "revenue",
+        "ebitda",
+        "net_income",
+        "free_cash_flow",
+    )
+    values = {
+        field_name: _fact_value(latest_facts, field_name) for field_name in financial_fields
+    }
+    for field_name in financial_fields:
+        fact = latest_facts.get(field_name)
+        if fact is not None and fact[2].upper() != summary.security.currency.upper():
+            input_warnings.append(
+                f"{summary.security.symbol}: {field_name} unit {fact[2]} is not "
+                f"compatible with currency {summary.security.currency}."
+            )
+            values[field_name] = None
     shares = latest_facts.get("shares_outstanding")
+    if shares is not None and shares[2].lower() not in {"share", "shares", "count"}:
+        input_warnings.append(
+            f"{summary.security.symbol}: shares_outstanding unit {shares[2]} is not valid."
+        )
+        shares = None
     market_cap = (
         summary.latest_close * shares[0]
         if summary.latest_close is not None and shares
@@ -401,26 +436,36 @@ def _comparable_company_input(
     units = {field_name: fact[2] for field_name, fact in latest_facts.items()}
     if market_cap is not None:
         units["market_cap"] = summary.security.currency
+    input_dataset_versions = {
+        field_name: (fact[3],) for field_name, fact in latest_facts.items()
+    }
+    if market_cap is not None and shares is not None:
+        bar_version = summary.daily_bars_dataset_versions[-1]
+        input_dataset_versions["market_cap"] = tuple(
+            dict.fromkeys((bar_version, shares[3]))
+        )
     return ComparableCompanyInput(
         security_id=summary.security.security_id,
         symbol=summary.security.symbol,
         name=summary.security.name,
         currency=summary.security.currency,
         market_cap=market_cap,
-        total_debt=_fact_value(latest_facts, "total_debt"),
-        cash=_fact_value(latest_facts, "cash"),
-        revenue=_fact_value(latest_facts, "revenue"),
-        ebitda=_fact_value(latest_facts, "ebitda"),
-        net_income=_fact_value(latest_facts, "net_income"),
-        free_cash_flow=_fact_value(latest_facts, "free_cash_flow"),
+        total_debt=values["total_debt"],
+        cash=values["cash"],
+        revenue=values["revenue"],
+        ebitda=values["ebitda"],
+        net_income=values["net_income"],
+        free_cash_flow=values["free_cash_flow"],
         dataset_version_ids=tuple(summary.covering_dataset_versions),
         provenance=provenance,
         units=units,
+        input_dataset_versions=input_dataset_versions,
+        input_warnings=tuple(input_warnings),
     )
 
 
 def _fact_value(
-    facts: dict[str, tuple[float, str, str, str]], field_name: str
+    facts: dict[str, tuple[float, tuple[int, str], str, str]], field_name: str
 ) -> float | None:
     fact = facts.get(field_name)
     return fact[0] if fact else None
@@ -428,8 +473,47 @@ def _fact_value(
 
 def _comparable_valuation_response(
     result: ComparableValuationResult,
+    *,
+    method_revision: str | None = None,
+    run_id: str | None = None,
 ) -> ComparableValuationResponse:
-    return ComparableValuationResponse.model_validate(result, from_attributes=True)
+    response = ComparableValuationResponse.model_validate(result, from_attributes=True)
+    return response.model_copy(
+        update={"method_revision": method_revision, "run_id": run_id}
+    )
+
+
+def _fact_order(
+    available_at: str | None, filed_at: str | None, fiscal_period: str
+) -> tuple[int, str]:
+    for timestamp in (available_at, filed_at):
+        if timestamp:
+            try:
+                return (1, datetime.fromisoformat(timestamp.replace("Z", "+00:00")).isoformat())
+            except ValueError:
+                return (1, timestamp)
+    return (0, fiscal_period)
+
+
+def _calculate_comparable_result(
+    market_store: MarketDataStore, request: ComparableValuationRequest
+) -> ComparableValuationResult:
+    if request.target_security_id in request.peer_security_ids:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="The target Security cannot also be a peer.",
+        )
+    target = _comparable_company_input(market_store, request.target_security_id)
+    peers = [
+        _comparable_company_input(market_store, security_id)
+        for security_id in request.peer_security_ids
+    ]
+    return evaluate(
+        "trading_comparables",
+        target,
+        peers,
+        calculated_at=datetime.now(UTC).isoformat(),
+    )
 
 
 def _build_watchlist_response(
@@ -717,22 +801,49 @@ def create_app(
     def calculate_comparable_valuation(
         request: ComparableValuationRequest,
     ) -> ComparableValuationResponse:
-        if request.target_security_id in request.peer_security_ids:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="The target Security cannot also be a peer.",
-            )
-        target = _comparable_company_input(market_store, request.target_security_id)
-        peers = [
-            _comparable_company_input(market_store, security_id)
-            for security_id in request.peer_security_ids
-        ]
-        result = evaluate_comparables(
-            target,
-            peers,
-            calculated_at=datetime.now(UTC).isoformat(),
+        return _comparable_valuation_response(
+            _calculate_comparable_result(market_store, request)
         )
-        return _comparable_valuation_response(result)
+
+    @app.post(
+        "/api/projects/{project_id}/valuations/comparables",
+        response_model=ComparableValuationResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["valuations"],
+    )
+    def save_comparable_valuation(
+        project_id: UUID, request: ComparableValuationRequest
+    ) -> ComparableValuationResponse:
+        result = _calculate_comparable_result(market_store, request)
+        definition = {
+            "method": "trading_comparables",
+            "target_security_id": request.target_security_id,
+            "peer_security_ids": request.peer_security_ids,
+        }
+        name = f"Comparable valuation - {result.target.symbol}"
+        revision = store.save_revision(
+            str(project_id), kind="valuation", name=name, definition=definition
+        )
+        method_revision = f"trading_comparables:{revision}"
+        run_id = store.create_valuation_result(
+            str(project_id),
+            method_revision=method_revision,
+            dataset_version_ids=result.dataset_version_ids,
+            parameters=definition,
+            result=_comparable_valuation_response(result).model_dump(),
+        )
+        return _comparable_valuation_response(
+            result, method_revision=method_revision, run_id=run_id
+        )
+
+    @app.get(
+        "/api/projects/{project_id}/valuations",
+        response_model=list[SavedValuationResponse],
+        tags=["valuations"],
+    )
+    def list_saved_valuations(project_id: UUID) -> list[SavedValuationResponse]:
+        results = store.list_valuation_results(str(project_id))
+        return [SavedValuationResponse.model_validate(item) for item in results]
 
     @app.get(
         "/api/securities/{security_id}",

@@ -144,6 +144,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/valuations/comparables": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Save Comparable Valuation */
+        post: operations["save_comparable_valuation_api_projects__project_id__valuations_comparables_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/valuations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Saved Valuations */
+        get: operations["list_saved_valuations_api_projects__project_id__valuations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/securities/{security_id}": {
         parameters: {
             query?: never;
@@ -379,6 +413,10 @@ export interface components {
             units: {
                 [key: string]: string;
             };
+            /** Input Dataset Versions */
+            input_dataset_versions: {
+                [key: string]: string[];
+            };
         };
         /** ComparableCompanyValuationResponse */
         ComparableCompanyValuationResponse: {
@@ -423,6 +461,10 @@ export interface components {
             dataset_version_ids: string[];
             /** Calculated At */
             calculated_at: string;
+            /** Method Revision */
+            method_revision?: string | null;
+            /** Run Id */
+            run_id?: string | null;
         };
         /** CorporateActionResponse */
         CorporateActionResponse: {
@@ -677,6 +719,16 @@ export interface components {
             id: string;
             /** Status */
             status: string;
+        };
+        /** SavedValuationResponse */
+        SavedValuationResponse: {
+            /** Run Id */
+            run_id: string;
+            /** Method Revision */
+            method_revision: string;
+            /** Calculated At */
+            calculated_at: string;
+            result: components["schemas"]["ComparableValuationResponse"];
         };
         /** SecEdgarDownloadRequest */
         SecEdgarDownloadRequest: {
@@ -1178,6 +1230,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ComparableValuationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_comparable_valuation_api_projects__project_id__valuations_comparables_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ComparableValuationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComparableValuationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_saved_valuations_api_projects__project_id__valuations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedValuationResponse"][];
                 };
             };
             /** @description Validation Error */
