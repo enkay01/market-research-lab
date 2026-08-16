@@ -763,9 +763,16 @@ def _calculate_comparable_result(
     )
 
 
+class StrategyRequestContext(NamedTuple):
+    """Eligible Market View and decision time resolved for a Strategy request."""
+
+    market_view: MarketView
+    decision_time: str
+
+
 def _strategy_market_view(
     market_store: MarketDataStore, request: StrategyEvaluateRequest
-) -> tuple[MarketView, str]:
+) -> StrategyRequestContext:
     """Build the eligible Market View and decision time for a Strategy request."""
     bars = market_store.history(
         request.dataset_version_id,
@@ -803,7 +810,7 @@ def _strategy_market_view(
         session_dates=tuple(session_dates),
         prices=tuple(prices),
     )
-    return view, decision_time
+    return StrategyRequestContext(market_view=view, decision_time=decision_time)
 
 
 def _build_watchlist_response(
@@ -1556,12 +1563,12 @@ def create_app(
     def evaluate_strategy_endpoint(
         request: StrategyEvaluateRequest,
     ) -> StrategyEvaluationResponse:
-        view, decision_time = _strategy_market_view(market_store, request)
+        context = _strategy_market_view(market_store, request)
         evaluation = evaluate_strategy(
             name=request.name,
-            market_view=view,
+            market_view=context.market_view,
             parameters=request.parameters,
-            decision_time=decision_time,
+            decision_time=context.decision_time,
         )
         return _strategy_evaluation_response(
             evaluation,
@@ -1578,12 +1585,12 @@ def create_app(
     def save_strategy_evaluation(
         project_id: UUID, request: StrategyEvaluateRequest
     ) -> SavedStrategyEvaluationResponse:
-        view, decision_time = _strategy_market_view(market_store, request)
+        context = _strategy_market_view(market_store, request)
         evaluation = evaluate_strategy(
             name=request.name,
-            market_view=view,
+            market_view=context.market_view,
             parameters=request.parameters,
-            decision_time=decision_time,
+            decision_time=context.decision_time,
         )
         name = f"{evaluation.strategy_name} - {request.symbol}"
         revision = store.save_revision(

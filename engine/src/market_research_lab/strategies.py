@@ -64,6 +64,14 @@ class StrategyTarget:
 
 
 @dataclass(frozen=True)
+class LongFlatDecision:
+    """Long or flat target weight with the indicator state that produced it."""
+
+    weight: float
+    indicator_state: str | None
+
+
+@dataclass(frozen=True)
 class StrategyEvaluation:
     """Time-stamped desired weights and rationale produced by a Strategy."""
 
@@ -88,15 +96,15 @@ _BULLISH_STATES = {"bullish_cross", "bullish_above"}
 _BEARISH_STATES = {"bearish_cross", "bearish_below"}
 
 
-def _long_flat_weight(indicator_state: str | None, is_warmup: bool) -> tuple[float, str | None]:
-    """Map the latest eligible moving-average state to a long or flat weight."""
+def _long_flat_decision(
+    indicator_state: str | None, *, is_warmup: bool
+) -> LongFlatDecision:
+    """Map the latest eligible moving-average state to a long or flat decision."""
     if is_warmup or indicator_state in (None, "warmup", "neutral"):
-        return 0.0, indicator_state or "warmup"
+        return LongFlatDecision(weight=0.0, indicator_state=indicator_state or "warmup")
     if indicator_state in _BULLISH_STATES:
-        return 1.0, indicator_state
-    if indicator_state in _BEARISH_STATES:
-        return 0.0, indicator_state
-    return 0.0, indicator_state
+        return LongFlatDecision(weight=1.0, indicator_state=indicator_state)
+    return LongFlatDecision(weight=0.0, indicator_state=indicator_state)
 
 
 def _rationale(weight: float, state: str | None) -> str:
@@ -151,7 +159,7 @@ def evaluate_long_flat_moving_average(
 
     state_value = latest.values.get("state")
     indicator_state = state_value if isinstance(state_value, str) else None
-    weight, state = _long_flat_weight(indicator_state, latest.is_warmup)
+    decision = _long_flat_decision(indicator_state, is_warmup=latest.is_warmup)
 
     return StrategyEvaluation(
         strategy_name="long_flat_moving_average",
@@ -164,10 +172,10 @@ def evaluate_long_flat_moving_average(
         targets=(
             StrategyTarget(
                 security_id=market_view.security_id,
-                weight=weight,
+                weight=decision.weight,
                 decision_time=decision_time,
-                rationale=_rationale(weight, state),
-                indicator_state=state,
+                rationale=_rationale(decision.weight, decision.indicator_state),
+                indicator_state=decision.indicator_state,
             ),
         ),
         indicator_name="moving_average_crossover",
