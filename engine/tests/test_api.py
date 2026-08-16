@@ -815,3 +815,144 @@ def test_indicator_endpoints_and_definition_lifecycle(tmp_path: pytest.TempPathF
     assert save_def_res.status_code == 201
     assert save_def_res.json()["revision"] == "v1"
 
+
+
+def test_strategy_endpoints_and_definition_lifecycle(tmp_path) -> None:
+    client = TestClient(create_app(workspace_root=tmp_path))
+
+    # 1. List strategies
+    res = client.get("/api/strategies")
+    assert res.status_code == 200
+    strategies = res.json()
+    names = [s["name"] for s in strategies]
+    assert "long_flat_moving_average" in names
+
+    # 2. Get single strategy metadata
+    meta_res = client.get("/api/strategies/long_flat_moving_average")
+    assert meta_res.status_code == 200
+    meta = meta_res.json()
+    assert meta["name"] == "long_flat_moving_average"
+    assert {p["name"] for p in meta["parameters"]} == {"fast_period", "slow_period", "ma_type"}
+
+    # 3. Ingest eligible market data
+    csv_content = (
+        "symbol,name,exchange,session_date,open,high,low,close,volume,available_at\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-02,100,105,99,102,1000,2024-01-02T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-03,102,108,101,106,1200,2024-01-03T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-04,106,110,105,108,1100,2024-01-04T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-05,108,112,107,110,1300,2024-01-05T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-08,110,114,109,112,1500,2024-01-08T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-09,112,116,111,114,1400,2024-01-09T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-10,114,118,113,116,1600,2024-01-10T20:00:00Z\n"
+    )
+    import_res = client.post(
+        "/api/datasets",
+        data={"source": "test_provider"},
+        files={"file": ("bars.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
+    )
+    assert import_res.status_code == 201
+    dataset_version_id = import_res.json()["dataset_version_id"]
+
+    # 4. Evaluate strategy emits desired weights and rationale, not orders
+    eval_res = client.post(
+        "/api/strategies/evaluate",
+        json={
+            "name": "long_flat_moving_average",
+            "dataset_version_id": dataset_version_id,
+            "symbol": "AAPL",
+            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+        },
+    )
+    assert eval_res.status_code == 200
+    result = eval_res.json()
+    assert result["strategy_name"] == "long_flat_moving_average"
+    assert result["symbol"] == "AAPL"
+    assert result["indicator_name"] == "moving_average_crossover"
+    assert len(result["targets"]) == 1
+    target = result["targets"][0]
+    assert target["security_id"] == "AAPL"
+    assert target["weight"] == 1.0
+    assert "long" in target["rationale"]
+    assert target["indicator_state"] == "bullish_above"
+
+    # 5. Save as immutable Definition Revision (CORE-005)
+    proj_res = client.post("/api/projects", json={"name": "Strategy Research"})
+    assert proj_res.status_code == 201
+    proj_id = proj_res.json()["id"]
+
+    save_res = client.post(
+        f"/api/projects/{proj_id}/strategies/evaluate",
+        json={
+            "name": "long_flat_moving_average",
+            "dataset_version_id": dataset_version_id,
+            "symbol": "AAPL",
+            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+        },
+    )
+    assert save_res.status_code == 201
+    saved = save_res.json()
+    assert saved["revision"] == "v1"
+    assert saved["strategy_revision"] == "long_flat_moving_average:v1"
+    assert saved["targets"][0]["weight"] == 1.0
+    strategy_defs = tmp_path / "projects" / proj_id / "definitions" / "strategy"
+    assert strategy_defs.is_dir()
+    revision_files = [
+        entry / "v1" / "definition.json"
+        for entry in strategy_defs.iterdir()
+        if entry.is_dir()
+    ]
+    assert any(path.is_file() for path in revision_files)
+
+
+def test_strategy_only_uses_observations_eligible_at_decision_time(tmp_path) -> None:
+    client = TestClient(create_app(workspace_root=tmp_path))
+
+    # A downtrend through 2024-01-06, then a sharp rally on 2024-01-09.
+    csv_content = (
+        "symbol,name,exchange,session_date,open,high,low,close,volume,available_at\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-02,100,100,100,100,1000,2024-01-02T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-03,90,90,90,90,1000,2024-01-03T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-04,80,80,80,80,1000,2024-01-04T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-05,70,70,70,70,1000,2024-01-05T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-06,60,60,60,60,1000,2024-01-06T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-09,200,200,200,200,1000,2024-01-09T20:00:00Z\n"
+    )
+    import_res = client.post(
+        "/api/datasets",
+        data={"source": "pit_source"},
+        files={"file": ("pit.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
+    )
+    assert import_res.status_code == 201
+    dataset_version_id = import_res.json()["dataset_version_id"]
+
+    params = {"fast_period": 2, "slow_period": 4, "ma_type": "sma"}
+
+    # As of the downtrend the Strategy must stay flat...
+    early = client.post(
+        "/api/strategies/evaluate",
+        json={
+            "name": "long_flat_moving_average",
+            "dataset_version_id": dataset_version_id,
+            "symbol": "AAPL",
+            "parameters": params,
+            "as_of": "2024-01-06T21:00:00Z",
+        },
+    )
+    assert early.status_code == 200
+    assert early.json()["targets"][0]["weight"] == 0.0
+    assert early.json()["latest_session_date"] == "2024-01-06"
+
+    # ...while the same Strategy goes long once the rally is eligible.
+    late = client.post(
+        "/api/strategies/evaluate",
+        json={
+            "name": "long_flat_moving_average",
+            "dataset_version_id": dataset_version_id,
+            "symbol": "AAPL",
+            "parameters": params,
+            "as_of": "2024-01-09T21:00:00Z",
+        },
+    )
+    assert late.status_code == 200
+    assert late.json()["targets"][0]["weight"] == 1.0
+    assert late.json()["latest_session_date"] == "2024-01-09"
