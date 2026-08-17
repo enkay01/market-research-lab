@@ -35,6 +35,9 @@ import {
   type IndicatorMetadata,
   type IndicatorSeries,
   type IndicatorPoint,
+  type PredictiveModelMetadata,
+  type PredictiveModelRun,
+  type PredictiveModelRunRequest,
   type StrategyMetadata,
   type StrategyEvaluation,
   type StrategyEvaluateRequest,
@@ -68,6 +71,19 @@ export function ModelsView({ project }: ModelsViewProps) {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Predictive Model Metadata, Parameters, and Results
+  const [predictiveModels, setPredictiveModels] = useState<PredictiveModelMetadata[]>([]);
+  const [selectedPredictiveModelName, setSelectedPredictiveModelName] = useState<string>(
+    "momentum_return_regression",
+  );
+  const [predictiveParams, setPredictiveParams] = useState<Record<string, string | number>>({
+    momentum_period: 20,
+    training_window: 252,
+  });
+  const [predictiveResult, setPredictiveResult] = useState<PredictiveModelRun | null>(null);
+  const [isPredictiveLoading, setIsPredictiveLoading] = useState<boolean>(false);
+  const [predictiveError, setPredictiveError] = useState<string | null>(null);
+
   // Hover state for interactive chart
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
@@ -92,8 +108,13 @@ export function ModelsView({ project }: ModelsViewProps) {
 
   // Load available datasets and indicators on mount
   useEffect(() => {
-    void Promise.all([api.listDatasets(), api.listIndicators(), api.listStrategies()])
-      .then(([allDatasets, allIndicators, allStrategies]) => {
+    void Promise.all([
+      api.listDatasets(),
+      api.listIndicators(),
+      api.listPredictiveModels(),
+      api.listStrategies(),
+    ])
+      .then(([allDatasets, allIndicators, allPredictiveModels, allStrategies]) => {
         // Filter daily bars datasets
         const barDatasets = allDatasets.filter(
           (d) => d.dataset_type === "daily_bars" || (!d.is_fundamentals && !d.is_corporate_actions),
@@ -103,6 +124,7 @@ export function ModelsView({ project }: ModelsViewProps) {
           setSelectedDatasetId(barDatasets[0].id);
         }
         setIndicators(allIndicators);
+        setPredictiveModels(allPredictiveModels);
         setStrategies(allStrategies);
       })
       .catch((err: unknown) => {
@@ -134,6 +156,26 @@ export function ModelsView({ project }: ModelsViewProps) {
       });
   }, [selectedDatasetId]);
 
+  // Reload the latest saved Predictive Model Run when the active Project changes.
+  useEffect(() => {
+    if (!project) {
+      setPredictiveResult(null);
+      return;
+    }
+    void api
+      .listPredictiveModelRuns(project.id)
+      .then((runs) => {
+        if (runs.length > 0) {
+          setPredictiveResult(runs[0]);
+          setSelectedPredictiveModelName(runs[0].model_name);
+          setSelectedSymbol(runs[0].symbol);
+        }
+      })
+      .catch((err: unknown) => {
+        setPredictiveError(err instanceof Error ? err.message : "Failed to load saved model runs.");
+      });
+  }, [project]);
+
   const currentIndicator = useMemo(
     () => indicators.find((ind) => ind.name === selectedIndicatorName),
     [indicators, selectedIndicatorName],
@@ -142,6 +184,11 @@ export function ModelsView({ project }: ModelsViewProps) {
   const currentStrategy = useMemo(
     () => strategies.find((strat) => strat.name === selectedStrategyName),
     [strategies, selectedStrategyName],
+  );
+
+  const currentPredictiveModel = useMemo(
+    () => predictiveModels.find((model) => model.name === selectedPredictiveModelName),
+    [predictiveModels, selectedPredictiveModelName],
   );
 
   // Update default param values when indicator changes
@@ -163,6 +210,17 @@ export function ModelsView({ project }: ModelsViewProps) {
     }
     setStrategyParams((prev) => ({ ...defaults, ...prev }));
   }, [currentStrategy]);
+
+  useEffect(() => {
+    if (!currentPredictiveModel) return;
+    const defaults: Record<string, string | number> = {};
+    for (const parameter of currentPredictiveModel.parameters) {
+      if (typeof parameter.default === "string" || typeof parameter.default === "number") {
+        defaults[parameter.name] = parameter.default;
+      }
+    }
+    setPredictiveParams((previous) => ({ ...defaults, ...previous }));
+  }, [currentPredictiveModel]);
 
   async function handleCalculate() {
     if (!selectedDatasetId || !selectedSymbol || !selectedIndicatorName) {
@@ -269,6 +327,50 @@ export function ModelsView({ project }: ModelsViewProps) {
       setStrategyResult(null);
     } finally {
       setIsStrategyLoading(false);
+    }
+  }
+
+  async function handleRunPredictiveModel() {
+    if (!selectedDatasetId || !selectedSymbol || !selectedPredictiveModelName) {
+      setPredictiveError("Please select a dataset and symbol.");
+      return;
+    }
+
+    setIsPredictiveLoading(true);
+    setPredictiveError(null);
+    const typedParams: Record<string, number | string | boolean | null> = {};
+    if (currentPredictiveModel) {
+      for (const parameter of currentPredictiveModel.parameters) {
+        const raw = predictiveParams[parameter.name];
+        if (parameter.param_type === "int") {
+          const fallback = typeof parameter.default === "number" ? parameter.default : 0;
+          typedParams[parameter.name] = Number.parseInt(String(raw), 10) || fallback;
+        } else if (parameter.param_type === "float") {
+          const fallback = typeof parameter.default === "number" ? parameter.default : 0;
+          typedParams[parameter.name] = Number.parseFloat(String(raw)) || fallback;
+        } else {
+          typedParams[parameter.name] = raw ?? parameter.default;
+        }
+      }
+    }
+
+    const request: PredictiveModelRunRequest = {
+      name: selectedPredictiveModelName,
+      dataset_version_id: selectedDatasetId,
+      symbol: selectedSymbol,
+      parameters: typedParams,
+    };
+
+    try {
+      const result = project
+        ? await api.runPredictiveModel(project.id, request)
+        : await api.previewPredictiveModel(request);
+      setPredictiveResult(result);
+    } catch (err: unknown) {
+      setPredictiveError(err instanceof Error ? err.message : "Failed to run Predictive Model.");
+      setPredictiveResult(null);
+    } finally {
+      setIsPredictiveLoading(false);
     }
   }
 
@@ -429,13 +531,33 @@ export function ModelsView({ project }: ModelsViewProps) {
                   onClick={() => setIsSaveOpen(true)}
                 />
               )}
-              <Button
-                label="Calculate Indicator"
-                variant="primary"
-                size="sm"
-                onClick={handleCalculate}
-                isLoading={isLoading}
-              />
+              {activeWorkspaceTab === "indicators" && (
+                <Button
+                  label="Calculate Indicator"
+                  variant="primary"
+                  size="sm"
+                  onClick={handleCalculate}
+                  isLoading={isLoading}
+                />
+              )}
+              {activeWorkspaceTab === "predictive" && (
+                <Button
+                  label={project ? "Run & Save Model" : "Run Model"}
+                  variant="primary"
+                  size="sm"
+                  onClick={handleRunPredictiveModel}
+                  isLoading={isPredictiveLoading}
+                />
+              )}
+              {activeWorkspaceTab === "strategies" && (
+                <Button
+                  label="Evaluate Strategy"
+                  variant="primary"
+                  size="sm"
+                  onClick={handleEvaluateStrategy}
+                  isLoading={isStrategyLoading}
+                />
+              )}
             </HStack>
           </HStack>
         </LayoutHeader>
@@ -909,40 +1031,96 @@ export function ModelsView({ project }: ModelsViewProps) {
                   />
                 )}
               </VStack>
-            ) : (
+            ) : activeWorkspaceTab === "predictive" ? (
               <VStack gap={4}>
-                <Heading level={3}>Chronological Walk-Forward Predictive Model Folds</Heading>
-                <Text type="supporting">
-                  Feature scaling and model estimation occurs strictly inside each chronological training fold with zero future leakage.
-                </Text>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHeaderCell>Fold Index</TableHeaderCell>
-                      <TableHeaderCell>Train Window</TableHeaderCell>
-                      <TableHeaderCell>OOS Test Window</TableHeaderCell>
-                      <TableHeaderCell>In-Sample R²</TableHeaderCell>
-                      <TableHeaderCell>Out-of-Sample R²</TableHeaderCell>
-                      <TableHeaderCell>Naive Benchmark IC</TableHeaderCell>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    <TableRow>
-                      <TableCell>
-                        <Text weight="bold">Fold 1</Text>
-                      </TableCell>
-                      <TableCell>2020-01 → 2022-12</TableCell>
-                      <TableCell>2023-01 → 2023-06</TableCell>
-                      <TableCell>0.142</TableCell>
-                      <TableCell>
-                        <Token label="0.058" color="green" />
-                      </TableCell>
-                      <TableCell>0.012</TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
+                {predictiveError && (
+                  <Banner status="error" title="Predictive Model Error">
+                    {predictiveError}
+                  </Banner>
+                )}
+
+                {predictiveResult ? (
+                  <VStack gap={4}>
+                    <HStack justify="between" align="center" style={{ flexWrap: "wrap" }}>
+                      <VStack gap={0}>
+                        <Heading level={3}>
+                          {predictiveResult.display_name} ({predictiveResult.symbol})
+                        </Heading>
+                        <Text type="supporting">
+                          Python calculated the fitted artifact and timestamped predictions. The browser only displays the result.
+                        </Text>
+                      </VStack>
+                      <HStack gap={2} align="center" style={{ flexWrap: "wrap" }}>
+                        <Token
+                          label={`${predictiveResult.artifact.training_observations} Training Observations`}
+                          color="blue"
+                        />
+                        <Token
+                          label={`In-Sample R² ${predictiveResult.metrics.in_sample_r2.toFixed(3)}`}
+                          color="green"
+                        />
+                        <Token label="OOS Pending Issue #33" color="orange" />
+                      </HStack>
+                    </HStack>
+
+                    <Card padding={4}>
+                      <VStack gap={3}>
+                        <Heading level={4}>Predictive Model Contract</Heading>
+                        <Text>{predictiveResult.description}</Text>
+                        <HStack gap={3} style={{ flexWrap: "wrap" }}>
+                          <Text type="supporting">Target: {predictiveResult.target}</Text>
+                          <Text type="supporting">Horizon: {predictiveResult.horizon} session</Text>
+                          <Text type="supporting">Feature: {predictiveResult.features.join(", ")}</Text>
+                          <Text type="supporting">Training window: {predictiveResult.training_window}</Text>
+                        </HStack>
+                        <Text type="supporting">
+                          Training range: {predictiveResult.training_start} to {predictiveResult.training_end}. Model revision: {predictiveResult.model_revision || "preview"}.
+                        </Text>
+                      </VStack>
+                    </Card>
+
+                    <VStack gap={2}>
+                      <Heading level={4}>Timestamped Model Output</Heading>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHeaderCell>Session Date</TableHeaderCell>
+                            <TableHeaderCell>Momentum Feature</TableHeaderCell>
+                            <TableHeaderCell>Predicted Next Return</TableHeaderCell>
+                            <TableHeaderCell>Actual Next Return</TableHeaderCell>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {predictiveResult.predictions.map((prediction) => (
+                            <TableRow key={prediction.session_date}>
+                              <TableCell>{prediction.session_date}</TableCell>
+                              <TableCell>{prediction.feature_value.toFixed(6)}</TableCell>
+                              <TableCell>
+                                <Token label={prediction.predicted_value.toFixed(6)} color="blue" />
+                              </TableCell>
+                              <TableCell>
+                                {prediction.actual_target === null
+                                  ? "Not available yet"
+                                  : prediction.actual_target.toFixed(6)}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </VStack>
+                  </VStack>
+                ) : (
+                  <EmptyState
+                    title="No Predictive Model Run"
+                    description="Select a real Market Dataset and symbol, inspect the typed model contract, then run the Predictive Model. A Project saves the fitted artifact and predictions automatically."
+                    primaryAction={{
+                      label: project ? "Run & Save Model" : "Run Model",
+                      onClick: handleRunPredictiveModel,
+                    }}
+                  />
+                )}
               </VStack>
-            )}
+            ) : null}
           </VStack>
         </LayoutContent>
       }
@@ -951,7 +1129,13 @@ export function ModelsView({ project }: ModelsViewProps) {
           width={360}
           hasDivider
           isScrollable
-          label={activeWorkspaceTab === "strategies" ? "Strategy Parameters" : "Indicator Parameters"}
+          label={
+            activeWorkspaceTab === "strategies"
+              ? "Strategy Parameters"
+              : activeWorkspaceTab === "predictive"
+                ? "Predictive Model Parameters"
+                : "Indicator Parameters"
+          }
         >
           <VStack gap={4} style={{ padding: "16px" }}>
             <Heading level={3}>Configuration</Heading>
@@ -1060,6 +1244,77 @@ export function ModelsView({ project }: ModelsViewProps) {
                   variant="primary"
                   onClick={handleEvaluateStrategy}
                   isLoading={isStrategyLoading}
+                />
+              </>
+            ) : activeWorkspaceTab === "predictive" ? (
+              <>
+                <VStack gap={1}>
+                  <Text weight="medium">Predictive Model Technique</Text>
+                  <Selector
+                    label="Predictive Model"
+                    isLabelHidden
+                    options={predictiveModels.map((model) => ({
+                      value: model.name,
+                      label: model.display_name,
+                    }))}
+                    value={selectedPredictiveModelName}
+                    onChange={(val) => setSelectedPredictiveModelName(val)}
+                  />
+                  {currentPredictiveModel && (
+                    <Text type="supporting">{currentPredictiveModel.description}</Text>
+                  )}
+                </VStack>
+
+                {currentPredictiveModel && (
+                  <VStack gap={3}>
+                    <Heading level={4}>Typed Parameters</Heading>
+                    {currentPredictiveModel.parameters.map((parameter) => (
+                      <VStack gap={1} key={parameter.name}>
+                        <TextInput
+                          label={`${parameter.name} (${parameter.param_type})`}
+                          value={String(predictiveParams[parameter.name] ?? parameter.default ?? "")}
+                          onChange={(val) =>
+                            setPredictiveParams((previous) => ({
+                              ...previous,
+                              [parameter.name]: typeof val === "string" ? val : "",
+                            }))
+                          }
+                        />
+                        <Text type="supporting">
+                          {parameter.description}
+                          {parameter.min_value !== null ? ` (min: ${parameter.min_value}` : ""}
+                          {parameter.max_value !== null
+                            ? `, max: ${parameter.max_value})`
+                            : parameter.min_value !== null
+                              ? ")"
+                              : ""}
+                        </Text>
+                      </VStack>
+                    ))}
+                  </VStack>
+                )}
+
+                {currentPredictiveModel && (
+                  <Card padding={3}>
+                    <VStack gap={2}>
+                      <Text weight="bold">Declared Contract</Text>
+                      <Text type="supporting">Target: {currentPredictiveModel.target}</Text>
+                      <Text type="supporting">Horizon: {currentPredictiveModel.horizon} session</Text>
+                      <Text type="supporting">
+                        Features: {currentPredictiveModel.features.join(", ")}
+                      </Text>
+                      <Text type="supporting">
+                        Output: {currentPredictiveModel.output_meaning}
+                      </Text>
+                    </VStack>
+                  </Card>
+                )}
+
+                <Button
+                  label={project ? "Run & Save Model" : "Run Model"}
+                  variant="primary"
+                  onClick={handleRunPredictiveModel}
+                  isLoading={isPredictiveLoading}
                 />
               </>
             ) : (

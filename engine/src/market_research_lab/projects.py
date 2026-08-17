@@ -71,6 +71,18 @@ class FailedBacktestRunRecord:
 
 
 @dataclass(frozen=True)
+class PredictiveModelRunRecord:
+    """Record describing a completed Predictive Model Run."""
+
+    model_revision: str
+    dataset_version_ids: list[str]
+    parameters: dict[str, JsonValue]
+    artifact: dict[str, JsonValue]
+    predictions: list[dict[str, JsonValue]]
+    result: dict[str, JsonValue]
+
+
+@dataclass(frozen=True)
 class ExportArtifact:
     """Exported file payload with content, MIME media type, and filename."""
 
@@ -375,6 +387,90 @@ class ProjectStore:
             {"id": run_id, "status": "failed", "error": record.error_message},
         )
         return run_id
+
+    def create_predictive_model_result(
+        self,
+        project_id: str,
+        record: PredictiveModelRunRecord,
+    ) -> str:
+        """Persist a completed Predictive Model Run and its reproducibility artifacts."""
+        run_id = self.create_run(project_id)
+        run_directory = self._directory(project_id) / "runs" / run_id
+        manifest = {
+            "id": run_id,
+            "kind": "predictive_model",
+            "definition_revisions": [record.model_revision],
+            "dataset_versions": record.dataset_version_ids,
+            "parameters": record.parameters,
+            "software_revision": "uncommitted",
+            "environment": {"python": os.sys.version},
+        }
+        self._write_json(run_directory / "manifest.json", manifest)
+
+        persisted_result = dict(record.result)
+        persisted_result.update(
+            {
+                "run_id": run_id,
+                "model_revision": record.model_revision,
+                "artifact": record.artifact,
+                "predictions": record.predictions,
+            }
+        )
+        self._write_json(
+            run_directory / "artifacts" / "predictive_model.json", persisted_result
+        )
+        self._write_json(run_directory / "artifacts" / "fitted_model.json", record.artifact)
+        self._write_json(
+            run_directory / "artifacts" / "predictions.json",
+            {"predictions": record.predictions},
+        )
+        self._write_json(run_directory / "status.json", {"id": run_id, "status": "completed"})
+        return run_id
+
+    def list_predictive_model_results(self, project_id: str) -> list[dict[str, JsonValue]]:
+        """Read completed Predictive Model Runs for Project reloads."""
+        self.get_project(project_id)
+        runs_dir = self._directory(project_id) / "runs"
+        if not runs_dir.is_dir():
+            return []
+        results: list[dict[str, JsonValue]] = []
+        for run_dir in sorted(runs_dir.iterdir(), key=lambda path: path.name, reverse=True):
+            if not run_dir.is_dir():
+                continue
+            result = self._read_predictive_model_result(run_dir)
+            if result is not None:
+                results.append(result)
+        return results
+
+    def get_predictive_model_result(
+        self, project_id: str, run_id: str
+    ) -> dict[str, JsonValue] | None:
+        """Read one completed Predictive Model Run, or None when it is unavailable."""
+        self.get_project(project_id)
+        return self._read_predictive_model_result(self._directory(project_id) / "runs" / run_id)
+
+    @staticmethod
+    def _read_predictive_model_result(run_dir: Path) -> dict[str, JsonValue] | None:
+        manifest_path = run_dir / "manifest.json"
+        status_path = run_dir / "status.json"
+        artifact_path = run_dir / "artifacts" / "predictive_model.json"
+        if not (manifest_path.is_file() and status_path.is_file() and artifact_path.is_file()):
+            return None
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            status_data = json.loads(status_path.read_text(encoding="utf-8"))
+            result = json.loads(artifact_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if manifest.get("kind") != "predictive_model" or status_data.get("status") != "completed":
+            return None
+        revisions = manifest.get("definition_revisions", [])
+        model_revision = str(revisions[0]) if revisions else ""
+        return {
+            "run_id": run_dir.name,
+            "model_revision": model_revision,
+            "result": result,
+        }
 
     def get_backtest_export(
         self, project_id: str, run_id: str, format_type: str

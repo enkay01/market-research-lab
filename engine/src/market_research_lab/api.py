@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import shutil
 import tempfile
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal, NamedTuple
@@ -55,9 +56,23 @@ from .market_data import (
     IngestionRequest,
     MarketDataStore,
 )
+from .predictive_models import (
+    FittedModelArtifact,
+    PredictiveModelCalculation,
+    PredictiveModelCalculationError,
+    PredictiveModelMetadata,
+    PredictiveModelNotFoundError,
+    PredictiveModelParameter,
+    PredictiveModelParameterError,
+    PredictiveModelPrediction,
+    get_predictive_model_spec,
+    list_predictive_models,
+    run_predictive_model,
+)
 from .projects import (
     BacktestRunRecord,
     FailedBacktestRunRecord,
+    PredictiveModelRunRecord,
     Project,
     ProjectNotFoundError,
     ProjectStore,
@@ -572,6 +587,95 @@ class IndicatorSeriesResponse(BaseModel):
     points: list[IndicatorPointResponse]
 
 
+class PredictiveModelParameterResponse(BaseModel):
+    name: str
+    param_type: str
+    default: JsonValue
+    description: str
+    min_value: float | None = None
+    max_value: float | None = None
+    options: list[str] | None = None
+
+
+class PredictiveModelMetadataResponse(BaseModel):
+    name: str
+    display_name: str
+    description: str
+    target: str
+    horizon: int
+    features: list[str]
+    training_window: int
+    parameters: list[PredictiveModelParameterResponse]
+    output_meaning: str
+    outputs: list[str]
+
+
+class PredictiveModelRunRequest(BaseModel):
+    name: str = Field(pattern=r"^[a-zA-Z0-9_]{1,64}$")
+    dataset_version_id: str = Field(min_length=1)
+    symbol: str = Field(min_length=1, max_length=32)
+    parameters: dict[str, JsonValue] = Field(default_factory=dict)
+    seed: int | None = Field(default=None, ge=0)
+    as_of: datetime | None = None
+
+
+class PredictiveModelArtifactResponse(BaseModel):
+    model_name: str
+    feature_name: str
+    target_name: str
+    horizon: int
+    intercept: float
+    coefficient: float
+    training_start: str
+    training_end: str
+    training_observations: int
+    parameters: dict[str, JsonValue]
+    seed: int | None
+    training_metrics: dict[str, float]
+
+
+class PredictiveModelPredictionResponse(BaseModel):
+    session_date: str
+    feature_value: float
+    predicted_value: float
+    actual_target: float | None
+
+
+class PredictiveModelRunResponse(BaseModel):
+    run_id: str | None = None
+    model_revision: str | None = None
+    model_name: str
+    display_name: str
+    description: str
+    symbol: str
+    dataset_version_id: str
+    dataset_version_ids: list[str]
+    parameters: dict[str, JsonValue]
+    seed: int | None
+    target: str
+    horizon: int
+    features: list[str]
+    training_window: int
+    output_meaning: str
+    outputs: list[str]
+    artifact: PredictiveModelArtifactResponse
+    predictions: list[PredictiveModelPredictionResponse]
+    metrics: dict[str, float]
+    training_start: str
+    training_end: str
+    out_of_sample_status: str
+
+
+@dataclass(frozen=True)
+class PredictiveModelResponseContext:
+    """Run identity added when a calculation is previewed or persisted."""
+
+    symbol: str
+    dataset_version_id: str
+    run_id: str = ""
+    model_revision: str = ""
+
+
 class StrategyParameterResponse(BaseModel):
     name: str
     param_type: str
@@ -781,6 +885,128 @@ def _indicator_series_response(
         warmup_period=series.warmup_period,
         valid_bars=series.valid_bars,
         points=[_indicator_point_response(p) for p in series.points],
+    )
+
+
+def _predictive_parameter_response(
+    parameter: PredictiveModelParameter,
+) -> PredictiveModelParameterResponse:
+    return PredictiveModelParameterResponse(
+        name=parameter.name,
+        param_type=parameter.param_type,
+        default=parameter.default,
+        description=parameter.description,
+        min_value=parameter.min_value,
+        max_value=parameter.max_value,
+        options=list(parameter.options) if parameter.options else None,
+    )
+
+
+def _predictive_metadata_response(
+    metadata: PredictiveModelMetadata,
+) -> PredictiveModelMetadataResponse:
+    return PredictiveModelMetadataResponse(
+        name=metadata.name,
+        display_name=metadata.display_name,
+        description=metadata.description,
+        target=metadata.target,
+        horizon=metadata.horizon,
+        features=list(metadata.features),
+        training_window=metadata.training_window,
+        parameters=[_predictive_parameter_response(p) for p in metadata.parameters],
+        output_meaning=metadata.output_meaning,
+        outputs=list(metadata.outputs),
+    )
+
+
+def _predictive_artifact_response(
+    artifact: FittedModelArtifact,
+) -> PredictiveModelArtifactResponse:
+    metrics = {
+        name: float(value)
+        for name, value in artifact.training_metrics.items()
+        if isinstance(value, (int, float))
+    }
+    return PredictiveModelArtifactResponse(
+        model_name=artifact.model_name,
+        feature_name=artifact.feature_name,
+        target_name=artifact.target_name,
+        horizon=artifact.horizon,
+        intercept=artifact.intercept,
+        coefficient=artifact.coefficient,
+        training_start=artifact.training_start,
+        training_end=artifact.training_end,
+        training_observations=artifact.training_observations,
+        parameters=artifact.parameters,
+        seed=artifact.seed,
+        training_metrics=metrics,
+    )
+
+
+def _predictive_prediction_response(
+    prediction: PredictiveModelPrediction,
+) -> PredictiveModelPredictionResponse:
+    return PredictiveModelPredictionResponse(
+        session_date=prediction.session_date,
+        feature_value=prediction.feature_value,
+        predicted_value=prediction.predicted_value,
+        actual_target=prediction.actual_target,
+    )
+
+
+def _predictive_run_response(
+    calculation: PredictiveModelCalculation,
+    context: PredictiveModelResponseContext,
+) -> PredictiveModelRunResponse:
+    metadata = calculation.metadata
+    return PredictiveModelRunResponse(
+        run_id=context.run_id or None,
+        model_revision=context.model_revision or None,
+        model_name=metadata.name,
+        display_name=metadata.display_name,
+        description=metadata.description,
+        symbol=context.symbol,
+        dataset_version_id=context.dataset_version_id,
+        dataset_version_ids=[context.dataset_version_id],
+        parameters=calculation.parameters,
+        seed=calculation.seed,
+        target=metadata.target,
+        horizon=metadata.horizon,
+        features=list(metadata.features),
+        training_window=int(calculation.parameters["training_window"]),
+        output_meaning=metadata.output_meaning,
+        outputs=list(metadata.outputs),
+        artifact=_predictive_artifact_response(calculation.artifact),
+        predictions=[_predictive_prediction_response(p) for p in calculation.predictions],
+        metrics=calculation.metrics,
+        training_start=calculation.training_start,
+        training_end=calculation.training_end,
+        out_of_sample_status=calculation.out_of_sample_status,
+    )
+
+
+def _predictive_model_calculation(
+    market_store: MarketDataStore,
+    request: PredictiveModelRunRequest,
+) -> PredictiveModelCalculation:
+    bars = market_store.history(
+        request.dataset_version_id,
+        symbol=request.symbol,
+        as_of=request.as_of,
+    )
+    if not bars:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"No price history found for symbol '{request.symbol}' "
+                f"in dataset '{request.dataset_version_id}'."
+            ),
+        )
+    return run_predictive_model(
+        request.name,
+        bars,
+        request.parameters,
+        request.seed,
     )
 
 
@@ -1522,6 +1748,39 @@ def create_app(
                 code="backtest_error",
                 message=str(error),
                 details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(PredictiveModelNotFoundError)
+    async def predictive_model_not_found(
+        _: Request, error: PredictiveModelNotFoundError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=ErrorResponse(
+                code="predictive_model_not_found", message=str(error), details={}
+            ).model_dump(),
+        )
+
+    @app.exception_handler(PredictiveModelParameterError)
+    async def predictive_model_parameter_error(
+        _: Request, error: PredictiveModelParameterError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content=ErrorResponse(
+                code="parameter_validation_error", message=str(error), details={}
+            ).model_dump(),
+        )
+
+    @app.exception_handler(PredictiveModelCalculationError)
+    async def predictive_model_calculation_error(
+        _: Request, error: PredictiveModelCalculationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="predictive_model_calculation_error", message=str(error), details={}
             ).model_dump(),
         )
 
@@ -2363,6 +2622,146 @@ def create_app(
             series,
             dataset_version_id=request.dataset_version_id,
             symbol=request.symbol,
+        )
+
+    @app.get(
+        "/api/predictive-models",
+        response_model=list[PredictiveModelMetadataResponse],
+        tags=["predictive-models"],
+    )
+    def get_predictive_models() -> list[PredictiveModelMetadataResponse]:
+        return [_predictive_metadata_response(metadata) for metadata in list_predictive_models()]
+
+    @app.get(
+        "/api/predictive-models/{name}",
+        response_model=PredictiveModelMetadataResponse,
+        tags=["predictive-models"],
+    )
+    def get_predictive_model_by_name(
+        name: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_]{1,64}$"),
+    ) -> PredictiveModelMetadataResponse:
+        return _predictive_metadata_response(get_predictive_model_spec(name).metadata)
+
+    @app.post(
+        "/api/predictive-models/run",
+        response_model=PredictiveModelRunResponse,
+        tags=["predictive-models"],
+    )
+    def run_predictive_model_preview(
+        request: PredictiveModelRunRequest,
+    ) -> PredictiveModelRunResponse:
+        calculation = _predictive_model_calculation(market_store, request)
+        return _predictive_run_response(
+            calculation,
+            PredictiveModelResponseContext(
+                symbol=request.symbol,
+                dataset_version_id=request.dataset_version_id,
+            ),
+        )
+
+    @app.post(
+        "/api/projects/{project_id}/predictive-models/runs",
+        response_model=PredictiveModelRunResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["predictive-models"],
+    )
+    def save_predictive_model_run(
+        project_id: UUID,
+        request: PredictiveModelRunRequest,
+    ) -> PredictiveModelRunResponse:
+        calculation = _predictive_model_calculation(market_store, request)
+        definition = {
+            "model": calculation.metadata.name,
+            "target": calculation.metadata.target,
+            "horizon": calculation.metadata.horizon,
+            "features": list(calculation.metadata.features),
+            "training_window": calculation.parameters["training_window"],
+            "parameters": calculation.parameters,
+            "output_meaning": calculation.metadata.output_meaning,
+            "symbol": request.symbol,
+            "dataset_version_id": request.dataset_version_id,
+            "seed": calculation.seed,
+        }
+        definition_name = f"{calculation.metadata.name} - {request.symbol}"
+        revision = store.save_revision(
+            str(project_id),
+            kind="predictive_model",
+            name=definition_name,
+            definition=definition,
+        )
+        model_revision = f"{calculation.metadata.name}:{request.symbol}:{revision}"
+        base_response = _predictive_run_response(
+            calculation,
+            PredictiveModelResponseContext(
+                symbol=request.symbol,
+                dataset_version_id=request.dataset_version_id,
+                model_revision=model_revision,
+            ),
+        )
+        run_id = store.create_predictive_model_result(
+            str(project_id),
+            PredictiveModelRunRecord(
+                model_revision=model_revision,
+                dataset_version_ids=[request.dataset_version_id],
+                parameters=calculation.parameters,
+                artifact=calculation.artifact.to_json(),
+                predictions=[prediction.to_json() for prediction in calculation.predictions],
+                result=base_response.model_dump(mode="json"),
+            ),
+        )
+        return base_response.model_copy(update={"run_id": run_id})
+
+    @app.get(
+        "/api/projects/{project_id}/predictive-models/runs",
+        response_model=list[PredictiveModelRunResponse],
+        tags=["predictive-models"],
+    )
+    def list_project_predictive_model_runs(
+        project_id: UUID,
+    ) -> list[PredictiveModelRunResponse]:
+        responses: list[PredictiveModelRunResponse] = []
+        for item in store.list_predictive_model_results(str(project_id)):
+            result = item.get("result")
+            if not isinstance(result, dict):
+                continue
+            responses.append(
+                PredictiveModelRunResponse.model_validate(
+                    {
+                        **result,
+                        "run_id": item.get("run_id"),
+                        "model_revision": item.get("model_revision"),
+                    }
+                )
+            )
+        return responses
+
+    @app.get(
+        "/api/projects/{project_id}/predictive-models/runs/{run_id}",
+        response_model=PredictiveModelRunResponse,
+        tags=["predictive-models"],
+    )
+    def get_project_predictive_model_run(
+        project_id: UUID,
+        run_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
+    ) -> PredictiveModelRunResponse:
+        item = store.get_predictive_model_result(str(project_id), run_id)
+        if item is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Predictive Model Run not found.",
+            )
+        result = item.get("result")
+        if not isinstance(result, dict):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Predictive Model Run artifact is invalid.",
+            )
+        return PredictiveModelRunResponse.model_validate(
+            {
+                **result,
+                "run_id": item.get("run_id"),
+                "model_revision": item.get("model_revision"),
+            }
         )
 
     @app.get(
