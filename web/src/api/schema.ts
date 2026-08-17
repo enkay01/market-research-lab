@@ -710,6 +710,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/strategies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Project Strategy Revisions */
+        get: operations["list_project_strategy_revisions_api_projects__project_id__strategies_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/strategies/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Enabled Strategy Revisions */
+        get: operations["list_enabled_strategy_revisions_api_projects__project_id__strategies_enabled_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/strategies/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enable Strategy Revision */
+        post: operations["enable_strategy_revision_api_projects__project_id__strategies_enable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/strategies/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Disable Strategy Revision */
+        post: operations["disable_strategy_revision_api_projects__project_id__strategies_disable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Project Signals */
+        get: operations["list_project_signals_api_projects__project_id__alerts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/alerts/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh Project Alerts */
+        post: operations["refresh_project_alerts_api_projects__project_id__alerts_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1098,6 +1200,22 @@ export interface components {
             };
             /** Saved At */
             saved_at: string;
+        };
+        /** EnabledStrategyRequest */
+        EnabledStrategyRequest: {
+            /** Name */
+            name: string;
+            /** Revision */
+            revision: string;
+        };
+        /** EnabledStrategyResponse */
+        EnabledStrategyResponse: {
+            /** Name */
+            name: string;
+            /** Revision */
+            revision: string;
+            /** Enabled At */
+            enabled_at: string;
         };
         /** EquityPointResponse */
         EquityPointResponse: {
@@ -1815,6 +1933,15 @@ export interface components {
             /** Strategy Revision */
             strategy_revision: string;
         };
+        /** SavedStrategyRevisionResponse */
+        SavedStrategyRevisionResponse: {
+            /** Name */
+            name: string;
+            /** Revision */
+            revision: string;
+            /** Saved At */
+            saved_at: string;
+        };
         /** SavedValuationResponse */
         SavedValuationResponse: {
             /** Run Id */
@@ -1932,6 +2059,50 @@ export interface components {
             terminal_growth_values: number[];
             /** Grid */
             grid: (number | null)[][];
+        };
+        /** SignalRefreshFailureResponse */
+        SignalRefreshFailureResponse: {
+            /** Strategy Revision */
+            strategy_revision: string;
+            /** Error */
+            error: string;
+        };
+        /** SignalRefreshResponse */
+        SignalRefreshResponse: {
+            /** Signals */
+            signals?: components["schemas"]["SignalResponse"][];
+            /** Failures */
+            failures?: components["schemas"]["SignalRefreshFailureResponse"][];
+        };
+        /** SignalResponse */
+        SignalResponse: {
+            /** Signal Id */
+            signal_id: string;
+            /** Strategy Name */
+            strategy_name: string;
+            /** Strategy Revision */
+            strategy_revision: string;
+            /** Security Id */
+            security_id: string;
+            /** Action */
+            action: string;
+            /** Weight */
+            weight: number;
+            /** Decision Time */
+            decision_time: string;
+            /** Data Time */
+            data_time: string;
+            /** Dataset Version Id */
+            dataset_version_id: string;
+            /** Rationale */
+            rationale: string;
+            /** Indicator State */
+            indicator_state?: string | null;
+            /**
+             * Created At
+             * @default
+             */
+            created_at: string;
         };
         /** StrategyEvaluateRequest */
         StrategyEvaluateRequest: {
@@ -3746,6 +3917,198 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SavedStrategyEvaluationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_project_strategy_revisions_api_projects__project_id__strategies_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedStrategyRevisionResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_enabled_strategy_revisions_api_projects__project_id__strategies_enabled_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnabledStrategyResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    enable_strategy_revision_api_projects__project_id__strategies_enable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnabledStrategyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnabledStrategyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disable_strategy_revision_api_projects__project_id__strategies_disable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnabledStrategyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_project_signals_api_projects__project_id__alerts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignalResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_project_alerts_api_projects__project_id__alerts_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignalRefreshResponse"];
                 };
             };
             /** @description Validation Error */

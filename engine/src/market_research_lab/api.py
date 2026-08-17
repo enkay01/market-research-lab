@@ -30,6 +30,12 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from .alerts import (
+    InvalidStrategyDefinitionError,
+    SignalRefreshResult,
+    refresh_enabled_strategies,
+    validate_strategy_definition,
+)
 from .backtest import (
     BacktestError,
     BacktestParameterError,
@@ -78,6 +84,8 @@ from .projects import (
     Project,
     ProjectNotFoundError,
     ProjectStore,
+    RevisionNotFoundError,
+    RevisionNotImmutableError,
     ValuationRunRecord,
 )
 from .provider_routes import register_provider_download_route
@@ -737,6 +745,53 @@ class StrategyEvaluationResponse(BaseModel):
 class SavedStrategyEvaluationResponse(StrategyEvaluationResponse):
     revision: str
     strategy_revision: str
+
+
+class SavedStrategyRevisionResponse(BaseModel):
+    name: str
+    revision: str
+    saved_at: str
+
+
+class EnabledStrategyRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    revision: str = Field(min_length=1, max_length=64)
+
+    @field_validator("name")
+    @classmethod
+    def name_is_not_blank(cls, value: str) -> str:
+        return _non_blank_name(value)
+
+
+class EnabledStrategyResponse(BaseModel):
+    name: str
+    revision: str
+    enabled_at: str
+
+
+class SignalResponse(BaseModel):
+    signal_id: str
+    strategy_name: str
+    strategy_revision: str
+    security_id: str
+    action: str
+    weight: float
+    decision_time: str
+    data_time: str
+    dataset_version_id: str
+    rationale: str
+    indicator_state: str | None = None
+    created_at: str = ""
+
+
+class SignalRefreshFailureResponse(BaseModel):
+    strategy_revision: str
+    error: str
+
+
+class SignalRefreshResponse(BaseModel):
+    signals: list[SignalResponse] = Field(default_factory=list)
+    failures: list[SignalRefreshFailureResponse] = Field(default_factory=list)
 
 
 class ExecutionModelAssumptionsRequest(BaseModel):
@@ -1766,6 +1821,43 @@ def create_app(
             status_code=status.HTTP_400_BAD_REQUEST,
             content=ErrorResponse(
                 code="strategy_evaluation_error",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(RevisionNotImmutableError)
+    async def revision_not_immutable(
+        _: Request, error: RevisionNotImmutableError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="revision_not_immutable",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(RevisionNotFoundError)
+    async def revision_not_found(_: Request, error: RevisionNotFoundError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=ErrorResponse(
+                code="revision_not_found",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(InvalidStrategyDefinitionError)
+    async def invalid_strategy_definition(
+        _: Request, error: InvalidStrategyDefinitionError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="invalid_strategy_definition",
                 message=str(error),
                 details={},
             ).model_dump(),
@@ -2947,6 +3039,88 @@ def create_app(
             **base.model_dump(),
             revision=revision,
             strategy_revision=f"{evaluation.strategy_name}:{revision}",
+        )
+
+    @app.get(
+        "/api/projects/{project_id}/strategies",
+        response_model=list[SavedStrategyRevisionResponse],
+        tags=["strategies"],
+    )
+    def list_project_strategy_revisions(project_id: UUID) -> list[SavedStrategyRevisionResponse]:
+        return [
+            SavedStrategyRevisionResponse.model_validate(item)
+            for item in store.list_strategy_revisions(str(project_id))
+        ]
+
+    @app.get(
+        "/api/projects/{project_id}/strategies/enabled",
+        response_model=list[EnabledStrategyResponse],
+        tags=["strategies"],
+    )
+    def list_enabled_strategy_revisions(project_id: UUID) -> list[EnabledStrategyResponse]:
+        return [
+            EnabledStrategyResponse.model_validate(item)
+            for item in store.list_enabled_strategies(str(project_id))
+        ]
+
+    @app.post(
+        "/api/projects/{project_id}/strategies/enable",
+        response_model=EnabledStrategyResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["strategies"],
+    )
+    def enable_strategy_revision(
+        project_id: UUID, request: EnabledStrategyRequest
+    ) -> EnabledStrategyResponse:
+        wrapped = store.read_revision(
+            str(project_id), kind="strategy", name=request.name, revision=request.revision
+        )
+        validate_strategy_definition(wrapped.get("definition"))
+        return EnabledStrategyResponse.model_validate(
+            store.enable_strategy(
+                str(project_id), name=request.name, revision=request.revision
+            )
+        )
+
+    @app.post(
+        "/api/projects/{project_id}/strategies/disable",
+        status_code=status.HTTP_204_NO_CONTENT,
+        tags=["strategies"],
+    )
+    def disable_strategy_revision(
+        project_id: UUID, request: EnabledStrategyRequest
+    ) -> Response:
+        store.disable_strategy(str(project_id), name=request.name, revision=request.revision)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.get(
+        "/api/projects/{project_id}/alerts",
+        response_model=list[SignalResponse],
+        tags=["alerts"],
+    )
+    def list_project_signals(project_id: UUID) -> list[SignalResponse]:
+        return [
+            SignalResponse.model_validate(signal)
+            for signal in store.list_signals(str(project_id))
+        ]
+
+    @app.post(
+        "/api/projects/{project_id}/alerts/refresh",
+        response_model=SignalRefreshResponse,
+        tags=["alerts"],
+    )
+    def refresh_project_alerts(project_id: UUID) -> SignalRefreshResponse:
+        result: SignalRefreshResult = refresh_enabled_strategies(
+            store, market_store, str(project_id)
+        )
+        return SignalRefreshResponse(
+            signals=[SignalResponse.model_validate(s.to_json()) for s in result.signals],
+            failures=[
+                SignalRefreshFailureResponse(
+                    strategy_revision=failure.strategy_revision, error=failure.error
+                )
+                for failure in result.failures
+            ],
         )
 
     built_interface = static_dir or repository_root / "web" / "dist"

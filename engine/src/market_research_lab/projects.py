@@ -24,6 +24,17 @@ class ProjectNotFoundError(Exception):
     """Raised when a requested Project does not exist."""
 
 
+class RevisionNotFoundError(Exception):
+    """Raised when a requested immutable Definition Revision does not exist."""
+
+
+class RevisionNotImmutableError(Exception):
+    """Raised when a draft or non-vN name is treated as an immutable revision."""
+
+
+_REVISION_REGEX = re.compile(r"^v[1-9][0-9]*$")
+
+
 @dataclass(frozen=True)
 class Project:
     id: str
@@ -199,6 +210,134 @@ class ProjectStore:
         if not draft_path.is_file():
             raise ProjectNotFoundError(project_id)
         return json.loads(draft_path.read_text(encoding="utf-8"))
+
+    def read_revision(
+        self, project_id: str, *, kind: str, name: str, revision: str
+    ) -> dict[str, JsonValue]:
+        """Read one immutable Definition Revision, rejecting drafts and unknown revisions."""
+        self.get_project(project_id)
+        if not _REVISION_REGEX.fullmatch(revision):
+            raise RevisionNotImmutableError(
+                f"'{revision}' is not an immutable revision (expected 'v1', 'v2', ...)."
+            )
+        revision_path = (
+            self._directory(project_id)
+            / "definitions"
+            / kind
+            / _slug(name)
+            / revision
+            / "definition.json"
+        )
+        if not revision_path.is_file():
+            raise RevisionNotFoundError(
+                f"Revision '{revision}' of {kind} '{name}' does not exist."
+            )
+        return json.loads(revision_path.read_text(encoding="utf-8"))
+
+    def list_strategy_revisions(self, project_id: str) -> list[dict[str, JsonValue]]:
+        """List saved immutable Strategy revisions available for enabling."""
+        self.get_project(project_id)
+        definitions_root = self._directory(project_id) / "definitions" / "strategy"
+        if not definitions_root.is_dir():
+            return []
+        results: list[dict[str, JsonValue]] = []
+        for name_directory in sorted(definitions_root.iterdir(), key=lambda path: path.name):
+            if not name_directory.is_dir():
+                continue
+            for revision_directory in sorted(name_directory.iterdir(), key=lambda path: path.name):
+                if not revision_directory.is_dir():
+                    continue
+                if not _REVISION_REGEX.fullmatch(revision_directory.name):
+                    continue
+                definition_file = revision_directory / "definition.json"
+                if not definition_file.is_file():
+                    continue
+                with contextlib.suppress(json.JSONDecodeError, OSError):
+                    data = json.loads(definition_file.read_text(encoding="utf-8"))
+                    results.append(
+                        {
+                            "name": str(data.get("name", name_directory.name)),
+                            "revision": revision_directory.name,
+                            "saved_at": str(data.get("saved_at", "")),
+                        }
+                    )
+        return results
+
+    def enable_strategy(
+        self, project_id: str, *, name: str, revision: str
+    ) -> dict[str, JsonValue]:
+        """Persist one validated immutable Strategy revision as enabled."""
+        self.read_revision(project_id, kind="strategy", name=name, revision=revision)
+        enabled = self.list_enabled_strategies(project_id)
+        for item in enabled:
+            if item.get("name") == name and item.get("revision") == revision:
+                return item
+        record: dict[str, JsonValue] = {
+            "name": name,
+            "revision": revision,
+            "enabled_at": _timestamp(),
+        }
+        enabled.append(record)
+        self._write_enabled_strategies(project_id, enabled)
+        return record
+
+    def disable_strategy(self, project_id: str, *, name: str, revision: str) -> None:
+        """Remove one enabled Strategy revision by name and revision."""
+        enabled = self.list_enabled_strategies(project_id)
+        remaining = [
+            item
+            for item in enabled
+            if not (item.get("name") == name and item.get("revision") == revision)
+        ]
+        self._write_enabled_strategies(project_id, remaining)
+
+    def list_enabled_strategies(self, project_id: str) -> list[dict[str, JsonValue]]:
+        """Read the Project's enabled Strategy revisions."""
+        self.get_project(project_id)
+        path = self._directory(project_id) / "enabled_strategies.json"
+        if not path.is_file():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        strategies = data.get("strategies", [])
+        if not isinstance(strategies, list):
+            return []
+        return [item for item in strategies if isinstance(item, dict)]
+
+    def save_signal(self, project_id: str, signal: dict[str, JsonValue]) -> str:
+        """Persist one Signal as an immutable Alert artifact."""
+        self.get_project(project_id)
+        signal_id = str(signal.get("signal_id") or uuid4().hex)
+        self._write_json(self._directory(project_id) / "alerts" / f"{signal_id}.json", signal)
+        return signal_id
+
+    def list_signals(self, project_id: str) -> list[dict[str, JsonValue]]:
+        """Read persisted Signals newest-first."""
+        self.get_project(project_id)
+        alerts_root = self._directory(project_id) / "alerts"
+        if not alerts_root.is_dir():
+            return []
+        signals: list[dict[str, JsonValue]] = []
+        for entry in alerts_root.iterdir():
+            if not entry.is_file() or entry.suffix != ".json":
+                continue
+            with contextlib.suppress(OSError, json.JSONDecodeError):
+                loaded = json.loads(entry.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    signals.append(loaded)
+        signals.sort(key=lambda item: str(item.get("decision_time", "")), reverse=True)
+        return signals
+
+    def _write_enabled_strategies(
+        self, project_id: str, strategies: list[dict[str, JsonValue]]
+    ) -> None:
+        self.get_project(project_id)
+        self._write_json(
+            self._directory(project_id) / "enabled_strategies.json",
+            {"strategies": strategies},
+        )
 
     def create_run(self, project_id: str) -> str:
         self.get_project(project_id)
