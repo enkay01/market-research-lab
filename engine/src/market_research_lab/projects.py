@@ -77,9 +77,22 @@ class PredictiveModelRunRecord:
     model_revision: str
     dataset_version_ids: list[str]
     parameters: dict[str, JsonValue]
+    as_of: str | None
+    completed_at: str
     artifact: dict[str, JsonValue]
     predictions: list[dict[str, JsonValue]]
     result: dict[str, JsonValue]
+
+
+@dataclass(frozen=True)
+class FailedPredictiveModelRunRecord:
+    """Record describing a failed Predictive Model Run."""
+
+    model_revision: str
+    dataset_version_ids: list[str]
+    parameters: dict[str, JsonValue]
+    as_of: str | None
+    error_message: str
 
 
 @dataclass(frozen=True)
@@ -402,30 +415,93 @@ class ProjectStore:
             "definition_revisions": [record.model_revision],
             "dataset_versions": record.dataset_version_ids,
             "parameters": record.parameters,
+            "as_of": record.as_of,
+            "completed_at": record.completed_at,
             "software_revision": "uncommitted",
             "environment": {"python": os.sys.version},
         }
-        self._write_json(run_directory / "manifest.json", manifest)
+        temporary_artifacts = run_directory / f".artifacts-{uuid4().hex}.tmp"
+        try:
+            temporary_artifacts.mkdir()
+            self._write_json(run_directory / "manifest.json", manifest)
 
-        persisted_result = dict(record.result)
-        persisted_result.update(
-            {
-                "run_id": run_id,
-                "model_revision": record.model_revision,
-                "artifact": record.artifact,
-                "predictions": record.predictions,
-            }
-        )
-        self._write_json(
-            run_directory / "artifacts" / "predictive_model.json", persisted_result
-        )
-        self._write_json(run_directory / "artifacts" / "fitted_model.json", record.artifact)
-        self._write_json(
-            run_directory / "artifacts" / "predictions.json",
-            {"predictions": record.predictions},
-        )
-        self._write_json(run_directory / "status.json", {"id": run_id, "status": "completed"})
+            persisted_result = dict(record.result)
+            persisted_result.update(
+                {
+                    "run_id": run_id,
+                    "model_revision": record.model_revision,
+                    "artifact": record.artifact,
+                    "predictions": record.predictions,
+                }
+            )
+            self._write_json(
+                temporary_artifacts / "predictive_model.json", persisted_result
+            )
+            self._write_json(temporary_artifacts / "fitted_model.json", record.artifact)
+            self._write_json(
+                temporary_artifacts / "predictions.json",
+                {"predictions": record.predictions},
+            )
+            shutil.rmtree(run_directory / "artifacts")
+            os.replace(temporary_artifacts, run_directory / "artifacts")
+            self._write_json(
+                run_directory / "status.json", {"id": run_id, "status": "completed"}
+            )
+        except Exception as error:
+            try:
+                self._mark_predictive_model_run_failed(run_directory, manifest, str(error))
+            except Exception as mark_error:
+                error.add_note(f"Failed to persist the Predictive Model failure: {mark_error}")
+            raise
         return run_id
+
+    def create_failed_predictive_model_run(
+        self,
+        project_id: str,
+        record: FailedPredictiveModelRunRecord,
+    ) -> str:
+        """Persist a failed Predictive Model Run with its error and provenance."""
+        run_id = self.create_run(project_id)
+        run_directory = self._directory(project_id) / "runs" / run_id
+        manifest = {
+            "id": run_id,
+            "kind": "predictive_model",
+            "definition_revisions": [record.model_revision],
+            "dataset_versions": record.dataset_version_ids,
+            "parameters": record.parameters,
+            "as_of": record.as_of,
+            "software_revision": "uncommitted",
+            "environment": {"python": os.sys.version},
+            "error": record.error_message,
+        }
+        self._mark_predictive_model_run_failed(
+            run_directory,
+            manifest,
+            record.error_message,
+        )
+        return run_id
+
+    def _mark_predictive_model_run_failed(
+        self,
+        run_directory: Path,
+        manifest: dict[str, JsonValue],
+        error_message: str,
+    ) -> None:
+        """Replace pending Predictive Model state with a durable failure record."""
+        run_id = str(manifest.get("id", run_directory.name))
+        failed_manifest = dict(manifest)
+        failed_manifest["error"] = error_message
+        artifacts_directory = run_directory / "artifacts"
+        artifacts_directory.mkdir(parents=True, exist_ok=True)
+        self._write_json(run_directory / "manifest.json", failed_manifest)
+        self._write_json(
+            artifacts_directory / "error.json",
+            {"run_id": run_id, "error": error_message, "failed_at": _timestamp()},
+        )
+        self._write_json(
+            run_directory / "status.json",
+            {"id": run_id, "status": "failed", "error": error_message},
+        )
 
     def list_predictive_model_results(self, project_id: str) -> list[dict[str, JsonValue]]:
         """Read completed Predictive Model Runs for Project reloads."""
@@ -434,13 +510,17 @@ class ProjectStore:
         if not runs_dir.is_dir():
             return []
         results: list[dict[str, JsonValue]] = []
-        for run_dir in sorted(runs_dir.iterdir(), key=lambda path: path.name, reverse=True):
+        for run_dir in runs_dir.iterdir():
             if not run_dir.is_dir():
                 continue
             result = self._read_predictive_model_result(run_dir)
             if result is not None:
                 results.append(result)
-        return results
+        return sorted(
+            results,
+            key=lambda item: str(item.get("completed_at", "")),
+            reverse=True,
+        )
 
     def get_predictive_model_result(
         self, project_id: str, run_id: str
@@ -469,6 +549,7 @@ class ProjectStore:
         return {
             "run_id": run_dir.name,
             "model_revision": model_revision,
+            "completed_at": result.get("completed_at", ""),
             "result": result,
         }
 

@@ -26,6 +26,10 @@ class PredictiveModelParameterError(PredictiveModelError):
     """Raised when a Predictive Model parameter is invalid."""
 
 
+class PredictiveModelDataError(PredictiveModelError):
+    """Raised when the requested Dataset Version cannot provide model data."""
+
+
 class PredictiveModelCalculationError(PredictiveModelError):
     """Raised when a Predictive Model cannot be fitted on the supplied data."""
 
@@ -460,7 +464,11 @@ def run_predictive_model(
         )
 
     artifact = fit_model(name, training_frame, resolved_parameters, seed)
-    predictions = predict(artifact, frame)
+    predictions = [
+        prediction
+        for prediction in predict(artifact, frame)
+        if prediction.session_date > artifact.training_end
+    ]
     metrics = {
         metric_name: float(metric_value)
         for metric_name, metric_value in artifact.training_metrics.items()

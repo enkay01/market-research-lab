@@ -1623,6 +1623,12 @@ export interface components {
             run_id?: string | null;
             /** Model Revision */
             model_revision?: string | null;
+            /**
+             * Status
+             * @default preview
+             * @enum {string}
+             */
+            status: "preview" | "completed";
             /** Model Name */
             model_name: string;
             /** Display Name */
@@ -1664,6 +1670,10 @@ export interface components {
             training_start: string;
             /** Training End */
             training_end: string;
+            /** Completed At */
+            completed_at?: string | null;
+            /** As Of */
+            as_of?: string | null;
             /** Out Of Sample Status */
             out_of_sample_status: string;
         };

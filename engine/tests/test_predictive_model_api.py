@@ -19,15 +19,15 @@ class ApiTestInputs(NamedTuple):
 
 def _dataset_csv() -> bytes:
     rows = [
-        "symbol,date,open,high,low,close,volume",
-        "AAPL,2024-01-01,100,100,100,100,1000",
-        "AAPL,2024-01-02,102,102,102,102,1000",
-        "AAPL,2024-01-03,101,101,101,101,1000",
-        "AAPL,2024-01-04,105,105,105,105,1000",
-        "AAPL,2024-01-05,104,104,104,104,1000",
-        "AAPL,2024-01-06,108,108,108,108,1000",
-        "AAPL,2024-01-07,107,107,107,107,1000",
-        "AAPL,2024-01-08,111,111,111,111,1000",
+        "symbol,date,open,high,low,close,volume,available_at",
+        "AAPL,2024-01-01,100,100,100,100,1000,2024-01-01T00:00:00Z",
+        "AAPL,2024-01-02,102,102,102,102,1000,2024-01-02T00:00:00Z",
+        "AAPL,2024-01-03,101,101,101,101,1000,2024-01-03T00:00:00Z",
+        "AAPL,2024-01-04,105,105,105,105,1000,2024-01-04T00:00:00Z",
+        "AAPL,2024-01-05,104,104,104,104,1000,2024-01-05T00:00:00Z",
+        "AAPL,2024-01-06,108,108,108,108,1000,2024-01-06T00:00:00Z",
+        "AAPL,2024-01-07,107,107,107,107,1000,2024-01-07T00:00:00Z",
+        "AAPL,2024-01-08,111,111,111,111,1000,2024-01-08T00:00:00Z",
     ]
     return ("\n".join(rows) + "\n").encode("utf-8")
 
@@ -53,6 +53,7 @@ def _run_request(dataset_id: str) -> dict[str, JsonValue]:
         "symbol": "AAPL",
         "parameters": {"momentum_period": 2, "training_window": 3},
         "seed": 7,
+        "as_of": "2099-01-01T00:00:00+00:00",
     }
 
 
@@ -85,6 +86,8 @@ def test_predictive_model_can_run_preview_and_save_a_reproducible_run(
     assert preview.status_code == 200
     preview_body = preview.json()
     assert preview_body["run_id"] is None
+    assert preview_body["status"] == "preview"
+    assert preview_body["as_of"].startswith("2099-01-01")
     assert preview_body["artifact"]["training_observations"] == 3
     assert preview_body["predictions"][-1]["actual_target"] is None
     assert preview_body["metrics"]["in_sample_r2"] is not None
@@ -98,6 +101,8 @@ def test_predictive_model_can_run_preview_and_save_a_reproducible_run(
     assert saved.status_code == 201
     saved_body = saved.json()
     assert saved_body["run_id"]
+    assert saved_body["status"] == "completed"
+    assert saved_body["completed_at"]
     assert saved_body["model_revision"].endswith(":v1")
 
     listed = client.get(f"/api/projects/{project_id}/predictive-models/runs")
@@ -108,6 +113,8 @@ def test_predictive_model_can_run_preview_and_save_a_reproducible_run(
         f"/api/projects/{project_id}/predictive-models/runs/{saved_body['run_id']}"
     )
     assert reopened.status_code == 200
+    assert reopened.json()["status"] == "completed"
+    assert reopened.json()["run_id"] == saved_body["run_id"]
     assert reopened.json()["artifact"] == saved_body["artifact"]
     assert reopened.json()["predictions"] == saved_body["predictions"]
 
@@ -124,3 +131,37 @@ def test_predictive_model_api_rejects_invalid_parameters_with_stable_error(
 
     assert response.status_code == 422
     assert response.json()["code"] == "parameter_validation_error"
+
+
+def test_predictive_model_api_rejects_missing_dataset_with_stable_error(
+    tmp_path: Path,
+) -> None:
+    client = TestClient(create_app(workspace_root=tmp_path))
+
+    response = client.post(
+        "/api/predictive-models/run",
+        json=_run_request("missing-dataset"),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "predictive_model_data_not_found"
+
+
+def test_saved_predictive_model_failure_is_persisted(tmp_path: Path) -> None:
+    inputs = _client_and_inputs(tmp_path)
+    client, dataset_id, project_id = inputs
+    request = _run_request(dataset_id)
+    request["parameters"] = {"momentum_period": 7, "training_window": 3}
+
+    response = client.post(
+        f"/api/projects/{project_id}/predictive-models/runs",
+        json=request,
+    )
+
+    assert response.status_code == 400
+    project_runs = tmp_path / "projects" / project_id / "runs"
+    failed_statuses = [
+        (run_dir / "status.json").read_text(encoding="utf-8")
+        for run_dir in project_runs.iterdir()
+    ]
+    assert any('"status": "failed"' in status_text for status_text in failed_statuses)

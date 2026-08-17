@@ -60,6 +60,7 @@ from .predictive_models import (
     FittedModelArtifact,
     PredictiveModelCalculation,
     PredictiveModelCalculationError,
+    PredictiveModelDataError,
     PredictiveModelMetadata,
     PredictiveModelNotFoundError,
     PredictiveModelParameter,
@@ -72,6 +73,7 @@ from .predictive_models import (
 from .projects import (
     BacktestRunRecord,
     FailedBacktestRunRecord,
+    FailedPredictiveModelRunRecord,
     PredictiveModelRunRecord,
     Project,
     ProjectNotFoundError,
@@ -644,6 +646,7 @@ class PredictiveModelPredictionResponse(BaseModel):
 class PredictiveModelRunResponse(BaseModel):
     run_id: str | None = None
     model_revision: str | None = None
+    status: Literal["preview", "completed"] = "preview"
     model_name: str
     display_name: str
     description: str
@@ -663,6 +666,8 @@ class PredictiveModelRunResponse(BaseModel):
     metrics: dict[str, float]
     training_start: str
     training_end: str
+    completed_at: str | None = None
+    as_of: datetime | None = None
     out_of_sample_status: str
 
 
@@ -674,6 +679,9 @@ class PredictiveModelResponseContext:
     dataset_version_id: str
     run_id: str = ""
     model_revision: str = ""
+    status: Literal["preview", "completed"] = "preview"
+    completed_at: str | None = None
+    as_of: datetime | None = None
 
 
 class StrategyParameterResponse(BaseModel):
@@ -962,6 +970,7 @@ def _predictive_run_response(
     return PredictiveModelRunResponse(
         run_id=context.run_id or None,
         model_revision=context.model_revision or None,
+        status=context.status,
         model_name=metadata.name,
         display_name=metadata.display_name,
         description=metadata.description,
@@ -981,6 +990,8 @@ def _predictive_run_response(
         metrics=calculation.metrics,
         training_start=calculation.training_start,
         training_end=calculation.training_end,
+        completed_at=context.completed_at,
+        as_of=context.as_of,
         out_of_sample_status=calculation.out_of_sample_status,
     )
 
@@ -989,24 +1000,45 @@ def _predictive_model_calculation(
     market_store: MarketDataStore,
     request: PredictiveModelRunRequest,
 ) -> PredictiveModelCalculation:
-    bars = market_store.history(
-        request.dataset_version_id,
-        symbol=request.symbol,
-        as_of=request.as_of,
-    )
+    try:
+        bars = market_store.history(
+            request.dataset_version_id,
+            symbol=request.symbol,
+            as_of=request.as_of,
+        )
+    except InadequateTemporalProvenanceError:
+        raise
+    except ValueError as error:
+        raise PredictiveModelDataError(str(error)) from error
     if not bars:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                f"No price history found for symbol '{request.symbol}' "
-                f"in dataset '{request.dataset_version_id}'."
-            ),
+        raise PredictiveModelDataError(
+            f"No price history found for symbol '{request.symbol}' "
+            f"in dataset '{request.dataset_version_id}'."
         )
     return run_predictive_model(
         request.name,
         bars,
         request.parameters,
         request.seed,
+    )
+
+
+def _persist_failed_predictive_model_run(
+    store: ProjectStore,
+    project_id: UUID,
+    request: PredictiveModelRunRequest,
+    error: Exception,
+) -> None:
+    """Preserve a failed saved-model request before returning its original error."""
+    store.create_failed_predictive_model_run(
+        str(project_id),
+        FailedPredictiveModelRunRecord(
+            model_revision=f"{request.name}:{request.symbol}:failed",
+            dataset_version_ids=[request.dataset_version_id],
+            parameters=dict(request.parameters),
+            as_of=request.as_of.isoformat() if request.as_of else None,
+            error_message=str(error),
+        ),
     )
 
 
@@ -1770,6 +1802,17 @@ def create_app(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content=ErrorResponse(
                 code="parameter_validation_error", message=str(error), details={}
+            ).model_dump(),
+        )
+
+    @app.exception_handler(PredictiveModelDataError)
+    async def predictive_model_data_error(
+        _: Request, error: PredictiveModelDataError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=ErrorResponse(
+                code="predictive_model_data_not_found", message=str(error), details={}
             ).model_dump(),
         )
 
@@ -2656,6 +2699,7 @@ def create_app(
             PredictiveModelResponseContext(
                 symbol=request.symbol,
                 dataset_version_id=request.dataset_version_id,
+                as_of=request.as_of,
             ),
         )
 
@@ -2669,33 +2713,46 @@ def create_app(
         project_id: UUID,
         request: PredictiveModelRunRequest,
     ) -> PredictiveModelRunResponse:
-        calculation = _predictive_model_calculation(market_store, request)
-        definition = {
-            "model": calculation.metadata.name,
-            "target": calculation.metadata.target,
-            "horizon": calculation.metadata.horizon,
-            "features": list(calculation.metadata.features),
-            "training_window": calculation.parameters["training_window"],
-            "parameters": calculation.parameters,
-            "output_meaning": calculation.metadata.output_meaning,
-            "symbol": request.symbol,
-            "dataset_version_id": request.dataset_version_id,
-            "seed": calculation.seed,
-        }
-        definition_name = f"{calculation.metadata.name} - {request.symbol}"
-        revision = store.save_revision(
-            str(project_id),
-            kind="predictive_model",
-            name=definition_name,
-            definition=definition,
-        )
-        model_revision = f"{calculation.metadata.name}:{request.symbol}:{revision}"
+        try:
+            calculation = _predictive_model_calculation(market_store, request)
+            definition = {
+                "model": calculation.metadata.name,
+                "target": calculation.metadata.target,
+                "horizon": calculation.metadata.horizon,
+                "features": list(calculation.metadata.features),
+                "training_window": calculation.parameters["training_window"],
+                "parameters": calculation.parameters,
+                "output_meaning": calculation.metadata.output_meaning,
+                "symbol": request.symbol,
+                "dataset_version_id": request.dataset_version_id,
+                "as_of": request.as_of.isoformat() if request.as_of else None,
+                "seed": calculation.seed,
+            }
+            definition_name = f"{calculation.metadata.name} - {request.symbol}"
+            revision = store.save_revision(
+                str(project_id),
+                kind="predictive_model",
+                name=definition_name,
+                definition=definition,
+            )
+            model_revision = f"{calculation.metadata.name}:{request.symbol}:{revision}"
+        except Exception as error:
+            try:
+                _persist_failed_predictive_model_run(store, project_id, request, error)
+            except Exception as persist_error:
+                error.add_note(f"Failed to persist the Predictive Model error: {persist_error}")
+            raise
+
+        completed_at = datetime.now(UTC).isoformat()
         base_response = _predictive_run_response(
             calculation,
             PredictiveModelResponseContext(
                 symbol=request.symbol,
                 dataset_version_id=request.dataset_version_id,
                 model_revision=model_revision,
+                status="completed",
+                completed_at=completed_at,
+                as_of=request.as_of,
             ),
         )
         run_id = store.create_predictive_model_result(
@@ -2704,6 +2761,8 @@ def create_app(
                 model_revision=model_revision,
                 dataset_version_ids=[request.dataset_version_id],
                 parameters=calculation.parameters,
+                as_of=request.as_of.isoformat() if request.as_of else None,
+                completed_at=completed_at,
                 artifact=calculation.artifact.to_json(),
                 predictions=[prediction.to_json() for prediction in calculation.predictions],
                 result=base_response.model_dump(mode="json"),
@@ -2730,6 +2789,7 @@ def create_app(
                         **result,
                         "run_id": item.get("run_id"),
                         "model_revision": item.get("model_revision"),
+                        "status": "completed",
                     }
                 )
             )
@@ -2761,6 +2821,7 @@ def create_app(
                 **result,
                 "run_id": item.get("run_id"),
                 "model_revision": item.get("model_revision"),
+                "status": "completed",
             }
         )
 

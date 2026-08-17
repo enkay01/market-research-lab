@@ -158,17 +158,26 @@ export function ModelsView({ project }: ModelsViewProps) {
 
   // Reload the latest saved Predictive Model Run when the active Project changes.
   useEffect(() => {
+    setPredictiveResult(null);
+    setPredictiveError(null);
     if (!project) {
-      setPredictiveResult(null);
       return;
     }
     void api
       .listPredictiveModelRuns(project.id)
       .then((runs) => {
         if (runs.length > 0) {
-          setPredictiveResult(runs[0]);
-          setSelectedPredictiveModelName(runs[0].model_name);
-          setSelectedSymbol(runs[0].symbol);
+          const latestRun = runs[0];
+          setPredictiveResult(latestRun);
+          setSelectedPredictiveModelName(latestRun.model_name);
+          setSelectedSymbol(latestRun.symbol);
+          const restoredParameters: Record<string, string | number> = {};
+          for (const [name, value] of Object.entries(latestRun.parameters)) {
+            if (typeof value === "string" || typeof value === "number") {
+              restoredParameters[name] = value;
+            }
+          }
+          setPredictiveParams((previous) => ({ ...previous, ...restoredParameters }));
         }
       })
       .catch((err: unknown) => {
@@ -1049,8 +1058,17 @@ export function ModelsView({ project }: ModelsViewProps) {
                         <Text type="supporting">
                           Python calculated the fitted artifact and timestamped predictions. The browser only displays the result.
                         </Text>
+                        <Text type="supporting">
+                          {predictiveResult.status === "completed"
+                            ? `Saved Run ${predictiveResult.run_id ?? "(ID unavailable)"} completed ${predictiveResult.completed_at ?? "at an unknown time"}.`
+                            : "Preview Run only; select a Project to persist this result."}
+                        </Text>
                       </VStack>
                       <HStack gap={2} align="center" style={{ flexWrap: "wrap" }}>
+                        <Token
+                          label={predictiveResult.status === "completed" ? "Saved Run" : "Preview Run"}
+                          color={predictiveResult.status === "completed" ? "green" : "orange"}
+                        />
                         <Token
                           label={`${predictiveResult.artifact.training_observations} Training Observations`}
                           color="blue"

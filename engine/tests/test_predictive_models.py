@@ -126,8 +126,21 @@ def test_run_limits_training_to_the_requested_window() -> None:
     assert result.artifact.training_observations == 3
     assert result.training_start == "2024-01-05"
     assert result.training_end == "2024-01-07"
+    assert [prediction.session_date for prediction in result.predictions] == ["2024-01-08"]
     assert result.predictions[-1].actual_target is None
     assert result.out_of_sample_status == "not_available_until_chronological_splits"
+
+
+def test_run_does_not_return_predictions_from_before_the_training_end() -> None:
+    result = run_predictive_model(
+        "momentum_return_regression",
+        _bars([100.0, 102.0, 101.0, 105.0, 104.0, 108.0, 107.0, 111.0]),
+        {"momentum_period": 2, "training_window": 3},
+    )
+
+    assert all(
+        prediction.session_date > result.training_end for prediction in result.predictions
+    )
 
 
 def test_run_rejects_invalid_parameters_and_insufficient_history() -> None:

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from market_research_lab.projects import PredictiveModelRunRecord, ProjectStore
+from market_research_lab.projects import (
+    FailedPredictiveModelRunRecord,
+    PredictiveModelRunRecord,
+    ProjectStore,
+)
 
 
 def _record() -> PredictiveModelRunRecord:
@@ -12,6 +16,8 @@ def _record() -> PredictiveModelRunRecord:
         model_revision="momentum_return_regression:v1",
         dataset_version_ids=["dataset-v1"],
         parameters={"momentum_period": 20, "training_window": 252},
+        as_of="2024-01-03T00:00:00+00:00",
+        completed_at="2024-01-03T12:00:00+00:00",
         artifact={"coefficient": 0.12, "seed": 7},
         predictions=[
             {
@@ -22,8 +28,11 @@ def _record() -> PredictiveModelRunRecord:
             }
         ],
         result={
+            "status": "completed",
             "model_name": "momentum_return_regression",
             "symbol": "AAPL",
+            "as_of": "2024-01-03T00:00:00+00:00",
+            "completed_at": "2024-01-03T12:00:00+00:00",
             "metrics": {"in_sample_r2": 0.4},
             "out_of_sample_status": "not_available_until_chronological_splits",
         },
@@ -44,6 +53,7 @@ def test_predictive_model_run_persists_artifact_predictions_and_provenance(
     assert "predictive_model" in manifest
     assert "momentum_return_regression:v1" in manifest
     assert "dataset-v1" in manifest
+    assert "2024-01-03T00:00:00+00:00" in manifest
     assert (run_root / "artifacts" / "fitted_model.json").exists()
     assert (run_root / "artifacts" / "predictions.json").exists()
 
@@ -55,3 +65,26 @@ def test_predictive_model_run_persists_artifact_predictions_and_provenance(
     listed = store.list_predictive_model_results(project.id)
     assert len(listed) == 1
     assert listed[0]["run_id"] == run_id
+
+
+def test_failed_predictive_model_run_persists_error_and_provenance(tmp_path: Path) -> None:
+    store = ProjectStore(tmp_path)
+    project = store.create_project("Failed model inspection")
+
+    run_id = store.create_failed_predictive_model_run(
+        project.id,
+        FailedPredictiveModelRunRecord(
+            model_revision="momentum_return_regression:failed",
+            dataset_version_ids=["dataset-v1"],
+            parameters={"momentum_period": 20},
+            as_of=None,
+            error_message="not enough observations",
+        ),
+    )
+    run_root = tmp_path / "projects" / project.id / "runs" / run_id
+
+    assert '"status": "failed"' in (run_root / "status.json").read_text(encoding="utf-8")
+    assert "not enough observations" in (
+        run_root / "artifacts" / "error.json"
+    ).read_text(encoding="utf-8")
+    assert store.list_predictive_model_results(project.id) == []
