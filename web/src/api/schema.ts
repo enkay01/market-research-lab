@@ -556,6 +556,92 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/predictive-models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Predictive Models */
+        get: operations["get_predictive_models_api_predictive_models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/predictive-models/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Predictive Model By Name */
+        get: operations["get_predictive_model_by_name_api_predictive_models__name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/predictive-models/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run Predictive Model Preview */
+        post: operations["run_predictive_model_preview_api_predictive_models_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/predictive-models/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Project Predictive Model Runs */
+        get: operations["list_project_predictive_model_runs_api_projects__project_id__predictive_models_runs_get"];
+        put?: never;
+        /** Save Predictive Model Run */
+        post: operations["save_predictive_model_run_api_projects__project_id__predictive_models_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/predictive-models/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Project Predictive Model Run */
+        get: operations["get_project_predictive_model_run_api_projects__project_id__predictive_models_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/strategies": {
         parameters: {
             query?: never;
@@ -1482,6 +1568,164 @@ export interface components {
             position_value: number;
             /** Weight */
             weight: number;
+        };
+        /** PredictiveModelArtifactResponse */
+        PredictiveModelArtifactResponse: {
+            /** Model Name */
+            model_name: string;
+            /** Feature Name */
+            feature_name: string;
+            /** Target Name */
+            target_name: string;
+            /** Horizon */
+            horizon: number;
+            /** Intercept */
+            intercept: number;
+            /** Coefficient */
+            coefficient: number;
+            /** Training Start */
+            training_start: string;
+            /** Training End */
+            training_end: string;
+            /** Training Observations */
+            training_observations: number;
+            /** Parameters */
+            parameters: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Seed */
+            seed: number | null;
+            /** Training Metrics */
+            training_metrics: {
+                [key: string]: number;
+            };
+        };
+        /** PredictiveModelMetadataResponse */
+        PredictiveModelMetadataResponse: {
+            /** Name */
+            name: string;
+            /** Display Name */
+            display_name: string;
+            /** Description */
+            description: string;
+            /** Target */
+            target: string;
+            /** Horizon */
+            horizon: number;
+            /** Features */
+            features: string[];
+            /** Training Window */
+            training_window: number;
+            /** Parameters */
+            parameters: components["schemas"]["PredictiveModelParameterResponse"][];
+            /** Output Meaning */
+            output_meaning: string;
+            /** Outputs */
+            outputs: string[];
+        };
+        /** PredictiveModelParameterResponse */
+        PredictiveModelParameterResponse: {
+            /** Name */
+            name: string;
+            /** Param Type */
+            param_type: string;
+            default: components["schemas"]["JsonValue-Output"];
+            /** Description */
+            description: string;
+            /** Min Value */
+            min_value?: number | null;
+            /** Max Value */
+            max_value?: number | null;
+            /** Options */
+            options?: string[] | null;
+        };
+        /** PredictiveModelPredictionResponse */
+        PredictiveModelPredictionResponse: {
+            /** Session Date */
+            session_date: string;
+            /** Feature Value */
+            feature_value: number;
+            /** Predicted Value */
+            predicted_value: number;
+            /** Actual Target */
+            actual_target: number | null;
+        };
+        /** PredictiveModelRunRequest */
+        PredictiveModelRunRequest: {
+            /** Name */
+            name: string;
+            /** Dataset Version Id */
+            dataset_version_id: string;
+            /** Symbol */
+            symbol: string;
+            /** Parameters */
+            parameters?: {
+                [key: string]: components["schemas"]["JsonValue-Input"];
+            };
+            /** Seed */
+            seed?: number | null;
+            /** As Of */
+            as_of?: string | null;
+        };
+        /** PredictiveModelRunResponse */
+        PredictiveModelRunResponse: {
+            /** Run Id */
+            run_id?: string | null;
+            /** Model Revision */
+            model_revision?: string | null;
+            /**
+             * Status
+             * @default preview
+             * @enum {string}
+             */
+            status: "preview" | "completed";
+            /** Model Name */
+            model_name: string;
+            /** Display Name */
+            display_name: string;
+            /** Description */
+            description: string;
+            /** Symbol */
+            symbol: string;
+            /** Dataset Version Id */
+            dataset_version_id: string;
+            /** Dataset Version Ids */
+            dataset_version_ids: string[];
+            /** Parameters */
+            parameters: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Seed */
+            seed: number | null;
+            /** Target */
+            target: string;
+            /** Horizon */
+            horizon: number;
+            /** Features */
+            features: string[];
+            /** Training Window */
+            training_window: number;
+            /** Output Meaning */
+            output_meaning: string;
+            /** Outputs */
+            outputs: string[];
+            artifact: components["schemas"]["PredictiveModelArtifactResponse"];
+            /** Predictions */
+            predictions: components["schemas"]["PredictiveModelPredictionResponse"][];
+            /** Metrics */
+            metrics: {
+                [key: string]: number;
+            };
+            /** Training Start */
+            training_start: string;
+            /** Training End */
+            training_end: string;
+            /** Completed At */
+            completed_at?: string | null;
+            /** As Of */
+            as_of?: string | null;
+            /** Out Of Sample Status */
+            out_of_sample_status: string;
         };
         /** ProjectCreateRequest */
         ProjectCreateRequest: {
@@ -3201,6 +3445,188 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IndicatorSeriesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_predictive_models_api_predictive_models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PredictiveModelMetadataResponse"][];
+                };
+            };
+        };
+    };
+    get_predictive_model_by_name_api_predictive_models__name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PredictiveModelMetadataResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_predictive_model_preview_api_predictive_models_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PredictiveModelRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PredictiveModelRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_project_predictive_model_runs_api_projects__project_id__predictive_models_runs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PredictiveModelRunResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_predictive_model_run_api_projects__project_id__predictive_models_runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PredictiveModelRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PredictiveModelRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_project_predictive_model_run_api_projects__project_id__predictive_models_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PredictiveModelRunResponse"];
                 };
             };
             /** @description Validation Error */

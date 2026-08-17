@@ -36,6 +36,11 @@ export type IndicatorPoint = components["schemas"]["IndicatorPointResponse"];
 export type IndicatorSeries = components["schemas"]["IndicatorSeriesResponse"];
 export type IndicatorCalculateRequest = components["schemas"]["IndicatorCalculateRequest"];
 
+export type PredictiveModelMetadata = components["schemas"]["PredictiveModelMetadataResponse"];
+export type PredictiveModelParameter = components["schemas"]["PredictiveModelParameterResponse"];
+export type PredictiveModelRunRequest = components["schemas"]["PredictiveModelRunRequest"];
+export type PredictiveModelRun = components["schemas"]["PredictiveModelRunResponse"];
+
 export type StrategyMetadata = components["schemas"]["StrategyMetadataResponse"];
 export type StrategyParameter = components["schemas"]["StrategyParameterResponse"];
 export type StrategyTarget = components["schemas"]["StrategyTargetResponse"];
@@ -297,6 +302,38 @@ export const api = {
     dataOrThrow(
       client.POST("/api/indicators/calculate", {
         body: request,
+      }),
+    ),
+  listPredictiveModels: () => dataOrThrow(client.GET("/api/predictive-models")),
+  getPredictiveModel: (name: string) =>
+    dataOrThrow(
+      client.GET("/api/predictive-models/{name}", {
+        params: { path: { name } },
+      }),
+    ),
+  previewPredictiveModel: (request: PredictiveModelRunRequest) =>
+    dataOrThrow(
+      client.POST("/api/predictive-models/run", {
+        body: request,
+      }),
+    ),
+  runPredictiveModel: (projectId: string, request: PredictiveModelRunRequest) =>
+    dataOrThrow(
+      client.POST("/api/projects/{project_id}/predictive-models/runs", {
+        params: { path: { project_id: projectId } },
+        body: request,
+      }),
+    ),
+  listPredictiveModelRuns: (projectId: string) =>
+    dataOrThrow(
+      client.GET("/api/projects/{project_id}/predictive-models/runs", {
+        params: { path: { project_id: projectId } },
+      }),
+    ),
+  getPredictiveModelRun: (projectId: string, runId: string) =>
+    dataOrThrow(
+      client.GET("/api/projects/{project_id}/predictive-models/runs/{run_id}", {
+        params: { path: { project_id: projectId, run_id: runId } },
       }),
     ),
   listStrategies: () => dataOrThrow(client.GET("/api/strategies")),
