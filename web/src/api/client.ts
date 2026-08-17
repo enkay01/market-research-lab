@@ -43,6 +43,15 @@ export type StrategyEvaluation = components["schemas"]["StrategyEvaluationRespon
 export type SavedStrategyEvaluation = components["schemas"]["SavedStrategyEvaluationResponse"];
 export type StrategyEvaluateRequest = components["schemas"]["StrategyEvaluateRequest"];
 
+export type BacktestRunRequest = components["schemas"]["BacktestRunRequest"];
+export type BacktestResult = components["schemas"]["BacktestResultResponse"];
+export type BacktestMetrics = components["schemas"]["BacktestMetricsResponse"];
+export type Fill = components["schemas"]["FillResponse"];
+export type Trade = components["schemas"]["TradeResponse"];
+export type LedgerRow = components["schemas"]["LedgerRowResponse"];
+export type EquityPoint = components["schemas"]["EquityPointResponse"];
+export type BacktestSpecification = components["schemas"]["BacktestSpecificationResponse"];
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -310,4 +319,27 @@ export const api = {
         body: request,
       }),
     ),
+  runBacktest: (projectId: string, request: BacktestRunRequest) =>
+    dataOrThrow(
+      client.POST("/api/projects/{project_id}/backtests", {
+        params: { path: { project_id: projectId } },
+        body: request,
+      }),
+    ),
+  listBacktests: (projectId: string) =>
+    dataOrThrow(
+      client.GET("/api/projects/{project_id}/backtests", {
+        params: { path: { project_id: projectId } },
+      }),
+    ),
+  getBacktest: (projectId: string, runId: string) =>
+    dataOrThrow(
+      client.GET("/api/projects/{project_id}/backtests/{run_id}", {
+        params: { path: { project_id: projectId, run_id: runId } },
+      }),
+    ),
+  getBacktestExportUrl: (projectId: string, runId: string, format: "html" | "csv" | "json") =>
+    `/api/projects/${encodeURIComponent(projectId)}/backtests/${encodeURIComponent(runId)}/export/${format}`,
+  getValuationExportUrl: (projectId: string, runId: string, format: "html" | "csv" | "json") =>
+    `/api/projects/${encodeURIComponent(projectId)}/valuations/${encodeURIComponent(runId)}/export/${format}`,
 };

@@ -292,3 +292,120 @@ def test_metrics_are_reported_and_sane():
     assert metrics.gross_exposure >= 0
     assert metrics.num_fills == len(result.fills)
     assert metrics.num_trades == len(result.trades)
+
+
+def test_backtest_html_report_and_csv_generation():
+    from market_research_lab.reporting import (
+        generate_backtest_csv,
+        generate_backtest_html_report,
+    )
+
+    spec = make_spec("2024-01-02", "2024-01-14", 100000.0)
+    result = run_backtest(spec, bars=make_round_trip_bars())
+    result_json = result.to_json()
+
+    html_report = generate_backtest_html_report(result_json, result.manifest)
+    assert "<!DOCTYPE html>" in html_report
+    assert "Backtest Report: AAPL" in html_report
+    assert "Out-of-sample (Point-in-time sequential simulation)" in html_report
+    assert "Performance Overview" in html_report
+    assert "Execution Model &amp; Strategy Assumptions" in html_report or "Execution Model & Strategy Assumptions" in html_report
+    assert "Closed Trades" in html_report
+    assert "Simulated Execution Fills" in html_report
+    assert "Daily Mark-to-Market Ledger" in html_report
+
+    csv_report = generate_backtest_csv(result_json)
+    assert "Backtest Run Specification" in csv_report
+    assert "Performance Metrics" in csv_report
+    assert "Closed Trades" in csv_report
+    assert "Simulated Fills" in csv_report
+    assert "Daily Portfolio Ledger" in csv_report
+    assert "AAPL" in csv_report
+
+    # Test report and CSV with explicit warnings
+    result_with_warnings = dict(result_json)
+    result_with_warnings["warnings"] = ["Simulated volume constraint hit on 2024-01-05"]
+    html_with_warn = generate_backtest_html_report(result_with_warnings, result.manifest)
+    assert "Simulated volume constraint hit" in html_with_warn
+    csv_with_warn = generate_backtest_csv(result_with_warnings)
+    assert "Warnings" in csv_with_warn
+    assert "Simulated volume constraint hit on 2024-01-05" in csv_with_warn
+
+
+def test_backtest_persistence_and_export_artifacts(tmp_path):
+    from market_research_lab.projects import BacktestRunRecord, ProjectStore
+
+    store = ProjectStore(tmp_path)
+    project = store.create_project("Backtest Project")
+
+    spec = make_spec("2024-01-02", "2024-01-14", 100000.0)
+    result = run_backtest(spec, bars=make_round_trip_bars())
+
+    run_id = store.create_backtest_result(
+        project.id,
+        BacktestRunRecord(
+            strategy_revision="long_flat_moving_average:v1",
+            dataset_version_ids=["ds-1"],
+            parameters=dict(spec.parameters),
+            result=result.to_json(),
+        ),
+    )
+
+    # HTML export
+    html_export = store.get_backtest_export(project.id, run_id, "html")
+    assert html_export.media_type == "text/html"
+    assert html_export.filename == f"backtest_{run_id}.html"
+    assert "Backtest Report" in html_export.content
+
+    # CSV export
+    csv_export = store.get_backtest_export(project.id, run_id, "csv")
+    assert csv_export.media_type == "text/csv"
+    assert csv_export.filename == f"backtest_{run_id}.csv"
+    assert "Performance Metrics" in csv_export.content
+
+    # JSON export
+    json_export = store.get_backtest_export(project.id, run_id, "json")
+    assert json_export.media_type == "application/json"
+    assert json_export.filename == f"backtest_manifest_{run_id}.json"
+    assert "manifest" in json_export.content
+    assert "backtest" in json_export.content
+
+
+def test_golden_replay_is_strictly_identical_across_runs():
+    spec = make_spec("2024-01-02", "2024-01-14", 100000.0)
+    bars = make_round_trip_bars()
+
+    run1 = run_backtest(spec, bars=bars)
+    run2 = run_backtest(spec, bars=bars)
+
+    assert run1.signals == run2.signals
+    assert run1.fills == run2.fills
+    assert run1.trades == run2.trades
+    assert run1.ledger == run2.ledger
+    assert run1.equity_curve == run2.equity_curve
+    assert run1.drawdown_curve == run2.drawdown_curve
+    assert run1.metrics == run2.metrics
+    assert run1.manifest == run2.manifest
+    assert run1.to_json() == run2.to_json()
+
+
+def test_synthetic_future_data_rejection_leaves_prior_run_invariant():
+    spec = make_spec("2024-01-02", "2024-01-14", 100000.0)
+    base_bars = make_round_trip_bars()
+    base_run = run_backtest(spec, bars=base_bars)
+
+    # Append synthetic future observations after the simulation window
+    future_bars = [
+        make_bar("2024-01-15", 50.0, 60.0),
+        make_bar("2024-01-16", 60.0, 20.0),
+        make_bar("2024-01-17", 20.0, 100.0),
+    ]
+    extended_run = run_backtest(spec, bars=[*base_bars, *future_bars])
+
+    assert base_run.signals == extended_run.signals
+    assert base_run.fills == extended_run.fills
+    assert base_run.trades == extended_run.trades
+    assert base_run.ledger == extended_run.ledger
+    assert base_run.equity_curve == extended_run.equity_curve
+    assert base_run.metrics == extended_run.metrics
+

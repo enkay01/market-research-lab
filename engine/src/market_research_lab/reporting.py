@@ -5,24 +5,31 @@ from __future__ import annotations
 import csv
 import html
 import io
-from typing import Any
+
+from .json_types import JsonValue
 
 
 def generate_valuation_html_report(
-    result_data: dict[str, Any],
-    manifest_data: dict[str, Any],
+    result_data: dict[str, JsonValue],
+    manifest_data: dict[str, JsonValue],
 ) -> str:
     """Generate a self-contained, human-readable HTML valuation report."""
     method_rev = html.escape(str(result_data.get("method_revision") or "unversioned"))
     run_id = html.escape(str(manifest_data.get("id") or result_data.get("run_id") or "N/A"))
     calc_at = html.escape(str(result_data.get("calculated_at") or "N/A"))
-    dataset_versions = result_data.get("dataset_version_ids", [])
-    warnings = result_data.get("warnings", [])
+    dataset_versions = result_data.get("dataset_version_ids")
+    dataset_version_list = dataset_versions if isinstance(dataset_versions, list) else []
+    raw_warnings = result_data.get("warnings")
+    warnings = raw_warnings if isinstance(raw_warnings, list) else []
 
     is_dcf = "forecast_cash_flows" in result_data or "value_per_share" in result_data
-    symbol = html.escape(str(result_data.get("symbol") or result_data.get("target", {}).get("symbol", "")))
-    name = html.escape(str(result_data.get("name") or result_data.get("target", {}).get("name", "")))
-    currency = html.escape(str(result_data.get("currency") or result_data.get("target", {}).get("currency", "USD")))
+    target_raw = result_data.get("target")
+    target_dict = target_raw if isinstance(target_raw, dict) else {}
+    symbol = html.escape(str(result_data.get("symbol") or target_dict.get("symbol") or ""))
+    name = html.escape(str(result_data.get("name") or target_dict.get("name") or ""))
+    currency = html.escape(
+        str(result_data.get("currency") or target_dict.get("currency") or "USD")
+    )
 
     doc = [
         "<!DOCTYPE html>",
@@ -54,11 +61,13 @@ def generate_valuation_html_report(
         f"      <div><strong>Run ID:</strong> {run_id}</div>",
         f"      <div><strong>Calculated:</strong> {calc_at}</div>",
         f"      <div><strong>Currency:</strong> {currency}</div>",
-        f"      <div><strong>Sample Status:</strong> Out-of-sample (Point-in-time calculation)</div>",
+        "      <div><strong>Sample Status:</strong> Out-of-sample (Point-in-time calculation)</div>",
         "    </div>",
-        '    <div style="margin-top: 12px;"><strong>Dataset Versions:</strong> ' +
-        "".join(f'<span class="badge">{html.escape(str(ds))}</span>' for ds in dataset_versions) +
-        "    </div>",
+        '    <div style="margin-top: 12px;"><strong>Dataset Versions:</strong> '
+        + "".join(
+            f'<span class="badge">{html.escape(str(ds))}</span>' for ds in dataset_version_list
+        )
+        + "    </div>",
         "  </div>",
     ]
 
@@ -73,17 +82,39 @@ def generate_valuation_html_report(
         ev = result_data.get("enterprise_value")
         eq_val = result_data.get("equity_value")
         tv_contrib = result_data.get("terminal_value_contribution")
-        vps_str = f"{currency} {vps:.2f}" if vps is not None else "—"
-        ev_str = f"{currency} {ev:.2f}" if ev is not None else "—"
-        eq_str = f"{currency} {eq_val:.2f}" if eq_val is not None else "—"
-        tv_str = f"{tv_contrib * 100:.1f}%" if tv_contrib is not None else "—"
+        vps_str = (
+            f"{currency} {float(vps):.2f}"
+            if vps is not None and isinstance(vps, (int, float))
+            else "—"
+        )
+        ev_str = (
+            f"{currency} {float(ev):.2f}" if ev is not None and isinstance(ev, (int, float)) else "—"
+        )
+        eq_str = (
+            f"{currency} {float(eq_val):.2f}"
+            if eq_val is not None and isinstance(eq_val, (int, float))
+            else "—"
+        )
+        tv_str = (
+            f"{float(tv_contrib) * 100:.1f}%"
+            if tv_contrib is not None and isinstance(tv_contrib, (int, float))
+            else "—"
+        )
 
         doc.append("  <h2>Valuation Summary</h2>")
         doc.append('  <div class="meta-grid">')
-        doc.append(f'    <div class="metric-card"><div class="metric-label">Value Per Share</div><div class="metric-value">{vps_str}</div></div>')
-        doc.append(f'    <div class="metric-card"><div class="metric-label">Enterprise Value</div><div class="metric-value">{ev_str}</div></div>')
-        doc.append(f'    <div class="metric-card"><div class="metric-label">Equity Value</div><div class="metric-value">{eq_str}</div></div>')
-        doc.append(f'    <div class="metric-card"><div class="metric-label">Terminal Contribution</div><div class="metric-value">{tv_str}</div></div>')
+        doc.append(
+            f'    <div class="metric-card"><div class="metric-label">Value Per Share</div><div class="metric-value">{vps_str}</div></div>'
+        )
+        doc.append(
+            f'    <div class="metric-card"><div class="metric-label">Enterprise Value</div><div class="metric-value">{ev_str}</div></div>'
+        )
+        doc.append(
+            f'    <div class="metric-card"><div class="metric-label">Equity Value</div><div class="metric-value">{eq_str}</div></div>'
+        )
+        doc.append(
+            f'    <div class="metric-card"><div class="metric-label">Terminal Contribution</div><div class="metric-value">{tv_str}</div></div>'
+        )
         doc.append("  </div>")
 
         # Key Inputs / Assumptions Table
@@ -91,83 +122,147 @@ def generate_valuation_html_report(
         if isinstance(inputs, dict):
             doc.append("  <h3>Valuation Assumptions</h3>")
             doc.append("  <table>")
-            doc.append("    <thead><tr><th>Assumption</th><th class=\"num\">Value</th></tr></thead>")
+            doc.append(
+                '    <thead><tr><th>Assumption</th><th class="num">Value</th></tr></thead>'
+            )
             doc.append("    <tbody>")
-            doc.append(f"      <tr><td>Base Revenue</td><td class=\"num\">{currency} {inputs.get('base_revenue', 0):.2f}</td></tr>")
-            doc.append(f"      <tr><td>Revenue Growth Rate</td><td class=\"num\">{inputs.get('revenue_growth_rate', 0)*100:.1f}%</td></tr>")
-            doc.append(f"      <tr><td>Operating Margin</td><td class=\"num\">{inputs.get('operating_margin', 0)*100:.1f}%</td></tr>")
-            doc.append(f"      <tr><td>Effective Tax Rate</td><td class=\"num\">{inputs.get('tax_rate', 0)*100:.1f}%</td></tr>")
-            doc.append(f"      <tr><td>Reinvestment Rate (% NOPAT)</td><td class=\"num\">{inputs.get('reinvestment_rate', 0)*100:.1f}%</td></tr>")
-            doc.append(f"      <tr><td>WACC / Discount Rate</td><td class=\"num\">{inputs.get('wacc', 0)*100:.2f}%</td></tr>")
-            doc.append(f"      <tr><td>Perpetual Terminal Growth Rate</td><td class=\"num\">{inputs.get('terminal_growth_rate', 0)*100:.2f}%</td></tr>")
-            doc.append(f"      <tr><td>Shares Outstanding</td><td class=\"num\">{inputs.get('shares_outstanding', 0):.2f}</td></tr>")
-            doc.append(f"      <tr><td>Total Debt</td><td class=\"num\">{currency} {inputs.get('total_debt', 0):.2f}</td></tr>")
-            doc.append(f"      <tr><td>Cash & Equivalents</td><td class=\"num\">{currency} {inputs.get('cash', 0):.2f}</td></tr>")
+            doc.append(
+                f"      <tr><td>Base Revenue</td><td class=\"num\">{currency} {float(inputs.get('base_revenue', 0)):.2f}</td></tr>"
+            )
+            doc.append(
+                f"      <tr><td>Revenue Growth Rate</td><td class=\"num\">{float(inputs.get('revenue_growth_rate', 0))*100:.1f}%</td></tr>"
+            )
+            doc.append(
+                f"      <tr><td>Operating Margin</td><td class=\"num\">{float(inputs.get('operating_margin', 0))*100:.1f}%</td></tr>"
+            )
+            doc.append(
+                f"      <tr><td>Effective Tax Rate</td><td class=\"num\">{float(inputs.get('tax_rate', 0))*100:.1f}%</td></tr>"
+            )
+            doc.append(
+                f"      <tr><td>Reinvestment Rate (% NOPAT)</td><td class=\"num\">{float(inputs.get('reinvestment_rate', 0))*100:.1f}%</td></tr>"
+            )
+            doc.append(
+                f"      <tr><td>WACC / Discount Rate</td><td class=\"num\">{float(inputs.get('wacc', 0))*100:.2f}%</td></tr>"
+            )
+            doc.append(
+                f"      <tr><td>Perpetual Terminal Growth Rate</td><td class=\"num\">{float(inputs.get('terminal_growth_rate', 0))*100:.2f}%</td></tr>"
+            )
+            doc.append(
+                f"      <tr><td>Shares Outstanding</td><td class=\"num\">{float(inputs.get('shares_outstanding', 0)):.2f}</td></tr>"
+            )
+            doc.append(
+                f"      <tr><td>Total Debt</td><td class=\"num\">{currency} {float(inputs.get('total_debt', 0)):.2f}</td></tr>"
+            )
+            doc.append(
+                f"      <tr><td>Cash & Equivalents</td><td class=\"num\">{currency} {float(inputs.get('cash', 0)):.2f}</td></tr>"
+            )
             doc.append("    </tbody>")
             doc.append("  </table>")
 
         # Forecast Cash Flows Table
-        cfs = result_data.get("forecast_cash_flows", [])
+        raw_cfs = result_data.get("forecast_cash_flows")
+        cfs = raw_cfs if isinstance(raw_cfs, list) else []
         if cfs:
             doc.append("  <h3>Forecast Cash Flows</h3>")
             doc.append("  <table>")
-            doc.append('    <thead><tr><th>Year</th><th class="num">Revenue</th><th class="num">Growth</th><th class="num">EBIT</th><th class="num">NOPAT</th><th class="num">Reinvestment</th><th class="num">FCFF</th><th class="num">DF</th><th class="num">PV</th></tr></thead>')
+            doc.append(
+                '    <thead><tr><th>Year</th><th class="num">Revenue</th><th class="num">Growth</th><th class="num">EBIT</th><th class="num">NOPAT</th><th class="num">Reinvestment</th><th class="num">FCFF</th><th class="num">DF</th><th class="num">PV</th></tr></thead>'
+            )
             doc.append("    <tbody>")
             for cf in cfs:
-                doc.append(f"      <tr><td>Year {cf.get('year')}</td><td class=\"num\">{cf.get('revenue', 0):.2f}</td><td class=\"num\">{cf.get('revenue_growth', 0)*100:.1f}%</td><td class=\"num\">{cf.get('operating_income', 0):.2f}</td><td class=\"num\">{cf.get('nopat', 0):.2f}</td><td class=\"num\">{cf.get('reinvestment', 0):.2f}</td><td class=\"num\">{cf.get('free_cash_flow', 0):.2f}</td><td class=\"num\">{cf.get('discount_factor', 0):.4f}</td><td class=\"num\">{cf.get('present_value', 0):.2f}</td></tr>")
+                if isinstance(cf, dict):
+                    doc.append(
+                        f"      <tr><td>Year {cf.get('year')}</td><td class=\"num\">{float(cf.get('revenue', 0)):.2f}</td><td class=\"num\">{float(cf.get('revenue_growth', 0))*100:.1f}%</td><td class=\"num\">{float(cf.get('operating_income', 0)):.2f}</td><td class=\"num\">{float(cf.get('nopat', 0)):.2f}</td><td class=\"num\">{float(cf.get('reinvestment', 0)):.2f}</td><td class=\"num\">{float(cf.get('free_cash_flow', 0)):.2f}</td><td class=\"num\">{float(cf.get('discount_factor', 0)):.4f}</td><td class=\"num\">{float(cf.get('present_value', 0)):.2f}</td></tr>"
+                    )
             doc.append("    </tbody>")
             doc.append("  </table>")
 
         # Scenarios Table
-        scenarios = result_data.get("scenarios", [])
+        raw_scenarios = result_data.get("scenarios")
+        scenarios = raw_scenarios if isinstance(raw_scenarios, list) else []
         if scenarios:
             doc.append("  <h3>Scenario Analysis</h3>")
             doc.append("  <table>")
-            doc.append('    <thead><tr><th>Scenario</th><th class="num">WACC</th><th class="num">Terminal Growth</th><th class="num">Revenue Growth</th><th class="num">Operating Margin</th><th class="num">Per Share Value</th></tr></thead>')
+            doc.append(
+                '    <thead><tr><th>Scenario</th><th class="num">WACC</th><th class="num">Terminal Growth</th><th class="num">Revenue Growth</th><th class="num">Operating Margin</th><th class="num">Per Share Value</th></tr></thead>'
+            )
             doc.append("    <tbody>")
             for sc in scenarios:
-                svps = sc.get("value_per_share")
-                svps_str = f"{currency} {svps:.2f}" if svps is not None else "—"
-                wacc_sc = sc.get("wacc", 0) * 100
-                tg_sc = sc.get("terminal_growth_rate", 0) * 100
-                rg_sc = sc.get("revenue_growth_rate", 0) * 100
-                om_sc = sc.get("operating_margin", 0) * 100
-                doc.append(f"      <tr><td><strong>{html.escape(str(sc.get('name')))}</strong></td><td class=\"num\">{wacc_sc:.1f}%</td><td class=\"num\">{tg_sc:.1f}%</td><td class=\"num\">{rg_sc:.1f}%</td><td class=\"num\">{om_sc:.1f}%</td><td class=\"num\"><strong>{svps_str}</strong></td></tr>")
+                if isinstance(sc, dict):
+                    svps = sc.get("value_per_share")
+                    svps_str = (
+                        f"{currency} {float(svps):.2f}"
+                        if svps is not None and isinstance(svps, (int, float))
+                        else "—"
+                    )
+                    wacc_sc = float(sc.get("wacc", 0)) * 100
+                    tg_sc = float(sc.get("terminal_growth_rate", 0)) * 100
+                    rg_sc = float(sc.get("revenue_growth_rate", 0)) * 100
+                    om_sc = float(sc.get("operating_margin", 0)) * 100
+                    doc.append(
+                        f"      <tr><td><strong>{html.escape(str(sc.get('name')))}</strong></td><td class=\"num\">{wacc_sc:.1f}%</td><td class=\"num\">{tg_sc:.1f}%</td><td class=\"num\">{rg_sc:.1f}%</td><td class=\"num\">{om_sc:.1f}%</td><td class=\"num\"><strong>{svps_str}</strong></td></tr>"
+                    )
             doc.append("    </tbody>")
             doc.append("  </table>")
 
     else:
         # Comparable Company Multiples Table
-        target = result_data.get("target", {})
-        peers = result_data.get("peers", [])
-        medians = result_data.get("peer_medians", {})
+        target = result_data.get("target")
+        target_dict = target if isinstance(target, dict) else {}
+        peers_raw = result_data.get("peers")
+        peers_list = peers_raw if isinstance(peers_raw, list) else []
+        medians_raw = result_data.get("peer_medians")
+        medians_dict = medians_raw if isinstance(medians_raw, dict) else {}
 
         doc.append("  <h2>Trading Multiples</h2>")
         doc.append("  <table>")
-        doc.append('    <thead><tr><th>Security</th><th class="num">P/E</th><th class="num">EV / Revenue</th><th class="num">EV / EBITDA</th><th class="num">FCF Yield</th></tr></thead>')
+        doc.append(
+            '    <thead><tr><th>Security</th><th class="num">P/E</th><th class="num">EV / Revenue</th><th class="num">EV / EBITDA</th><th class="num">FCF Yield</th></tr></thead>'
+        )
         doc.append("    <tbody>")
-        for comp in [target, *peers, medians]:
-            c_name = html.escape(str(comp.get("name", "")))
-            pe = comp.get("price_to_earnings")
-            ev_rev = comp.get("ev_to_revenue")
-            ev_ebitda = comp.get("ev_to_ebitda")
-            fcf_y = comp.get("free_cash_flow_yield")
-            pe_str = f"{pe:.2f}x" if pe is not None else "—"
-            ev_rev_str = f"{ev_rev:.2f}x" if ev_rev is not None else "—"
-            ev_ebitda_str = f"{ev_ebitda:.2f}x" if ev_ebitda is not None else "—"
-            fcf_y_str = f"{fcf_y * 100:.2f}%" if fcf_y is not None else "—"
-            doc.append(f"      <tr><td>{c_name}</td><td class=\"num\">{pe_str}</td><td class=\"num\">{ev_rev_str}</td><td class=\"num\">{ev_ebitda_str}</td><td class=\"num\">{fcf_y_str}</td></tr>")
+        for comp in [target_dict, *peers_list, medians_dict]:
+            if isinstance(comp, dict):
+                c_name = html.escape(str(comp.get("name", "")))
+                pe = comp.get("price_to_earnings")
+                ev_rev = comp.get("ev_to_revenue")
+                ev_ebitda = comp.get("ev_to_ebitda")
+                fcf_y = comp.get("free_cash_flow_yield")
+                pe_str = (
+                    f"{float(pe):.2f}x"
+                    if pe is not None and isinstance(pe, (int, float))
+                    else "—"
+                )
+                ev_rev_str = (
+                    f"{float(ev_rev):.2f}x"
+                    if ev_rev is not None and isinstance(ev_rev, (int, float))
+                    else "—"
+                )
+                ev_ebitda_str = (
+                    f"{float(ev_ebitda):.2f}x"
+                    if ev_ebitda is not None and isinstance(ev_ebitda, (int, float))
+                    else "—"
+                )
+                fcf_y_str = (
+                    f"{float(fcf_y) * 100:.2f}%"
+                    if fcf_y is not None and isinstance(fcf_y, (int, float))
+                    else "—"
+                )
+                doc.append(
+                    f"      <tr><td>{c_name}</td><td class=\"num\">{pe_str}</td><td class=\"num\">{ev_rev_str}</td><td class=\"num\">{ev_ebitda_str}</td><td class=\"num\">{fcf_y_str}</td></tr>"
+                )
         doc.append("    </tbody>")
         doc.append("  </table>")
 
-    doc.append('  <footer style="margin-top: 40px; color: #94a3b8; font-size: 0.8rem;">Market Research Lab — Personal Investment Analysis Monolith</footer>')
+    doc.append(
+        '  <footer style="margin-top: 40px; color: #94a3b8; font-size: 0.8rem;">Market Research Lab — Personal Investment Analysis Monolith</footer>'
+    )
     doc.append("</body>")
     doc.append("</html>")
 
     return "\n".join(doc)
 
 
-def generate_valuation_csv(result_data: dict[str, Any]) -> str:
+def generate_valuation_csv(result_data: dict[str, JsonValue]) -> str:
     """Generate a tabular CSV export for valuation results."""
     output = io.StringIO()
     writer = csv.writer(output)
@@ -184,42 +279,75 @@ def generate_valuation_csv(result_data: dict[str, Any]) -> str:
         writer.writerow(["Value Per Share", result_data.get("value_per_share", "")])
         writer.writerow(["Enterprise Value", result_data.get("enterprise_value", "")])
         writer.writerow(["Equity Value", result_data.get("equity_value", "")])
-        writer.writerow(["Terminal Value Contribution", result_data.get("terminal_value_contribution", "")])
+        writer.writerow(
+            ["Terminal Value Contribution", result_data.get("terminal_value_contribution", "")]
+        )
         writer.writerow([])
 
         # Forecast cash flows table
-        cfs = result_data.get("forecast_cash_flows", [])
+        raw_cfs = result_data.get("forecast_cash_flows")
+        cfs = raw_cfs if isinstance(raw_cfs, list) else []
         if cfs:
-            writer.writerow(["Forecast Year", "Revenue", "Growth", "Operating Income", "Tax", "NOPAT", "Reinvestment", "FCFF", "Discount Factor", "Present Value"])
+            writer.writerow(
+                [
+                    "Forecast Year",
+                    "Revenue",
+                    "Growth",
+                    "Operating Income",
+                    "Tax",
+                    "NOPAT",
+                    "Reinvestment",
+                    "FCFF",
+                    "Discount Factor",
+                    "Present Value",
+                ]
+            )
             for cf in cfs:
-                writer.writerow([
-                    cf.get("year"),
-                    cf.get("revenue"),
-                    cf.get("revenue_growth"),
-                    cf.get("operating_income"),
-                    cf.get("tax"),
-                    cf.get("nopat"),
-                    cf.get("reinvestment"),
-                    cf.get("free_cash_flow"),
-                    cf.get("discount_factor"),
-                    cf.get("present_value"),
-                ])
+                if isinstance(cf, dict):
+                    writer.writerow(
+                        [
+                            cf.get("year"),
+                            cf.get("revenue"),
+                            cf.get("revenue_growth"),
+                            cf.get("operating_income"),
+                            cf.get("tax"),
+                            cf.get("nopat"),
+                            cf.get("reinvestment"),
+                            cf.get("free_cash_flow"),
+                            cf.get("discount_factor"),
+                            cf.get("present_value"),
+                        ]
+                    )
             writer.writerow([])
 
         # Scenarios
-        scenarios = result_data.get("scenarios", [])
+        raw_scenarios = result_data.get("scenarios")
+        scenarios = raw_scenarios if isinstance(raw_scenarios, list) else []
         if scenarios:
-            writer.writerow(["Scenario", "WACC", "Terminal Growth", "Revenue Growth", "Operating Margin", "Enterprise Value", "Value Per Share"])
+            writer.writerow(
+                [
+                    "Scenario",
+                    "WACC",
+                    "Terminal Growth",
+                    "Revenue Growth",
+                    "Operating Margin",
+                    "Enterprise Value",
+                    "Value Per Share",
+                ]
+            )
             for sc in scenarios:
-                writer.writerow([
-                    sc.get("name"),
-                    sc.get("wacc"),
-                    sc.get("terminal_growth_rate"),
-                    sc.get("revenue_growth_rate"),
-                    sc.get("operating_margin"),
-                    sc.get("enterprise_value"),
-                    sc.get("value_per_share"),
-                ])
+                if isinstance(sc, dict):
+                    writer.writerow(
+                        [
+                            sc.get("name"),
+                            sc.get("wacc"),
+                            sc.get("terminal_growth_rate"),
+                            sc.get("revenue_growth_rate"),
+                            sc.get("operating_margin"),
+                            sc.get("enterprise_value"),
+                            sc.get("value_per_share"),
+                        ]
+                    )
     else:
         writer.writerow(["Valuation Method", "Trading Comparables"])
         writer.writerow(["Method Revision", result_data.get("method_revision", "")])
@@ -227,19 +355,486 @@ def generate_valuation_csv(result_data: dict[str, Any]) -> str:
         writer.writerow(["Calculated At", result_data.get("calculated_at", "")])
         writer.writerow([])
 
-        writer.writerow(["Security", "Symbol", "Currency", "P/E", "EV/Revenue", "EV/EBITDA", "Free Cash Flow Yield"])
-        target = result_data.get("target", {})
-        peers = result_data.get("peers", [])
-        medians = result_data.get("peer_medians", {})
-        for comp in [target, *peers, medians]:
-            writer.writerow([
-                comp.get("name", ""),
-                comp.get("symbol", ""),
-                comp.get("currency", ""),
-                comp.get("price_to_earnings", ""),
-                comp.get("ev_to_revenue", ""),
-                comp.get("ev_to_ebitda", ""),
-                comp.get("free_cash_flow_yield", ""),
-            ])
+        writer.writerow(
+            [
+                "Security",
+                "Symbol",
+                "Currency",
+                "P/E",
+                "EV/Revenue",
+                "EV/EBITDA",
+                "Free Cash Flow Yield",
+            ]
+        )
+        target = result_data.get("target")
+        target_dict = target if isinstance(target, dict) else {}
+        peers_raw = result_data.get("peers")
+        peers_list = peers_raw if isinstance(peers_raw, list) else []
+        medians_raw = result_data.get("peer_medians")
+        medians_dict = medians_raw if isinstance(medians_raw, dict) else {}
+        for comp in [target_dict, *peers_list, medians_dict]:
+            if isinstance(comp, dict):
+                writer.writerow(
+                    [
+                        comp.get("name", ""),
+                        comp.get("symbol", ""),
+                        comp.get("currency", ""),
+                        comp.get("price_to_earnings", ""),
+                        comp.get("ev_to_revenue", ""),
+                        comp.get("ev_to_ebitda", ""),
+                        comp.get("free_cash_flow_yield", ""),
+                    ]
+                )
+
+    return output.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Backtest HTML and CSV Exporters
+# ---------------------------------------------------------------------------
+
+
+def generate_backtest_html_report(
+    result_data: dict[str, JsonValue],
+    manifest_data: dict[str, JsonValue],
+) -> str:
+    """Generate a self-contained, human-readable HTML Backtest report."""
+    spec_raw = result_data.get("specification")
+    spec = spec_raw if isinstance(spec_raw, dict) else {}
+    strategy_name = html.escape(str(spec.get("strategy_name") or "unnamed_strategy"))
+    strategy_rev = html.escape(
+        str(
+            result_data.get("strategy_revision")
+            or spec.get("strategy_revision")
+            or manifest_data.get("definition_revisions", [""])[0]
+            or "v1"
+        )
+    )
+    run_id = html.escape(str(result_data.get("run_id") or manifest_data.get("id") or "N/A"))
+    security_id = html.escape(str(spec.get("security_id") or "N/A"))
+    start_date = html.escape(str(spec.get("start_date") or ""))
+    end_date = html.escape(str(spec.get("end_date") or ""))
+    starting_cash = float(spec.get("starting_cash", 100000.0))
+
+    exec_raw = spec.get("execution")
+    execution = exec_raw if isinstance(exec_raw, dict) else {}
+    commission_rate = float(execution.get("commission_rate", 0.0))
+    slippage_rate = float(execution.get("slippage_rate", 0.0))
+    schedule = html.escape(str(execution.get("schedule") or "daily"))
+    price_field = html.escape(str(spec.get("price_field") or "close"))
+
+    dataset_versions = manifest_data.get("dataset_versions")
+    if not dataset_versions:
+        dataset_versions = [spec.get("dataset_version_id")] if spec.get("dataset_version_id") else []
+    dataset_version_list = (
+        dataset_versions if isinstance(dataset_versions, list) else [str(dataset_versions)]
+    )
+
+    raw_warnings = result_data.get("warnings")
+    warnings = raw_warnings if isinstance(raw_warnings, list) else []
+
+    metrics_raw = result_data.get("metrics")
+    metrics = metrics_raw if isinstance(metrics_raw, dict) else {}
+
+    total_return = float(metrics.get("total_return", 0.0))
+    ann_return = float(metrics.get("annualized_return", 0.0))
+    ann_vol = float(metrics.get("annualized_volatility", 0.0))
+    sharpe = float(metrics.get("sharpe_ratio", 0.0))
+    sortino = float(metrics.get("sortino_ratio", 0.0))
+    max_dd = float(metrics.get("max_drawdown", 0.0))
+    calmar = float(metrics.get("calmar_ratio", 0.0))
+    turnover = float(metrics.get("turnover", 0.0))
+    gross_exp = float(metrics.get("gross_exposure", 0.0))
+    net_exp = float(metrics.get("net_exposure", 0.0))
+    hit_rate = metrics.get("hit_rate")
+    bench_rel = metrics.get("benchmark_relative_return")
+    num_trades = int(metrics.get("num_trades", 0))
+    num_fills = int(metrics.get("num_fills", 0))
+
+    hit_rate_str = f"{float(hit_rate)*100:.1f}%" if hit_rate is not None else "—"
+    bench_rel_str = (
+        f"{float(bench_rel)*100:+.2f}%" if bench_rel is not None else "—"
+    )
+
+    doc = [
+        "<!DOCTYPE html>",
+        '<html lang="en">',
+        "<head>",
+        '  <meta charset="utf-8">',
+        f"  <title>Backtest Report — {security_id} ({strategy_name}:{strategy_rev})</title>",
+        "  <style>",
+        "    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.5; color: #1e293b; max-width: 1040px; margin: 40px auto; padding: 0 20px; }",
+        "    h1, h2, h3 { color: #0f172a; margin-top: 28px; }",
+        "    .meta { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 24px; }",
+        "    .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }",
+        "    .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 16px 0; }",
+        "    .metric-card { background: #f1f5f9; border-radius: 6px; padding: 12px 16px; border: 1px solid #e2e8f0; }",
+        "    .metric-value { font-size: 1.4rem; font-weight: 700; color: #0f172a; font-variant-numeric: tabular-nums; }",
+        "    .metric-label { font-size: 0.8rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }",
+        "    table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: 0.9rem; }",
+        "    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e2e8f0; }",
+        "    th { background: #f8fafc; font-weight: 600; color: #475569; position: sticky; top: 0; }",
+        "    .num { text-align: right; font-variant-numeric: tabular-nums; }",
+        "    .warning { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; border-radius: 4px; }",
+        "    .badge { display: inline-block; background: #e0e7ff; color: #3730a3; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; margin: 2px; }",
+        "    .badge-buy { background: #dcfce7; color: #166534; }",
+        "    .badge-sell { background: #fef2f2; color: #991b1b; }",
+        "    .scroll-table { max-height: 400px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 24px; }",
+        "  </style>",
+        "</head>",
+        "<body>",
+        f"  <h1>Backtest Report: {security_id} — {strategy_name}</h1>",
+        '  <div class="meta">',
+        '    <div class="meta-grid">',
+        f"      <div><strong>Strategy:</strong> {strategy_name} ({strategy_rev})</div>",
+        f"      <div><strong>Run ID:</strong> {run_id}</div>",
+        f"      <div><strong>Simulation Range:</strong> {start_date} to {end_date}</div>",
+        f"      <div><strong>Starting Cash:</strong> ${starting_cash:,.2f} USD</div>",
+        "      <div><strong>Sample Status:</strong> Out-of-sample (Point-in-time sequential simulation)</div>",
+        f"      <div><strong>Execution:</strong> Next-bar open ({schedule})</div>",
+        "    </div>",
+        '    <div style="margin-top: 12px;"><strong>Dataset Versions:</strong> '
+        + "".join(
+            f'<span class="badge">{html.escape(str(ds))}</span>' for ds in dataset_version_list
+        )
+        + "    </div>",
+        "  </div>",
+    ]
+
+    if warnings:
+        doc.append('  <div class="warning"><strong>Warnings:</strong><ul>')
+        for w in warnings:
+            doc.append(f"    <li>{html.escape(str(w))}</li>")
+        doc.append("  </ul></div>")
+
+    # Headline Performance Metrics
+    doc.append("  <h2>Performance Overview</h2>")
+    doc.append('  <div class="metric-grid">')
+    doc.append(
+        f'    <div class="metric-card"><div class="metric-label">Total Return</div><div class="metric-value">{total_return*100:+.2f}%</div></div>'
+    )
+    doc.append(
+        f'    <div class="metric-card"><div class="metric-label">Annualized Return</div><div class="metric-value">{ann_return*100:+.2f}%</div></div>'
+    )
+    doc.append(
+        f'    <div class="metric-card"><div class="metric-label">Annual Volatility</div><div class="metric-value">{ann_vol*100:.2f}%</div></div>'
+    )
+    doc.append(
+        f'    <div class="metric-card"><div class="metric-label">Sharpe Ratio</div><div class="metric-value">{sharpe:.2f}</div></div>'
+    )
+    doc.append(
+        f'    <div class="metric-card"><div class="metric-label">Sortino Ratio</div><div class="metric-value">{sortino:.2f}</div></div>'
+    )
+    doc.append(
+        f'    <div class="metric-card"><div class="metric-label">Max Drawdown</div><div class="metric-value">{max_dd*100:.2f}%</div></div>'
+    )
+    doc.append(
+        f'    <div class="metric-card"><div class="metric-label">Calmar Ratio</div><div class="metric-value">{calmar:.2f}</div></div>'
+    )
+    doc.append(
+        f'    <div class="metric-card"><div class="metric-label">Hit Rate / Win Rate</div><div class="metric-value">{hit_rate_str}</div></div>'
+    )
+    doc.append(
+        f'    <div class="metric-card"><div class="metric-label">Turnover</div><div class="metric-value">{turnover:.2f}x</div></div>'
+    )
+    doc.append(
+        f'    <div class="metric-card"><div class="metric-label">Gross / Net Exposure</div><div class="metric-value">{gross_exp*100:.0f}% / {net_exp*100:.0f}%</div></div>'
+    )
+    doc.append(
+        f'    <div class="metric-card"><div class="metric-label">Benchmark Relative</div><div class="metric-value">{bench_rel_str}</div></div>'
+    )
+    doc.append(
+        f'    <div class="metric-card"><div class="metric-label">Trades / Fills</div><div class="metric-value">{num_trades} / {num_fills}</div></div>'
+    )
+    doc.append("  </div>")
+
+    # Execution Assumptions Table
+    doc.append("  <h2>Execution Model & Strategy Assumptions</h2>")
+    doc.append("  <table>")
+    doc.append(
+        "    <thead><tr><th>Parameter / Assumption</th><th class=\"num\">Value</th></tr></thead>"
+    )
+    doc.append("    <tbody>")
+    doc.append(f"      <tr><td>Security Identifier</td><td class=\"num\">{security_id}</td></tr>")
+    doc.append(f"      <tr><td>Strategy Algorithm</td><td class=\"num\">{strategy_name}</td></tr>")
+    doc.append(
+        f"      <tr><td>Strategy Revision</td><td class=\"num\">{strategy_rev}</td></tr>"
+    )
+    doc.append(f"      <tr><td>Price Field</td><td class=\"num\">{price_field}</td></tr>")
+    doc.append(f"      <tr><td>Rebalance Schedule</td><td class=\"num\">{schedule}</td></tr>")
+    doc.append(
+        f"      <tr><td>Commission Rate</td><td class=\"num\">{commission_rate*10000:.1f} bps ({commission_rate*100:.3f}%)</td></tr>"
+    )
+    doc.append(
+        f"      <tr><td>Slippage Rate</td><td class=\"num\">{slippage_rate*10000:.1f} bps ({slippage_rate*100:.3f}%)</td></tr>"
+    )
+
+    params_raw = spec.get("parameters")
+    if isinstance(params_raw, dict):
+        for k, v in sorted(params_raw.items()):
+            doc.append(
+                f"      <tr><td>Strategy Parameter: {html.escape(k)}</td><td class=\"num\">{html.escape(str(v))}</td></tr>"
+            )
+    doc.append("    </tbody>")
+    doc.append("  </table>")
+
+    # Closed Trades Table
+    raw_trades = result_data.get("trades")
+    trades = raw_trades if isinstance(raw_trades, list) else []
+    doc.append(f"  <h2>Closed Trades ({len(trades)})</h2>")
+    if trades:
+        doc.append('  <div class="scroll-table">')
+        doc.append("    <table>")
+        doc.append(
+            '      <thead><tr><th>Trade ID</th><th>Security</th><th>Entry Date</th><th>Exit Date</th><th class="num">Entry Price</th><th class="num">Exit Price</th><th class="num">Quantity</th><th class="num">Costs</th><th class="num">PnL ($)</th><th class="num">Return (%)</th></tr></thead>'
+        )
+        doc.append("      <tbody>")
+        for tr in trades:
+            if isinstance(tr, dict):
+                pnl = float(tr.get("pnl", 0.0))
+                ret_pct = float(tr.get("return_pct", 0.0))
+                entry_cost = float(tr.get("entry_cost", 0.0))
+                exit_proceeds = float(tr.get("exit_proceeds", 0.0))
+                doc.append(
+                    f"        <tr><td>{html.escape(str(tr.get('trade_id')))}</td><td><strong>{html.escape(str(tr.get('security_id')))}</strong></td><td>{tr.get('entry_date')}</td><td>{tr.get('exit_date')}</td><td class=\"num\">${float(tr.get('entry_price', 0)):.2f}</td><td class=\"num\">${float(tr.get('exit_price', 0)):.2f}</td><td class=\"num\">{float(tr.get('quantity', 0)):.2f}</td><td class=\"num\">${(entry_cost - exit_proceeds + pnl):.2f}</td><td class=\"num\" style=\"color: {'#166534' if pnl >= 0 else '#991b1b'};\"><strong>${pnl:+,.2f}</strong></td><td class=\"num\" style=\"color: {'#166534' if ret_pct >= 0 else '#991b1b'};\">{ret_pct*100:+.2f}%</td></tr>"
+                )
+        doc.append("      </tbody>")
+        doc.append("    </table>")
+        doc.append("  </div>")
+    else:
+        doc.append("  <p><em>No round-trip trades completed during this Backtest run.</em></p>")
+
+    # Fills Table
+    raw_fills = result_data.get("fills")
+    fills = raw_fills if isinstance(raw_fills, list) else []
+    doc.append(f"  <h2>Simulated Execution Fills ({len(fills)})</h2>")
+    if fills:
+        doc.append('  <div class="scroll-table">')
+        doc.append("    <table>")
+        doc.append(
+            '      <thead><tr><th>Date</th><th>Side</th><th>Security</th><th class="num">Quantity</th><th class="num">Fill Price</th><th class="num">Notional</th><th class="num">Commission</th><th class="num">Slippage</th><th>Rationale</th></tr></thead>'
+        )
+        doc.append("      <tbody>")
+        for fill in fills:
+            if isinstance(fill, dict):
+                side = str(fill.get("side", "")).upper()
+                badge_class = "badge-buy" if side == "BUY" else "badge-sell"
+                doc.append(
+                    f"        <tr><td>{fill.get('session_date')}</td><td><span class=\"badge {badge_class}\">{side}</span></td><td><strong>{html.escape(str(fill.get('security_id')))}</strong></td><td class=\"num\">{float(fill.get('quantity', 0)):.2f}</td><td class=\"num\">${float(fill.get('price', 0)):.2f}</td><td class=\"num\">${float(fill.get('notional', 0)):,.2f}</td><td class=\"num\">${float(fill.get('commission', 0)):.2f}</td><td class=\"num\">${float(fill.get('slippage_cost', 0)):.2f}</td><td><small>{html.escape(str(fill.get('rationale', '')))}</small></td></tr>"
+                )
+        doc.append("      </tbody>")
+        doc.append("    </table>")
+        doc.append("  </div>")
+    else:
+        doc.append("  <p><em>No fills occurred during this Backtest run.</em></p>")
+
+    # Mark-to-market Ledger Table
+    raw_ledger = result_data.get("ledger")
+    ledger = raw_ledger if isinstance(raw_ledger, list) else []
+    doc.append(f"  <h2>Daily Mark-to-Market Ledger ({len(ledger)} sessions)</h2>")
+    if ledger:
+        doc.append('  <div class="scroll-table">')
+        doc.append("    <table>")
+        doc.append(
+            '      <thead><tr><th>Session Date</th><th class="num">Target Weight</th><th class="num">Shares</th><th class="num">Close Price</th><th class="num">Cash Balance</th><th class="num">Position Value</th><th class="num">Portfolio Value</th></tr></thead>'
+        )
+        doc.append("      <tbody>")
+        for row in ledger:
+            if isinstance(row, dict):
+                weight = row.get("signal_weight")
+                weight_str = (
+                    f"{float(weight)*100:.0f}%"
+                    if weight is not None and isinstance(weight, (int, float))
+                    else "—"
+                )
+                doc.append(
+                    f"        <tr><td>{row.get('session_date')}</td><td class=\"num\">{weight_str}</td><td class=\"num\">{float(row.get('shares', 0)):.2f}</td><td class=\"num\">${float(row.get('close_price', 0)):.2f}</td><td class=\"num\">${float(row.get('cash', 0)):,.2f}</td><td class=\"num\">${float(row.get('position_value', 0)):,.2f}</td><td class=\"num\"><strong>${float(row.get('portfolio_value', 0)):,.2f}</strong></td></tr>"
+                )
+        doc.append("      </tbody>")
+        doc.append("    </table>")
+        doc.append("  </div>")
+
+    doc.append(
+        '  <footer style="margin-top: 40px; color: #94a3b8; font-size: 0.8rem;">Market Research Lab — Personal Investment Analysis Monolith</footer>'
+    )
+    doc.append("</body>")
+    doc.append("</html>")
+
+    return "\n".join(doc)
+
+
+def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
+    """Generate a comprehensive multi-section CSV export for Backtest results."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    spec_raw = result_data.get("specification")
+    spec = spec_raw if isinstance(spec_raw, dict) else {}
+    metrics_raw = result_data.get("metrics")
+    metrics = metrics_raw if isinstance(metrics_raw, dict) else {}
+
+    # Section 1: Run Metadata & Specification
+    writer.writerow(["Backtest Run Specification", ""])
+    writer.writerow(["Run ID", result_data.get("run_id", "")])
+    writer.writerow(["Strategy Name", spec.get("strategy_name", "")])
+    writer.writerow(
+        [
+            "Strategy Revision",
+            result_data.get("strategy_revision") or spec.get("strategy_revision", ""),
+        ]
+    )
+    writer.writerow(["Security ID", spec.get("security_id", "")])
+    writer.writerow(["Dataset Version ID", spec.get("dataset_version_id", "")])
+    writer.writerow(["Start Date", spec.get("start_date", "")])
+    writer.writerow(["End Date", spec.get("end_date", "")])
+    writer.writerow(["Starting Cash", spec.get("starting_cash", "")])
+    writer.writerow(["Price Field", spec.get("price_field", "close")])
+    writer.writerow(["Sample Status", "Out-of-sample (Point-in-time sequential simulation)"])
+
+    exec_raw = spec.get("execution")
+    if isinstance(exec_raw, dict):
+        writer.writerow(["Schedule", exec_raw.get("schedule", "daily")])
+        writer.writerow(["Commission Rate", exec_raw.get("commission_rate", 0.0)])
+        writer.writerow(["Slippage Rate", exec_raw.get("slippage_rate", 0.0)])
+
+    params_raw = spec.get("parameters")
+    if isinstance(params_raw, dict):
+        for k, v in sorted(params_raw.items()):
+            writer.writerow([f"Parameter: {k}", v])
+    writer.writerow([])
+
+    # Section 2: Headline Performance Metrics
+    writer.writerow(["Performance Metrics", ""])
+    writer.writerow(["Total Return", metrics.get("total_return", "")])
+    writer.writerow(["Annualized Return", metrics.get("annualized_return", "")])
+    writer.writerow(["Annualized Volatility", metrics.get("annualized_volatility", "")])
+    writer.writerow(["Sharpe Ratio", metrics.get("sharpe_ratio", "")])
+    writer.writerow(["Sortino Ratio", metrics.get("sortino_ratio", "")])
+    writer.writerow(["Max Drawdown", metrics.get("max_drawdown", "")])
+    writer.writerow(["Calmar Ratio", metrics.get("calmar_ratio", "")])
+    writer.writerow(["Hit Rate", metrics.get("hit_rate", "")])
+    writer.writerow(["Turnover", metrics.get("turnover", "")])
+    writer.writerow(["Gross Exposure", metrics.get("gross_exposure", "")])
+    writer.writerow(["Net Exposure", metrics.get("net_exposure", "")])
+    writer.writerow(["Benchmark Relative Return", metrics.get("benchmark_relative_return", "")])
+    writer.writerow(["Number of Trades", metrics.get("num_trades", "")])
+    writer.writerow(["Number of Fills", metrics.get("num_fills", "")])
+    writer.writerow([])
+
+    # Warnings
+    raw_warnings = result_data.get("warnings")
+    warnings = raw_warnings if isinstance(raw_warnings, list) else []
+    if warnings:
+        writer.writerow(["Warnings", ""])
+        for w in warnings:
+            writer.writerow(["Warning", str(w)])
+        writer.writerow([])
+
+    # Section 3: Closed Trades Log
+    writer.writerow(["Closed Trades", ""])
+    raw_trades = result_data.get("trades")
+    trades = raw_trades if isinstance(raw_trades, list) else []
+    writer.writerow(
+        [
+            "Trade ID",
+            "Security ID",
+            "Entry Date",
+            "Exit Date",
+            "Entry Price",
+            "Exit Price",
+            "Quantity",
+            "Entry Cost",
+            "Exit Proceeds",
+            "PnL",
+            "Return Pct",
+        ]
+    )
+    for tr in trades:
+        if isinstance(tr, dict):
+            writer.writerow(
+                [
+                    tr.get("trade_id", ""),
+                    tr.get("security_id", ""),
+                    tr.get("entry_date", ""),
+                    tr.get("exit_date", ""),
+                    tr.get("entry_price", ""),
+                    tr.get("exit_price", ""),
+                    tr.get("quantity", ""),
+                    tr.get("entry_cost", ""),
+                    tr.get("exit_proceeds", ""),
+                    tr.get("pnl", ""),
+                    tr.get("return_pct", ""),
+                ]
+            )
+    writer.writerow([])
+
+    # Section 4: Simulated Fills Log
+    writer.writerow(["Simulated Fills", ""])
+    raw_fills = result_data.get("fills")
+    fills = raw_fills if isinstance(raw_fills, list) else []
+    writer.writerow(
+        [
+            "Trade ID",
+            "Security ID",
+            "Session Date",
+            "Decision Time",
+            "Side",
+            "Quantity",
+            "Fill Price",
+            "Notional",
+            "Commission",
+            "Slippage Cost",
+            "Rationale",
+        ]
+    )
+    for fill in fills:
+        if isinstance(fill, dict):
+            writer.writerow(
+                [
+                    fill.get("trade_id", ""),
+                    fill.get("security_id", ""),
+                    fill.get("session_date", ""),
+                    fill.get("decision_time", ""),
+                    fill.get("side", ""),
+                    fill.get("quantity", ""),
+                    fill.get("price", ""),
+                    fill.get("notional", ""),
+                    fill.get("commission", ""),
+                    fill.get("slippage_cost", ""),
+                    fill.get("rationale", ""),
+                ]
+            )
+    writer.writerow([])
+
+    # Section 5: Daily Mark-to-Market Ledger
+    writer.writerow(["Daily Portfolio Ledger", ""])
+    raw_ledger = result_data.get("ledger")
+    ledger = raw_ledger if isinstance(raw_ledger, list) else []
+    writer.writerow(
+        [
+            "Session Date",
+            "Signal Weight",
+            "Signal Decision Time",
+            "Shares",
+            "Close Price",
+            "Cash",
+            "Position Value",
+            "Portfolio Value",
+        ]
+    )
+    for row in ledger:
+        if isinstance(row, dict):
+            writer.writerow(
+                [
+                    row.get("session_date", ""),
+                    row.get("signal_weight", ""),
+                    row.get("signal_decision_time", ""),
+                    row.get("shares", ""),
+                    row.get("close_price", ""),
+                    row.get("cash", ""),
+                    row.get("position_value", ""),
+                    row.get("portfolio_value", ""),
+                ]
+            )
 
     return output.getvalue()

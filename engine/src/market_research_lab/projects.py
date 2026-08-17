@@ -60,6 +60,25 @@ class BacktestRunRecord:
     result: dict[str, JsonValue]
 
 
+@dataclass(frozen=True)
+class FailedBacktestRunRecord:
+    """Record describing a failed Backtest to persist as a Run artifact."""
+
+    strategy_revision: str
+    dataset_version_ids: list[str]
+    parameters: dict[str, JsonValue]
+    error_message: str
+
+
+@dataclass(frozen=True)
+class ExportArtifact:
+    """Exported file payload with content, MIME media type, and filename."""
+
+    content: str
+    media_type: str
+    filename: str
+
+
 class ProjectStore:
     """Owns Project paths, atomic file writes, revisions, and Run directories."""
 
@@ -214,8 +233,8 @@ class ProjectStore:
 
     def get_valuation_export(
         self, project_id: str, run_id: str, format_type: str
-    ) -> tuple[str, str, str]:
-        """Return (content, media_type, filename) for an exported Valuation run."""
+    ) -> ExportArtifact:
+        """Return ExportArtifact for an exported Valuation run."""
         self.get_project(project_id)
         run_dir = self._directory(project_id) / "runs" / run_id
         if not run_dir.is_dir():
@@ -225,21 +244,37 @@ class ProjectStore:
         if norm_fmt in ("html", "report"):
             report_path = run_dir / "artifacts" / "valuation_report.html"
             if report_path.is_file():
-                return report_path.read_text(encoding="utf-8"), "text/html", f"valuation_{run_id}.html"
+                return ExportArtifact(
+                    content=report_path.read_text(encoding="utf-8"),
+                    media_type="text/html",
+                    filename=f"valuation_{run_id}.html",
+                )
             raise FileNotFoundError(f"HTML report not found for run {run_id}")
         if norm_fmt == "csv":
             csv_path = run_dir / "artifacts" / "summary.csv"
             if csv_path.is_file():
-                return csv_path.read_text(encoding="utf-8"), "text/csv", f"valuation_{run_id}.csv"
+                return ExportArtifact(
+                    content=csv_path.read_text(encoding="utf-8"),
+                    media_type="text/csv",
+                    filename=f"valuation_{run_id}.csv",
+                )
             raise FileNotFoundError(f"CSV export not found for run {run_id}")
         if norm_fmt in ("json", "manifest"):
             manifest_path = run_dir / "manifest.json"
             artifact_path = run_dir / "artifacts" / "valuation.json"
             combined = {
-                "manifest": json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {},
-                "valuation": json.loads(artifact_path.read_text(encoding="utf-8")) if artifact_path.is_file() else {},
+                "manifest": json.loads(manifest_path.read_text(encoding="utf-8"))
+                if manifest_path.is_file()
+                else {},
+                "valuation": json.loads(artifact_path.read_text(encoding="utf-8"))
+                if artifact_path.is_file()
+                else {},
             }
-            return json.dumps(combined, indent=2), "application/json", f"valuation_manifest_{run_id}.json"
+            return ExportArtifact(
+                content=json.dumps(combined, indent=2),
+                media_type="application/json",
+                filename=f"valuation_manifest_{run_id}.json",
+            )
 
         raise ValueError(f"Unsupported export format: {format_type}. Supported: json, csv, html")
 
@@ -282,25 +317,111 @@ class ProjectStore:
         record: BacktestRunRecord,
     ) -> str:
         """Persist one completed Backtest as a reproducible Run artifact."""
+        from .reporting import generate_backtest_csv, generate_backtest_html_report
+
         run_id = self.create_run(project_id)
         run_directory = self._directory(project_id) / "runs" / run_id
-        self._write_json(
-            run_directory / "manifest.json",
-            {
-                "id": run_id,
-                "kind": "backtest",
-                "definition_revisions": [record.strategy_revision],
-                "dataset_versions": record.dataset_version_ids,
-                "parameters": record.parameters,
-                "software_revision": "uncommitted",
-                "environment": {"python": os.sys.version},
-            },
-        )
+        manifest = {
+            "id": run_id,
+            "kind": "backtest",
+            "definition_revisions": [record.strategy_revision],
+            "dataset_versions": record.dataset_version_ids,
+            "parameters": record.parameters,
+            "software_revision": "uncommitted",
+            "environment": {"python": os.sys.version},
+        }
+        self._write_json(run_directory / "manifest.json", manifest)
         persisted_result = dict(record.result)
+        persisted_result["strategy_revision"] = record.strategy_revision
         persisted_result["run_id"] = run_id
         self._write_json(run_directory / "artifacts" / "backtest.json", persisted_result)
+
+        # Write self-contained HTML report and CSV summary artifacts
+        html_report = generate_backtest_html_report(persisted_result, manifest)
+        (run_directory / "artifacts" / "backtest_report.html").write_text(
+            html_report, encoding="utf-8"
+        )
+        csv_data = generate_backtest_csv(persisted_result)
+        (run_directory / "artifacts" / "summary.csv").write_text(csv_data, encoding="utf-8")
+
         self._write_json(run_directory / "status.json", {"id": run_id, "status": "completed"})
         return run_id
+
+    def create_failed_backtest_run(
+        self,
+        project_id: str,
+        record: FailedBacktestRunRecord,
+    ) -> str:
+        """Persist a failed Backtest run recording its error and logs without partial artifacts (CORE-008)."""
+        run_id = self.create_run(project_id)
+        run_directory = self._directory(project_id) / "runs" / run_id
+        manifest = {
+            "id": run_id,
+            "kind": "backtest",
+            "definition_revisions": [record.strategy_revision],
+            "dataset_versions": record.dataset_version_ids,
+            "parameters": record.parameters,
+            "software_revision": "uncommitted",
+            "environment": {"python": os.sys.version},
+            "error": record.error_message,
+        }
+        self._write_json(run_directory / "manifest.json", manifest)
+        self._write_json(
+            run_directory / "artifacts" / "error.json",
+            {"run_id": run_id, "error": record.error_message, "failed_at": _timestamp()},
+        )
+        self._write_json(
+            run_directory / "status.json",
+            {"id": run_id, "status": "failed", "error": record.error_message},
+        )
+        return run_id
+
+    def get_backtest_export(
+        self, project_id: str, run_id: str, format_type: str
+    ) -> ExportArtifact:
+        """Return ExportArtifact for an exported Backtest run."""
+        self.get_project(project_id)
+        run_dir = self._directory(project_id) / "runs" / run_id
+        if not run_dir.is_dir():
+            raise ProjectNotFoundError(f"Run {run_id} not found in project {project_id}")
+
+        norm_fmt = format_type.lower().strip()
+        if norm_fmt in ("html", "report"):
+            report_path = run_dir / "artifacts" / "backtest_report.html"
+            if report_path.is_file():
+                return ExportArtifact(
+                    content=report_path.read_text(encoding="utf-8"),
+                    media_type="text/html",
+                    filename=f"backtest_{run_id}.html",
+                )
+            raise FileNotFoundError(f"HTML report not found for run {run_id}")
+        if norm_fmt == "csv":
+            csv_path = run_dir / "artifacts" / "summary.csv"
+            if csv_path.is_file():
+                return ExportArtifact(
+                    content=csv_path.read_text(encoding="utf-8"),
+                    media_type="text/csv",
+                    filename=f"backtest_{run_id}.csv",
+                )
+            raise FileNotFoundError(f"CSV export not found for run {run_id}")
+        if norm_fmt in ("json", "manifest"):
+            manifest_path = run_dir / "manifest.json"
+            artifact_path = run_dir / "artifacts" / "backtest.json"
+            combined = {
+                "manifest": json.loads(manifest_path.read_text(encoding="utf-8"))
+                if manifest_path.is_file()
+                else {},
+                "backtest": json.loads(artifact_path.read_text(encoding="utf-8"))
+                if artifact_path.is_file()
+                else {},
+            }
+            return ExportArtifact(
+                content=json.dumps(combined, indent=2),
+                media_type="application/json",
+                filename=f"backtest_manifest_{run_id}.json",
+            )
+
+        raise ValueError(f"Unsupported export format: {format_type}. Supported: json, csv, html")
 
     def list_backtest_results(self, project_id: str) -> list[dict[str, JsonValue]]:
         """Read completed Backtest Run artifacts for Project reloads."""

@@ -57,6 +57,7 @@ from .market_data import (
 )
 from .projects import (
     BacktestRunRecord,
+    FailedBacktestRunRecord,
     Project,
     ProjectNotFoundError,
     ProjectStore,
@@ -1369,10 +1370,10 @@ def create_app(
     market_store = MarketDataStore(workspace_root)
     app = FastAPI(title="Market Research Lab", version="0.1.0")
     env_candidates = [
-        repository_root / ".env.local",
-        repository_root / ".env",
         workspace_root / ".env.local",
         workspace_root / ".env",
+        repository_root / ".env.local",
+        repository_root / ".env",
     ]
     env_file = next((p for p in env_candidates if p.exists()), env_candidates[0])
     register_provider_download_route(
@@ -1845,13 +1846,22 @@ def create_app(
         run_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
         format_type: str = FastAPIPath(pattern=r"^(html|csv|json)$"),
     ) -> Response:
-        content, media_type, filename = store.get_valuation_export(
-            str(project_id), run_id, format_type
-        )
+        try:
+            artifact = store.get_valuation_export(str(project_id), run_id, format_type)
+        except FileNotFoundError as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(error),
+            ) from error
+        except ValueError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(error),
+            ) from error
         return Response(
-            content=content,
-            media_type=media_type,
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            content=artifact.content,
+            media_type=artifact.media_type,
+            headers={"Content-Disposition": f'attachment; filename="{artifact.filename}"'},
         )
 
     @app.get(
@@ -1872,41 +1882,73 @@ def create_app(
     def run_project_backtest(
         project_id: UUID, request: BacktestRunRequest
     ) -> BacktestResultResponse:
+        store.get_project(str(project_id))
         if request.start_date > request.end_date:
+            store.create_failed_backtest_run(
+                str(project_id),
+                FailedBacktestRunRecord(
+                    strategy_revision=request.strategy_revision,
+                    dataset_version_ids=[request.dataset_version_id],
+                    parameters=dict(request.parameters),
+                    error_message="start_date must not be after end_date.",
+                ),
+            )
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="start_date must not be after end_date.",
             )
         security = market_store.get_security(request.symbol)
         if not security:
-            raise SecurityNotFoundError(request.symbol)
-        market_store.ensure_historical_eligibility(request.dataset_version_id)
-        bars = market_store.history(request.dataset_version_id, symbol=security.security_id)
-        if not bars:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=(
-                    f"No price history found for symbol '{request.symbol}' "
-                    f"in dataset '{request.dataset_version_id}'."
+            store.create_failed_backtest_run(
+                str(project_id),
+                FailedBacktestRunRecord(
+                    strategy_revision=request.strategy_revision,
+                    dataset_version_ids=[request.dataset_version_id],
+                    parameters=dict(request.parameters),
+                    error_message=f"Security not found: {request.symbol}",
                 ),
             )
-        spec = BacktestSpecification(
-            strategy_name=request.strategy_name,
-            strategy_revision=request.strategy_revision,
-            dataset_version_id=request.dataset_version_id,
-            security_id=security.security_id,
-            start_date=request.start_date,
-            end_date=request.end_date,
-            starting_cash=request.starting_cash,
-            parameters=request.parameters,
-            price_field=request.price_field,
-            execution=ExecutionModelAssumptions(
-                schedule=request.execution.schedule,
-                commission_rate=request.execution.commission_rate,
-                slippage_rate=request.execution.slippage_rate,
-            ),
-        )
-        result = run_backtest(spec, bars=bars)
+            raise SecurityNotFoundError(request.symbol)
+        try:
+            market_store.ensure_historical_eligibility(request.dataset_version_id)
+            bars = market_store.history(request.dataset_version_id, symbol=security.security_id)
+            if not bars:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"No price history found for symbol '{request.symbol}' "
+                        f"in dataset '{request.dataset_version_id}'."
+                    ),
+                )
+            spec = BacktestSpecification(
+                strategy_name=request.strategy_name,
+                strategy_revision=request.strategy_revision,
+                dataset_version_id=request.dataset_version_id,
+                security_id=security.security_id,
+                start_date=request.start_date,
+                end_date=request.end_date,
+                starting_cash=request.starting_cash,
+                parameters=request.parameters,
+                price_field=request.price_field,
+                execution=ExecutionModelAssumptions(
+                    schedule=request.execution.schedule,
+                    commission_rate=request.execution.commission_rate,
+                    slippage_rate=request.execution.slippage_rate,
+                ),
+            )
+            result = run_backtest(spec, bars=bars)
+        except Exception as error:
+            store.create_failed_backtest_run(
+                str(project_id),
+                FailedBacktestRunRecord(
+                    strategy_revision=request.strategy_revision,
+                    dataset_version_ids=[request.dataset_version_id],
+                    parameters=dict(request.parameters),
+                    error_message=str(error),
+                ),
+            )
+            raise
+
         run_id = store.create_backtest_result(
             str(project_id),
             BacktestRunRecord(
@@ -1954,6 +1996,33 @@ def create_app(
             item["result"],
             run_id=run_id,
             strategy_revision=item["strategy_revision"],
+        )
+
+    @app.get(
+        "/api/projects/{project_id}/backtests/{run_id}/export/{format_type}",
+        tags=["backtests"],
+    )
+    def export_backtest(
+        project_id: UUID,
+        run_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
+        format_type: str = FastAPIPath(pattern=r"^(html|csv|json)$"),
+    ) -> Response:
+        try:
+            artifact = store.get_backtest_export(str(project_id), run_id, format_type)
+        except FileNotFoundError as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(error),
+            ) from error
+        except ValueError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(error),
+            ) from error
+        return Response(
+            content=artifact.content,
+            media_type=artifact.media_type,
+            headers={"Content-Disposition": f'attachment; filename="{artifact.filename}"'},
         )
 
     @app.get(

@@ -1,4 +1,5 @@
 import io
+import json
 
 import pandas as pd
 import pytest
@@ -1189,3 +1190,78 @@ def test_backtest_run_rejects_start_after_end(tmp_path):
         },
     )
     assert response.status_code == 422
+
+    # Verify failed run artifact persistence (CORE-008)
+    runs_dir = tmp_path / "projects" / project["id"] / "runs"
+    assert runs_dir.is_dir()
+    run_folders = list(runs_dir.iterdir())
+    assert len(run_folders) == 1
+    failed_run = run_folders[0]
+    status_file = json.loads((failed_run / "status.json").read_text(encoding="utf-8"))
+    assert status_file["status"] == "failed"
+    assert "start_date must not be after end_date" in status_file["error"]
+    error_artifact = json.loads((failed_run / "artifacts" / "error.json").read_text(encoding="utf-8"))
+    assert "start_date must not be after end_date" in error_artifact["error"]
+
+
+def test_backtest_run_exports_html_csv_json(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Export Project"}).json()
+
+    csv_content = (
+        "symbol,date,open,high,low,close,volume,available_at\n"
+        "AAPL,2024-01-02,100,105,99,102,1000,2024-01-02T20:00:00Z\n"
+        "AAPL,2024-01-03,102,108,101,106,1200,2024-01-03T20:00:00Z\n"
+        "AAPL,2024-01-04,106,110,105,108,1100,2024-01-04T20:00:00Z\n"
+        "AAPL,2024-01-05,108,112,107,110,1300,2024-01-05T20:00:00Z\n"
+        "AAPL,2024-01-08,110,114,109,112,1500,2024-01-08T20:00:00Z\n"
+        "AAPL,2024-01-09,112,116,111,114,1400,2024-01-09T20:00:00Z\n"
+        "AAPL,2024-01-10,114,118,113,116,1600,2024-01-10T20:00:00Z\n"
+    )
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "test_source"},
+        files={"file": ("bars.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
+    )
+    assert imported.status_code == 201
+    version_id = imported.json()["dataset_version_id"]
+
+    response = client.post(
+        f"/api/projects/{project['id']}/backtests",
+        json={
+            "strategy_name": "long_flat_moving_average",
+            "strategy_revision": "long_flat_moving_average:v1",
+            "dataset_version_id": version_id,
+            "symbol": "AAPL",
+            "start_date": "2024-01-02",
+            "end_date": "2024-01-10",
+            "starting_cash": 100000,
+            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+        },
+    )
+    assert response.status_code == 201
+    run_id = response.json()["run_id"]
+
+    # HTML export
+    html_res = client.get(f"/api/projects/{project['id']}/backtests/{run_id}/export/html")
+    assert html_res.status_code == 200
+    assert "text/html" in html_res.headers["content-type"]
+    assert f"backtest_{run_id}.html" in html_res.headers["content-disposition"]
+    assert "Backtest Report" in html_res.text
+
+    # CSV export
+    csv_res = client.get(f"/api/projects/{project['id']}/backtests/{run_id}/export/csv")
+    assert csv_res.status_code == 200
+    assert "text/csv" in csv_res.headers["content-type"]
+    assert f"backtest_{run_id}.csv" in csv_res.headers["content-disposition"]
+    assert "Performance Metrics" in csv_res.text
+
+    # JSON export
+    json_res = client.get(f"/api/projects/{project['id']}/backtests/{run_id}/export/json")
+    assert json_res.status_code == 200
+    assert "application/json" in json_res.headers["content-type"]
+    assert f"backtest_manifest_{run_id}.json" in json_res.headers["content-disposition"]
+    data = json_res.json()
+    assert "manifest" in data
+    assert "backtest" in data
+
