@@ -61,6 +61,16 @@ class BacktestRunRecord:
 
 
 @dataclass(frozen=True)
+class FailedBacktestRunRecord:
+    """Record describing a failed Backtest to persist as a Run artifact."""
+
+    strategy_revision: str
+    dataset_version_ids: list[str]
+    parameters: dict[str, JsonValue]
+    error_message: str
+
+
+@dataclass(frozen=True)
 class ExportArtifact:
     """Exported file payload with content, MIME media type, and filename."""
 
@@ -335,6 +345,35 @@ class ProjectStore:
         (run_directory / "artifacts" / "summary.csv").write_text(csv_data, encoding="utf-8")
 
         self._write_json(run_directory / "status.json", {"id": run_id, "status": "completed"})
+        return run_id
+
+    def create_failed_backtest_run(
+        self,
+        project_id: str,
+        record: FailedBacktestRunRecord,
+    ) -> str:
+        """Persist a failed Backtest run recording its error and logs without partial artifacts (CORE-008)."""
+        run_id = self.create_run(project_id)
+        run_directory = self._directory(project_id) / "runs" / run_id
+        manifest = {
+            "id": run_id,
+            "kind": "backtest",
+            "definition_revisions": [record.strategy_revision],
+            "dataset_versions": record.dataset_version_ids,
+            "parameters": record.parameters,
+            "software_revision": "uncommitted",
+            "environment": {"python": os.sys.version},
+            "error": record.error_message,
+        }
+        self._write_json(run_directory / "manifest.json", manifest)
+        self._write_json(
+            run_directory / "artifacts" / "error.json",
+            {"run_id": run_id, "error": record.error_message, "failed_at": _timestamp()},
+        )
+        self._write_json(
+            run_directory / "status.json",
+            {"id": run_id, "status": "failed", "error": record.error_message},
+        )
         return run_id
 
     def get_backtest_export(

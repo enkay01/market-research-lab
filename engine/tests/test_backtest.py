@@ -322,6 +322,15 @@ def test_backtest_html_report_and_csv_generation():
     assert "Daily Portfolio Ledger" in csv_report
     assert "AAPL" in csv_report
 
+    # Test report and CSV with explicit warnings
+    result_with_warnings = dict(result_json)
+    result_with_warnings["warnings"] = ["Simulated volume constraint hit on 2024-01-05"]
+    html_with_warn = generate_backtest_html_report(result_with_warnings, result.manifest)
+    assert "Simulated volume constraint hit" in html_with_warn
+    csv_with_warn = generate_backtest_csv(result_with_warnings)
+    assert "Warnings" in csv_with_warn
+    assert "Simulated volume constraint hit on 2024-01-05" in csv_with_warn
+
 
 def test_backtest_persistence_and_export_artifacts(tmp_path):
     from market_research_lab.projects import BacktestRunRecord, ProjectStore

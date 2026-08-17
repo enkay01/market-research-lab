@@ -57,6 +57,7 @@ from .market_data import (
 )
 from .projects import (
     BacktestRunRecord,
+    FailedBacktestRunRecord,
     Project,
     ProjectNotFoundError,
     ProjectStore,
@@ -1881,41 +1882,73 @@ def create_app(
     def run_project_backtest(
         project_id: UUID, request: BacktestRunRequest
     ) -> BacktestResultResponse:
+        store.get_project(str(project_id))
         if request.start_date > request.end_date:
+            store.create_failed_backtest_run(
+                str(project_id),
+                FailedBacktestRunRecord(
+                    strategy_revision=request.strategy_revision,
+                    dataset_version_ids=[request.dataset_version_id],
+                    parameters=dict(request.parameters),
+                    error_message="start_date must not be after end_date.",
+                ),
+            )
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="start_date must not be after end_date.",
             )
         security = market_store.get_security(request.symbol)
         if not security:
-            raise SecurityNotFoundError(request.symbol)
-        market_store.ensure_historical_eligibility(request.dataset_version_id)
-        bars = market_store.history(request.dataset_version_id, symbol=security.security_id)
-        if not bars:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=(
-                    f"No price history found for symbol '{request.symbol}' "
-                    f"in dataset '{request.dataset_version_id}'."
+            store.create_failed_backtest_run(
+                str(project_id),
+                FailedBacktestRunRecord(
+                    strategy_revision=request.strategy_revision,
+                    dataset_version_ids=[request.dataset_version_id],
+                    parameters=dict(request.parameters),
+                    error_message=f"Security not found: {request.symbol}",
                 ),
             )
-        spec = BacktestSpecification(
-            strategy_name=request.strategy_name,
-            strategy_revision=request.strategy_revision,
-            dataset_version_id=request.dataset_version_id,
-            security_id=security.security_id,
-            start_date=request.start_date,
-            end_date=request.end_date,
-            starting_cash=request.starting_cash,
-            parameters=request.parameters,
-            price_field=request.price_field,
-            execution=ExecutionModelAssumptions(
-                schedule=request.execution.schedule,
-                commission_rate=request.execution.commission_rate,
-                slippage_rate=request.execution.slippage_rate,
-            ),
-        )
-        result = run_backtest(spec, bars=bars)
+            raise SecurityNotFoundError(request.symbol)
+        try:
+            market_store.ensure_historical_eligibility(request.dataset_version_id)
+            bars = market_store.history(request.dataset_version_id, symbol=security.security_id)
+            if not bars:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"No price history found for symbol '{request.symbol}' "
+                        f"in dataset '{request.dataset_version_id}'."
+                    ),
+                )
+            spec = BacktestSpecification(
+                strategy_name=request.strategy_name,
+                strategy_revision=request.strategy_revision,
+                dataset_version_id=request.dataset_version_id,
+                security_id=security.security_id,
+                start_date=request.start_date,
+                end_date=request.end_date,
+                starting_cash=request.starting_cash,
+                parameters=request.parameters,
+                price_field=request.price_field,
+                execution=ExecutionModelAssumptions(
+                    schedule=request.execution.schedule,
+                    commission_rate=request.execution.commission_rate,
+                    slippage_rate=request.execution.slippage_rate,
+                ),
+            )
+            result = run_backtest(spec, bars=bars)
+        except Exception as error:
+            store.create_failed_backtest_run(
+                str(project_id),
+                FailedBacktestRunRecord(
+                    strategy_revision=request.strategy_revision,
+                    dataset_version_ids=[request.dataset_version_id],
+                    parameters=dict(request.parameters),
+                    error_message=str(error),
+                ),
+            )
+            raise
+
         run_id = store.create_backtest_result(
             str(project_id),
             BacktestRunRecord(

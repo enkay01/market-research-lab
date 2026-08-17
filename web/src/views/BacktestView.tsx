@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Badge,
   Banner,
@@ -12,7 +12,6 @@ import {
   LayoutPanel,
   SegmentedControl,
   SegmentedControlItem,
-  Spinner,
   Table,
   TableBody,
   TableCell,
@@ -29,6 +28,7 @@ import {
   api,
   type BacktestResult,
   type CoverageResponse,
+  type EquityPoint,
   type Project,
   type Security,
 } from "../api/client";
@@ -85,9 +85,124 @@ function KpiCard({
   );
 }
 
+function EquityDrawdownChart({
+  equityCurve,
+  drawdownCurve,
+}: {
+  equityCurve?: EquityPoint[];
+  drawdownCurve?: EquityPoint[];
+}) {
+  if (!equityCurve || equityCurve.length < 2) {
+    return null;
+  }
+
+  const width = 800;
+  const height = 180;
+  const padding = 20;
+
+  const minEquity = Math.min(...equityCurve.map((p) => p.portfolio_value));
+  const maxEquity = Math.max(...equityCurve.map((p) => p.portfolio_value));
+  const rangeEquity = maxEquity - minEquity || 1;
+
+  const equityPoints = equityCurve
+    .map((p, i) => {
+      const x = padding + (i / (equityCurve.length - 1)) * (width - 2 * padding);
+      const y = height - padding - ((p.portfolio_value - minEquity) / rangeEquity) * (height - 2 * padding);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+
+  const minDd = drawdownCurve && drawdownCurve.length > 0
+    ? Math.min(...drawdownCurve.map((p) => p.portfolio_value))
+    : 0;
+
+  const ddPoints = (drawdownCurve || [])
+    .map((p, i) => {
+      const x = padding + (i / (drawdownCurve!.length - 1)) * (width - 2 * padding);
+      const y = minDd < 0
+        ? padding + (p.portfolio_value / minDd) * (height - 2 * padding)
+        : padding;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+
+  return (
+    <VStack
+      gap={2}
+      style={{
+        padding: "var(--spacing-4, 1rem)",
+        background: "var(--color-bg-subtle, #f8fafc)",
+        borderRadius: "var(--radius-medium, 0.5rem)",
+        border: "1px solid var(--color-border, #e2e8f0)",
+      }}
+    >
+      <HStack justify="between" align="center">
+        <Heading level={3}>Equity &amp; Drawdown Curve (Point-in-Time)</Heading>
+        <HStack gap={2}>
+          <Token label={`High: ${currencyFormat(maxEquity)}`} color="green" />
+          <Token label={`Low: ${currencyFormat(minEquity)}`} color="purple" />
+        </HStack>
+      </HStack>
+
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        style={{
+          width: "100%",
+          height: "180px",
+          overflow: "visible",
+        }}
+      >
+        {/* Zero baseline */}
+        <line
+          x1={padding}
+          y1={height - padding}
+          x2={width - padding}
+          y2={height - padding}
+          stroke="var(--color-border, #cbd5e1)"
+          strokeWidth="1"
+          strokeDasharray="4 4"
+        />
+
+        {/* Equity Polyline */}
+        <polyline
+          fill="none"
+          stroke="var(--color-brand-primary, #3b82f6)"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          points={equityPoints}
+        />
+
+        {/* Drawdown Polyline if available */}
+        {ddPoints && (
+          <polyline
+            fill="none"
+            stroke="var(--color-text-danger, #ef4444)"
+            strokeWidth="1.5"
+            strokeDasharray="3 3"
+            points={ddPoints}
+          />
+        )}
+      </svg>
+      <HStack justify="between">
+        <Text type="supporting">{equityCurve[0]?.session_date}</Text>
+        <HStack gap={3}>
+          <Text type="supporting" style={{ color: "var(--color-brand-primary, #3b82f6)" }}>
+            — Portfolio Equity
+          </Text>
+          <Text type="supporting" style={{ color: "var(--color-text-danger, #ef4444)" }}>
+            --- Max Drawdown
+          </Text>
+        </HStack>
+        <Text type="supporting">{equityCurve[equityCurve.length - 1]?.session_date}</Text>
+      </HStack>
+    </VStack>
+  );
+}
+
 export function BacktestView({ project }: BacktestViewProps) {
   const [activeTab, setActiveTab] = useState<
-    "overview" | "trades" | "fills" | "ledger" | "manifest"
+    "overview" | "trades" | "fills" | "ledger" | "manifest" | "compare"
   >("overview");
 
   // Datasets & Securities
@@ -113,6 +228,7 @@ export function BacktestView({ project }: BacktestViewProps) {
   const [isLoadingDatasets, setIsLoadingDatasets] = useState(true);
   const [currentResult, setCurrentResult] = useState<BacktestResult | null>(null);
   const [savedRuns, setSavedRuns] = useState<BacktestResult[]>([]);
+  const [compareRunIds, setCompareRunIds] = useState<string[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [bannerType, setBannerType] = useState<"info" | "warning">("info");
 
@@ -152,6 +268,11 @@ export function BacktestView({ project }: BacktestViewProps) {
         setSavedRuns(runs);
         if (runs.length > 0 && !currentResult) {
           setCurrentResult(runs[0]);
+        }
+        if (runs.length >= 2 && compareRunIds.length === 0) {
+          setCompareRunIds([runs[0].run_id, runs[1].run_id]);
+        } else if (runs.length === 1 && compareRunIds.length === 0) {
+          setCompareRunIds([runs[0].run_id]);
         }
       })
       .catch((err: unknown) => {
@@ -241,6 +362,16 @@ export function BacktestView({ project }: BacktestViewProps) {
 
   const currentRunId = currentResult?.run_id;
 
+  const comparisonRuns = useMemo(() => {
+    return savedRuns.filter((r) => compareRunIds.includes(r.run_id));
+  }, [savedRuns, compareRunIds]);
+
+  const toggleCompareRun = (runId: string) => {
+    setCompareRunIds((curr) =>
+      curr.includes(runId) ? curr.filter((id) => id !== runId) : [...curr, runId]
+    );
+  };
+
   return (
     <Layout
       height="fill"
@@ -251,7 +382,7 @@ export function BacktestView({ project }: BacktestViewProps) {
               <Heading level={2}>Backtest Simulation Engine</Heading>
               <Token label={`Strategy: ${strategyName}`} color="purple" />
               {project && <Badge label={`Project: ${project.name}`} variant="purple" />}
-              {currentRunId && <Token label={`Run: ${currentRunId}`} color="blue" />}
+              {currentRunId && <Token label={`Run: ${currentRunId.slice(0, 8)}`} color="blue" />}
             </HStack>
 
             <HStack gap={2}>
@@ -310,6 +441,17 @@ export function BacktestView({ project }: BacktestViewProps) {
             {message && (
               <Banner status={bannerType} title="Simulation Status">
                 {message}
+              </Banner>
+            )}
+
+            {/* Warnings Alert Banner (REP-002) */}
+            {currentResult?.warnings && currentResult.warnings.length > 0 && (
+              <Banner status="warning" title="Simulation Warnings">
+                <VStack gap={1}>
+                  {currentResult.warnings.map((w, idx) => (
+                    <Text key={idx}>{w}</Text>
+                  ))}
+                </VStack>
               </Banner>
             )}
 
@@ -445,7 +587,13 @@ export function BacktestView({ project }: BacktestViewProps) {
                   value={activeTab}
                   onChange={(v) =>
                     setActiveTab(
-                      v as "overview" | "trades" | "fills" | "ledger" | "manifest",
+                      v as
+                        | "overview"
+                        | "trades"
+                        | "fills"
+                        | "ledger"
+                        | "manifest"
+                        | "compare",
                     )
                   }
                 >
@@ -463,11 +611,21 @@ export function BacktestView({ project }: BacktestViewProps) {
                     label={`Daily Ledger (${currentResult.ledger?.length ?? 0})`}
                   />
                   <SegmentedControlItem value="manifest" label="Manifest & Integrity" />
+                  <SegmentedControlItem
+                    value="compare"
+                    label={`Compare Runs (${savedRuns.length})`}
+                  />
                 </SegmentedControl>
 
                 {/* TAB: Overview */}
                 {activeTab === "overview" && (
                   <VStack gap={4}>
+                    {/* Time-series Equity & Drawdown Chart */}
+                    <EquityDrawdownChart
+                      equityCurve={currentResult.equity_curve}
+                      drawdownCurve={currentResult.drawdown_curve}
+                    />
+
                     <Heading level={3}>Execution Assumptions &amp; Strategy Specs</Heading>
                     <Table>
                       <TableBody>
@@ -799,6 +957,148 @@ export function BacktestView({ project }: BacktestViewProps) {
                         </TableRow>
                       </TableBody>
                     </Table>
+                  </VStack>
+                )}
+
+                {/* TAB: Compare Runs (REP-001) */}
+                {activeTab === "compare" && (
+                  <VStack gap={4}>
+                    <HStack justify="between" align="center">
+                      <Heading level={3}>Side-by-Side Run Comparison</Heading>
+                      <HStack gap={2}>
+                        {savedRuns.map((r) => {
+                          const isSelected = compareRunIds.includes(r.run_id);
+                          return (
+                            <Button
+                              key={r.run_id}
+                              label={`${r.run_id.slice(0, 8)} (${r.specification?.security_id})`}
+                              variant={isSelected ? "primary" : "secondary"}
+                              size="sm"
+                              onClick={() => toggleCompareRun(r.run_id)}
+                            />
+                          );
+                        })}
+                      </HStack>
+                    </HStack>
+
+                    {comparisonRuns.length > 0 ? (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHeaderCell>Comparison Metric</TableHeaderCell>
+                            {comparisonRuns.map((r) => (
+                              <TableHeaderCell key={r.run_id}>
+                                <VStack gap={0}>
+                                  <Text weight="bold">{r.run_id.slice(0, 8)}</Text>
+                                  <Text type="supporting">{r.specification?.security_id}</Text>
+                                </VStack>
+                              </TableHeaderCell>
+                            ))}
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          <TableRow>
+                            <TableCell><Text type="supporting">Total Return</Text></TableCell>
+                            {comparisonRuns.map((r) => (
+                              <TableCell key={r.run_id}>
+                                <Text
+                                  weight="bold"
+                                  style={{
+                                    color:
+                                      (r.metrics.total_return ?? 0) >= 0
+                                        ? "var(--color-text-success, #166534)"
+                                        : "var(--color-text-danger, #991b1b)",
+                                  }}
+                                >
+                                  {percentage(r.metrics.total_return)}
+                                </Text>
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                          <TableRow>
+                            <TableCell><Text type="supporting">Annualized Return</Text></TableCell>
+                            {comparisonRuns.map((r) => (
+                              <TableCell key={r.run_id}>
+                                {percentage(r.metrics.annualized_return)}
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                          <TableRow>
+                            <TableCell><Text type="supporting">Sharpe Ratio</Text></TableCell>
+                            {comparisonRuns.map((r) => (
+                              <TableCell key={r.run_id}>
+                                <Text weight="bold">{decimalFormat(r.metrics.sharpe_ratio)}</Text>
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                          <TableRow>
+                            <TableCell><Text type="supporting">Sortino Ratio</Text></TableCell>
+                            {comparisonRuns.map((r) => (
+                              <TableCell key={r.run_id}>
+                                {decimalFormat(r.metrics.sortino_ratio)}
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                          <TableRow>
+                            <TableCell><Text type="supporting">Max Drawdown</Text></TableCell>
+                            {comparisonRuns.map((r) => (
+                              <TableCell key={r.run_id}>
+                                <Text weight="bold" style={{ color: "var(--color-text-danger, #991b1b)" }}>
+                                  {percentage(r.metrics.max_drawdown)}
+                                </Text>
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                          <TableRow>
+                            <TableCell><Text type="supporting">Win / Hit Rate</Text></TableCell>
+                            {comparisonRuns.map((r) => (
+                              <TableCell key={r.run_id}>
+                                {percentage(r.metrics.hit_rate)}
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                          <TableRow>
+                            <TableCell><Text type="supporting">Turnover</Text></TableCell>
+                            {comparisonRuns.map((r) => (
+                              <TableCell key={r.run_id}>
+                                {decimalFormat(r.metrics.turnover)}x
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                          <TableRow>
+                            <TableCell><Text type="supporting">Trades / Fills</Text></TableCell>
+                            {comparisonRuns.map((r) => (
+                              <TableCell key={r.run_id}>
+                                {r.metrics.num_trades} / {r.metrics.num_fills}
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                          <TableRow>
+                            <TableCell><Text type="supporting">Fast / Slow MA</Text></TableCell>
+                            {comparisonRuns.map((r) => (
+                              <TableCell key={r.run_id}>
+                                {r.specification?.parameters?.fast_period ?? "—"} /{" "}
+                                {r.specification?.parameters?.slow_period ?? "—"}
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                          <TableRow>
+                            <TableCell><Text type="supporting">Simulation Horizon</Text></TableCell>
+                            {comparisonRuns.map((r) => (
+                              <TableCell key={r.run_id}>
+                                <Text type="supporting">
+                                  {r.specification?.start_date} to {r.specification?.end_date}
+                                </Text>
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    ) : (
+                      <Text type="supporting">
+                        Select at least one Run above to view side-by-side comparison.
+                      </Text>
+                    )}
                   </VStack>
                 )}
               </VStack>

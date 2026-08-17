@@ -721,6 +721,15 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
     writer.writerow(["Number of Fills", metrics.get("num_fills", "")])
     writer.writerow([])
 
+    # Warnings
+    raw_warnings = result_data.get("warnings")
+    warnings = raw_warnings if isinstance(raw_warnings, list) else []
+    if warnings:
+        writer.writerow(["Warnings", ""])
+        for w in warnings:
+            writer.writerow(["Warning", str(w)])
+        writer.writerow([])
+
     # Section 3: Closed Trades Log
     writer.writerow(["Closed Trades", ""])
     raw_trades = result_data.get("trades")

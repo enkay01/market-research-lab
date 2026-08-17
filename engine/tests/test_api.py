@@ -1,4 +1,5 @@
 import io
+import json
 
 import pandas as pd
 import pytest
@@ -1189,6 +1190,18 @@ def test_backtest_run_rejects_start_after_end(tmp_path):
         },
     )
     assert response.status_code == 422
+
+    # Verify failed run artifact persistence (CORE-008)
+    runs_dir = tmp_path / "projects" / project["id"] / "runs"
+    assert runs_dir.is_dir()
+    run_folders = list(runs_dir.iterdir())
+    assert len(run_folders) == 1
+    failed_run = run_folders[0]
+    status_file = json.loads((failed_run / "status.json").read_text(encoding="utf-8"))
+    assert status_file["status"] == "failed"
+    assert "start_date must not be after end_date" in status_file["error"]
+    error_artifact = json.loads((failed_run / "artifacts" / "error.json").read_text(encoding="utf-8"))
+    assert "start_date must not be after end_date" in error_artifact["error"]
 
 
 def test_backtest_run_exports_html_csv_json(tmp_path):
