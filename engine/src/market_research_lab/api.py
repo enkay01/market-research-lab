@@ -743,6 +743,9 @@ class ExecutionModelAssumptionsRequest(BaseModel):
     schedule: Literal["daily"] = "daily"
     commission_rate: float = Field(default=0.0, ge=0)
     slippage_rate: float = Field(default=0.0, ge=0, lt=1)
+    allow_shorting: bool = True
+    borrow_fee_rate: float = Field(default=0.0, ge=0)
+    unavailable_borrow: list[str] = Field(default_factory=list)
 
 
 class BacktestRunRequest(BaseModel):
@@ -813,6 +816,7 @@ class LedgerRowResponse(BaseModel):
     signal_weights: dict[str, float] = Field(default_factory=dict)
     gross_exposure: float = 0.0
     net_exposure: float = 0.0
+    borrow_fees: float = 0.0
 
 
 class TradeResponse(BaseModel):
@@ -835,6 +839,32 @@ class EquityPointResponse(BaseModel):
     drawdown: float
 
 
+class ExecutionModelAssumptionsResponse(BaseModel):
+    schedule: str = "daily"
+    commission_rate: float = 0.0
+    slippage_rate: float = 0.0
+    allow_shorting: bool = True
+    borrow_fee_rate: float = 0.0
+    unavailable_borrow: list[str] = Field(default_factory=list)
+
+
+class BacktestSpecificationResponse(BaseModel):
+    strategy_name: str
+    strategy_revision: str
+    dataset_version_id: str
+    security_id: str = ""
+    start_date: str = ""
+    end_date: str = ""
+    starting_cash: float = 100000.0
+    parameters: dict[str, JsonValue] = Field(default_factory=dict)
+    price_field: str = "close"
+    execution: ExecutionModelAssumptionsResponse = Field(
+        default_factory=ExecutionModelAssumptionsResponse
+    )
+    universe: list[str] = Field(default_factory=list)
+    benchmark_security_id: str | None = None
+
+
 class BacktestMetricsResponse(BaseModel):
     total_return: float
     annualized_return: float
@@ -855,7 +885,7 @@ class BacktestMetricsResponse(BaseModel):
 class BacktestResultResponse(BaseModel):
     run_id: str | None = None
     strategy_revision: str | None = None
-    specification: dict[str, JsonValue]
+    specification: BacktestSpecificationResponse
     signals: list[StrategyTargetResponse]
     fills: list[FillResponse]
     trades: list[TradeResponse]
@@ -2272,6 +2302,9 @@ def create_app(
                     schedule=request.execution.schedule,
                     commission_rate=request.execution.commission_rate,
                     slippage_rate=request.execution.slippage_rate,
+                    allow_shorting=request.execution.allow_shorting,
+                    borrow_fee_rate=request.execution.borrow_fee_rate,
+                    unavailable_borrow=tuple(request.execution.unavailable_borrow),
                 ),
                 benchmark_security_id=bench_sec.security_id if bench_sec else None,
             )

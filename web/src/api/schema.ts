@@ -751,10 +751,7 @@ export interface components {
             run_id?: string | null;
             /** Strategy Revision */
             strategy_revision?: string | null;
-            /** Specification */
-            specification: {
-                [key: string]: components["schemas"]["JsonValue-Output"];
-            };
+            specification: components["schemas"]["BacktestSpecificationResponse"];
             /** Signals */
             signals: components["schemas"]["StrategyTargetResponse"][];
             /** Fills */
@@ -810,6 +807,49 @@ export interface components {
              */
             price_field: "close" | "open" | "high" | "low";
             execution?: components["schemas"]["ExecutionModelAssumptionsRequest"];
+        };
+        /** BacktestSpecificationResponse */
+        BacktestSpecificationResponse: {
+            /** Strategy Name */
+            strategy_name: string;
+            /** Strategy Revision */
+            strategy_revision: string;
+            /** Dataset Version Id */
+            dataset_version_id: string;
+            /**
+             * Security Id
+             * @default
+             */
+            security_id: string;
+            /**
+             * Start Date
+             * @default
+             */
+            start_date: string;
+            /**
+             * End Date
+             * @default
+             */
+            end_date: string;
+            /**
+             * Starting Cash
+             * @default 100000
+             */
+            starting_cash: number;
+            /** Parameters */
+            parameters?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /**
+             * Price Field
+             * @default close
+             */
+            price_field: string;
+            execution?: components["schemas"]["ExecutionModelAssumptionsResponse"];
+            /** Universe */
+            universe?: string[];
+            /** Benchmark Security Id */
+            benchmark_security_id?: string | null;
         };
         /** Body_import_dataset_api_datasets_post */
         Body_import_dataset_api_datasets_post: {
@@ -1126,6 +1166,48 @@ export interface components {
              * @default 0
              */
             slippage_rate: number;
+            /**
+             * Allow Shorting
+             * @default true
+             */
+            allow_shorting: boolean;
+            /**
+             * Borrow Fee Rate
+             * @default 0
+             */
+            borrow_fee_rate: number;
+            /** Unavailable Borrow */
+            unavailable_borrow?: string[];
+        };
+        /** ExecutionModelAssumptionsResponse */
+        ExecutionModelAssumptionsResponse: {
+            /**
+             * Schedule
+             * @default daily
+             */
+            schedule: string;
+            /**
+             * Commission Rate
+             * @default 0
+             */
+            commission_rate: number;
+            /**
+             * Slippage Rate
+             * @default 0
+             */
+            slippage_rate: number;
+            /**
+             * Allow Shorting
+             * @default true
+             */
+            allow_shorting: boolean;
+            /**
+             * Borrow Fee Rate
+             * @default 0
+             */
+            borrow_fee_rate: number;
+            /** Unavailable Borrow */
+            unavailable_borrow?: string[];
         };
         /** FCFFDCFInputResponse */
         FCFFDCFInputResponse: {
@@ -1557,6 +1639,11 @@ export interface components {
              * @default 0
              */
             net_exposure: number;
+            /**
+             * Borrow Fees
+             * @default 0
+             */
+            borrow_fees: number;
         };
         /** PositionSnapshotResponse */
         PositionSnapshotResponse: {

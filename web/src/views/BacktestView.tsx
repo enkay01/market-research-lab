@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Badge,
   Banner,
   Button,
   Card,
@@ -235,8 +234,8 @@ export function BacktestView({ project }: BacktestViewProps) {
   const [benchmarkInput, setBenchmarkInput] = useState<string>("SPY");
 
   // Strategy & Execution Specification Inputs
-  const [strategyName] = useState<string>("long_flat_moving_average");
-  const [strategyRevision] = useState<string>("long_flat_moving_average:v1");
+  const [strategyName, setStrategyName] = useState<string>("long_flat_moving_average");
+  const [strategyRevision, setStrategyRevision] = useState<string>("long_flat_moving_average:v1");
   const [startDate, setStartDate] = useState<string>("2024-01-02");
   const [endDate, setEndDate] = useState<string>("2024-06-28");
   const [startingCash, setStartingCash] = useState<string>("100000");
@@ -245,6 +244,9 @@ export function BacktestView({ project }: BacktestViewProps) {
   const [maType, setMaType] = useState<"sma" | "ema">("sma");
   const [commissionBps, setCommissionBps] = useState<string>("5.0");
   const [slippageBps, setSlippageBps] = useState<string>("2.0");
+  const [allowShorting, setAllowShorting] = useState<boolean>(true);
+  const [borrowFeeBps, setBorrowFeeBps] = useState<string>("0.0");
+  const [unavailableBorrowInput, setUnavailableBorrowInput] = useState<string>("");
 
   // Execution & Result state
   const [isRunning, setIsRunning] = useState(false);
@@ -358,6 +360,11 @@ export function BacktestView({ project }: BacktestViewProps) {
     setIsRunning(true);
     setMessage(null);
     try {
+      const unavailableList = unavailableBorrowInput
+        .split(",")
+        .map((s) => s.trim().toUpperCase())
+        .filter(Boolean);
+
       const res = await api.runBacktest(project.id, {
         strategy_name: strategyName,
         strategy_revision: strategyRevision,
@@ -377,6 +384,9 @@ export function BacktestView({ project }: BacktestViewProps) {
           schedule: "daily",
           commission_rate: (parseFloat(commissionBps) || 0) / 10000,
           slippage_rate: (parseFloat(slippageBps) || 0) / 10000,
+          allow_shorting: allowShorting,
+          borrow_fee_rate: (parseFloat(borrowFeeBps) || 0) / 10000,
+          unavailable_borrow: unavailableList,
         },
       });
       setCurrentResult(res);
@@ -463,12 +473,11 @@ export function BacktestView({ project }: BacktestViewProps) {
                 </>
               )}
               <Button
-                label="Execute Backtest Run"
+                label="Run Backtest"
                 variant="primary"
                 size="sm"
                 onClick={handleRunBacktest}
-                isLoading={isRunning}
-                isDisabled={!project || isLoadingDatasets || datasets.length === 0}
+                disabled={isRunning || isLoadingDatasets}
               />
             </HStack>
           </HStack>
@@ -476,34 +485,54 @@ export function BacktestView({ project }: BacktestViewProps) {
       }
       content={
         <LayoutContent padding={3} isScrollable>
+          <VStack gap={4} padding={2}>
+        {/* Navigation Tabs */}
+        <HStack gap={2}>
+          <Button
+            label="Overview & Chart"
+            variant={activeTab === "overview" ? "primary" : "secondary"}
+            size="sm"
+            onClick={() => setActiveTab("overview")}
+          />
+          <Button
+            label={`Trades (${currentResult?.trades?.length ?? 0})`}
+            variant={activeTab === "trades" ? "primary" : "secondary"}
+            size="sm"
+            onClick={() => setActiveTab("trades")}
+          />
+          <Button
+            label={`Fills (${currentResult?.fills?.length ?? 0})`}
+            variant={activeTab === "fills" ? "primary" : "secondary"}
+            size="sm"
+            onClick={() => setActiveTab("fills")}
+          />
+          <Button
+            label={`Ledger (${currentResult?.ledger?.length ?? 0})`}
+            variant={activeTab === "ledger" ? "primary" : "secondary"}
+            size="sm"
+            onClick={() => setActiveTab("ledger")}
+          />
+          <Button
+            label="Manifest"
+            variant={activeTab === "manifest" ? "primary" : "secondary"}
+            size="sm"
+            onClick={() => setActiveTab("manifest")}
+          />
+          <Button
+            label={`Compare Runs (${savedRuns.length})`}
+            variant={activeTab === "compare" ? "primary" : "secondary"}
+            size="sm"
+            onClick={() => setActiveTab("compare")}
+          />
+        </HStack>
+
+        {isLoadingDatasets ? (
+          <Text type="supporting">Loading market datasets and securities...</Text>
+        ) : (
           <VStack gap={4}>
             {message && (
-              <Banner status={bannerType} title="Simulation Status">
-                {message}
-              </Banner>
-            )}
-
-            {/* Warnings Alert Banner */}
-            {currentResult?.warnings && currentResult.warnings.length > 0 && (
-              <Banner status="warning" title="Simulation Warnings">
-                <VStack gap={1}>
-                  {currentResult.warnings.map((w, idx) => (
-                    <Text key={idx}>{w}</Text>
-                  ))}
-                </VStack>
-              </Banner>
-            )}
-
-            {/* Constraint Rejections Banner */}
-            {currentResult?.rejections && currentResult.rejections.length > 0 && (
-              <Banner status="warning" title="Long-Only Constraint Rejections">
-                <VStack gap={1}>
-                  {currentResult.rejections.map((r, idx) => (
-                    <Text key={idx}>
-                      <strong>{r.session_date} [{r.security_id}]:</strong> {r.reason}
-                    </Text>
-                  ))}
-                </VStack>
+              <Banner variant={bannerType === "warning" ? "warning" : "neutral"}>
+                <Text>{message}</Text>
               </Banner>
             )}
 
@@ -513,6 +542,19 @@ export function BacktestView({ project }: BacktestViewProps) {
                 <Heading level={3}>Multi-Security Simulation Setup &amp; Parameters</Heading>
 
                 <HStack gap={3} align="end">
+                  <Selector
+                    label="Strategy"
+                    value={strategyName}
+                    onChange={(v) => {
+                      const val = v as string;
+                      setStrategyName(val);
+                      setStrategyRevision(`${val}:v1`);
+                    }}
+                    options={[
+                      { value: "long_flat_moving_average", label: "Long/Flat Moving Average" },
+                      { value: "long_short_moving_average", label: "Long/Short Moving Average" },
+                    ]}
+                  />
                   <Selector
                     label="Dataset Version"
                     value={selectedDatasetId}
@@ -525,22 +567,22 @@ export function BacktestView({ project }: BacktestViewProps) {
                     hasSearch
                   />
                   <TextInput
-                    label="Universe (Comma-separated symbols)"
+                    label="Universe (Symbols)"
                     value={universeInput}
                     onChange={(v) => setUniverseInput(typeof v === "string" ? v : "")}
                   />
                   <TextInput
-                    label="Benchmark Symbol (Optional)"
+                    label="Benchmark (Optional)"
                     value={benchmarkInput}
                     onChange={(v) => setBenchmarkInput(typeof v === "string" ? v : "")}
                   />
                   <TextInput
-                    label="Start Date (YYYY-MM-DD)"
+                    label="Start Date"
                     value={startDate}
                     onChange={(v) => setStartDate(typeof v === "string" ? v : "")}
                   />
                   <TextInput
-                    label="End Date (YYYY-MM-DD)"
+                    label="End Date"
                     value={endDate}
                     onChange={(v) => setEndDate(typeof v === "string" ? v : "")}
                   />
@@ -548,7 +590,7 @@ export function BacktestView({ project }: BacktestViewProps) {
 
                 <HStack gap={3} align="end">
                   <TextInput
-                    label="Starting Cash ($ USD)"
+                    label="Starting Cash ($)"
                     value={startingCash}
                     onChange={(v) => setStartingCash(typeof v === "string" ? v : "")}
                   />
@@ -567,8 +609,8 @@ export function BacktestView({ project }: BacktestViewProps) {
                     value={maType}
                     onChange={(v) => setMaType(v as "sma" | "ema")}
                     options={[
-                      { value: "sma", label: "Simple Moving Average (SMA)" },
-                      { value: "ema", label: "Exponential Moving Average (EMA)" },
+                      { value: "sma", label: "Simple (SMA)" },
+                      { value: "ema", label: "Exponential (EMA)" },
                     ]}
                   />
                   <TextInput
@@ -580,6 +622,25 @@ export function BacktestView({ project }: BacktestViewProps) {
                     label="Slippage (bps)"
                     value={slippageBps}
                     onChange={(v) => setSlippageBps(typeof v === "string" ? v : "")}
+                  />
+                  <Selector
+                    label="Allow Short Positions"
+                    value={allowShorting ? "yes" : "no"}
+                    onChange={(v) => setAllowShorting(v === "yes")}
+                    options={[
+                      { value: "yes", label: "Enabled (Long/Short)" },
+                      { value: "no", label: "Disabled (Long-Only)" },
+                    ]}
+                  />
+                  <TextInput
+                    label="Borrow Fee (bps p.a.)"
+                    value={borrowFeeBps}
+                    onChange={(v) => setBorrowFeeBps(typeof v === "string" ? v : "")}
+                  />
+                  <TextInput
+                    label="Unavailable Borrow (Symbols)"
+                    value={unavailableBorrowInput}
+                    onChange={(v) => setUnavailableBorrowInput(typeof v === "string" ? v : "")}
                   />
                 </HStack>
               </VStack>
@@ -683,7 +744,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                       <TableBody>
                         <TableRow>
                           <TableCell>
-                            <Text type="supporting">Strategy Model &amp; Revision</Text>
+                            <Text type="supporting">Strategy &amp; Revision</Text>
                           </TableCell>
                           <TableCell>
                             <Text weight="bold">{currentResult.strategy_revision}</Text>
@@ -701,8 +762,8 @@ export function BacktestView({ project }: BacktestViewProps) {
                           </TableCell>
                           <TableCell>
                             <Text>
-                              {(currentResult.specification as any)?.start_date} to{" "}
-                              {(currentResult.specification as any)?.end_date}
+                              {currentResult.specification?.start_date} to{" "}
+                              {currentResult.specification?.end_date}
                             </Text>
                           </TableCell>
                           <TableCell>
@@ -710,7 +771,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                           </TableCell>
                           <TableCell>
                             <Text>
-                              {currencyFormat((currentResult.specification as any)?.starting_cash)}
+                              {currencyFormat(currentResult.specification?.starting_cash)}
                             </Text>
                           </TableCell>
                         </TableRow>
@@ -720,7 +781,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                           </TableCell>
                           <TableCell>
                             <Text weight="bold">
-                              {(currentResult.specification as any)?.benchmark_security_id || "None"}
+                              {currentResult.specification?.benchmark_security_id || "None"}
                             </Text>
                           </TableCell>
                           <TableCell>
@@ -729,12 +790,12 @@ export function BacktestView({ project }: BacktestViewProps) {
                           <TableCell>
                             <Text>
                               {(
-                                ((currentResult.specification as any)?.execution?.commission_rate ?? 0) *
-                                10000
+                                ((currentResult.specification?.execution?.commission_rate ?? 0) *
+                                10000)
                               ).toFixed(1)}{" "}
                               bps comm. /{" "}
                               {(
-                                ((currentResult.specification as any)?.execution?.slippage_rate ?? 0) * 10000
+                                ((currentResult.specification?.execution?.slippage_rate ?? 0) * 10000)
                               ).toFixed(1)}{" "}
                               bps slip.
                             </Text>
@@ -879,7 +940,9 @@ export function BacktestView({ project }: BacktestViewProps) {
                             <TableHeaderCell>Cash Balance</TableHeaderCell>
                             <TableHeaderCell>Total Position Value</TableHeaderCell>
                             <TableHeaderCell>Portfolio Value</TableHeaderCell>
-                            <TableHeaderCell>Gross Exposure</TableHeaderCell>
+                            <TableHeaderCell>Gross Exp</TableHeaderCell>
+                            <TableHeaderCell>Net Exp</TableHeaderCell>
+                            <TableHeaderCell>Borrow Fees</TableHeaderCell>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -895,7 +958,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                                         <Token
                                           key={sym}
                                           label={`${sym}: ${decimalFormat(pos.shares, 2)} sh ($${decimalFormat(pos.position_value, 0)})`}
-                                          color={pos.shares > 0 ? "blue" : "default"}
+                                          color={pos.shares > 0 ? "blue" : pos.shares < 0 ? "purple" : "default"}
                                         />
                                       ))}
                                     </HStack>
@@ -909,6 +972,8 @@ export function BacktestView({ project }: BacktestViewProps) {
                                   <Text weight="bold">{currencyFormat(row.portfolio_value)}</Text>
                                 </TableCell>
                                 <TableCell>{percentage(row.gross_exposure)}</TableCell>
+                                <TableCell>{percentage(row.net_exposure)}</TableCell>
+                                <TableCell>{currencyFormat(row.borrow_fees ?? 0)}</TableCell>
                               </TableRow>
                             );
                           })}
@@ -957,7 +1022,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                           <TableCell>
                             <Text>
                               {(currentResult.manifest as any)?.dataset_versions?.join(", ") ||
-                                (currentResult.specification as any)?.dataset_version_id ||
+                                currentResult.specification?.dataset_version_id ||
                                 "N/A"}
                             </Text>
                           </TableCell>
@@ -999,8 +1064,8 @@ export function BacktestView({ project }: BacktestViewProps) {
                         {savedRuns.map((r) => {
                           const rId = r.run_id || "";
                           const isSelected = compareRunIds.includes(rId);
-                          const specObj = r.specification as any;
-                          const uDisplay = Array.isArray(specObj?.universe)
+                          const specObj = r.specification;
+                          const uDisplay = Array.isArray(specObj?.universe) && specObj.universe.length > 0
                             ? specObj.universe.join(",")
                             : specObj?.security_id || "Run";
                           return (
@@ -1026,8 +1091,8 @@ export function BacktestView({ project }: BacktestViewProps) {
                                 <VStack gap={0}>
                                   <Text weight="bold">{r.run_id?.slice(0, 8)}</Text>
                                   <Text type="supporting">
-                                    {(r.specification as any)?.universe?.join(", ") ||
-                                      (r.specification as any)?.security_id}
+                                    {r.specification?.universe?.join(", ") ||
+                                      r.specification?.security_id}
                                   </Text>
                                 </VStack>
                               </TableHeaderCell>
@@ -1035,6 +1100,18 @@ export function BacktestView({ project }: BacktestViewProps) {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
+                          <TableRow>
+                            <TableCell><Text type="supporting">Universe</Text></TableCell>
+                            {comparisonRuns.map((r) => (
+                              <TableCell key={r.run_id}>
+                                <Text weight="bold">
+                                  {r.specification?.universe?.join(", ") ||
+                                    r.specification?.security_id ||
+                                    "—"}
+                                </Text>
+                              </TableCell>
+                            ))}
+                          </TableRow>
                           <TableRow>
                             <TableCell><Text type="supporting">Total Return</Text></TableCell>
                             {comparisonRuns.map((r) => (
@@ -1121,19 +1198,22 @@ export function BacktestView({ project }: BacktestViewProps) {
                           </TableRow>
                           <TableRow>
                             <TableCell><Text type="supporting">Fast / Slow MA</Text></TableCell>
-                            {comparisonRuns.map((r) => (
-                              <TableCell key={r.run_id}>
-                                {(r.specification as any)?.parameters?.fast_period ?? "—"} /{" "}
-                                {(r.specification as any)?.parameters?.slow_period ?? "—"}
-                              </TableCell>
-                            ))}
+                            {comparisonRuns.map((r) => {
+                              const params = r.specification?.parameters as any;
+                              return (
+                                <TableCell key={r.run_id}>
+                                  {params?.fast_period ?? "—"} /{" "}
+                                  {params?.slow_period ?? "—"}
+                                </TableCell>
+                              );
+                            })}
                           </TableRow>
                           <TableRow>
                             <TableCell><Text type="supporting">Simulation Horizon</Text></TableCell>
                             {comparisonRuns.map((r) => (
                               <TableCell key={r.run_id}>
                                 <Text type="supporting">
-                                  {(r.specification as any)?.start_date} to {(r.specification as any)?.end_date}
+                                  {r.specification?.start_date} to {r.specification?.end_date}
                                 </Text>
                               </TableCell>
                             ))}
@@ -1155,11 +1235,13 @@ export function BacktestView({ project }: BacktestViewProps) {
               />
             )}
           </VStack>
-        </LayoutContent>
+        )}
+      </VStack>
+    </LayoutContent>
       }
       end={
         <LayoutPanel width={320} hasDivider isScrollable label="Past Backtest Runs">
-          <VStack gap={3} style={{ padding: "var(--spacing-3, 0.75rem)" }}>
+          <VStack gap={3} style={{ padding: "var(--spacing-3)" }}>
             <Heading level={3}>Project Run History</Heading>
             {savedRuns.length > 0 ? (
               <Table>
@@ -1173,8 +1255,8 @@ export function BacktestView({ project }: BacktestViewProps) {
                 <TableBody>
                   {savedRuns.map((run) => {
                     const rId = run.run_id || "";
-                    const specObj = run.specification as any;
-                    const uDisplay = Array.isArray(specObj?.universe)
+                    const specObj = run.specification;
+                    const uDisplay = Array.isArray(specObj?.universe) && specObj.universe.length > 0
                       ? specObj.universe.join(", ")
                       : specObj?.security_id;
                     return (
@@ -1185,7 +1267,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                           cursor: "pointer",
                           background:
                             rId === currentRunId
-                              ? "var(--color-background-wash, rgba(255, 255, 255, 0.08))"
+                              ? "var(--color-background-wash)"
                               : undefined,
                         }}
                       >

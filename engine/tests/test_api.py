@@ -1312,3 +1312,60 @@ def test_backtest_run_multi_symbol_with_benchmark(tmp_path):
     assert result["metrics"]["benchmark_relative_return"] is not None
     assert "AAPL" in result["ledger"][0]["positions"]
     assert "MSFT" in result["ledger"][0]["positions"]
+
+
+def test_backtest_run_shorting_and_borrow_fees(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Shorting Strategy Project"}).json()
+
+    # Falling AAPL prices triggers bearish signals (short positions)
+    csv_content = (
+        "symbol,date,open,high,low,close,volume,available_at\n"
+        "AAPL,2024-01-02,100,105,99,100,1000,2024-01-02T20:00:00Z\n"
+        "AAPL,2024-01-03,95,96,90,92,1200,2024-01-03T20:00:00Z\n"
+        "AAPL,2024-01-04,90,91,85,88,1100,2024-01-04T20:00:00Z\n"
+        "AAPL,2024-01-05,85,86,80,82,1300,2024-01-05T20:00:00Z\n"
+        "AAPL,2024-01-06,80,81,75,78,1400,2024-01-06T20:00:00Z\n"
+        "AAPL,2024-01-07,75,76,70,72,1500,2024-01-07T20:00:00Z\n"
+    )
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "pit_short_source"},
+        files={"file": ("falling_bars.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
+    )
+    assert imported.status_code == 201
+    version_id = imported.json()["dataset_version_id"]
+
+    response = client.post(
+        f"/api/projects/{project['id']}/backtests",
+        json={
+            "strategy_name": "long_short_moving_average",
+            "strategy_revision": "long_short_moving_average:v1",
+            "dataset_version_id": version_id,
+            "symbols": ["AAPL"],
+            "start_date": "2024-01-02",
+            "end_date": "2024-01-07",
+            "starting_cash": 100000,
+            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+            "execution": {
+                "schedule": "daily",
+                "allow_shorting": True,
+                "borrow_fee_rate": 0.05,
+                "unavailable_borrow": [],
+            },
+        },
+    )
+    assert response.status_code == 201
+    result = response.json()
+    assert result["run_id"]
+    assert result["specification"]["execution"]["allow_shorting"] is True
+    assert result["specification"]["execution"]["borrow_fee_rate"] == 0.05
+    assert len(result["signals"]) >= 1
+    # Check that short positions and borrow fees were produced
+    has_short = any(
+        row["positions"].get("AAPL", {}).get("shares", 0.0) < 0
+        for row in result["ledger"]
+    )
+    assert has_short
+    total_borrow_fees = sum(row.get("borrow_fees", 0.0) for row in result["ledger"])
+    assert total_borrow_fees > 0.0
