@@ -21,6 +21,14 @@ export type WatchlistItem = components["schemas"]["WatchlistItemResponse"];
 export type ResearchThesis = components["schemas"]["ResearchThesisResponse"];
 export type ComparableValuation = components["schemas"]["ComparableValuationResponse"];
 export type SavedValuation = components["schemas"]["SavedValuationResponse"];
+export type FCFFDCFRequest = components["schemas"]["FCFFDCFRequest"];
+export type FCFFDCFSeed = components["schemas"]["FCFFDCFSeedResponse"];
+export type FCFFDCFValuation = components["schemas"]["FCFFDCFValuationResponse"];
+export type CashFlowForecastYear = components["schemas"]["CashFlowForecastYearResponse"];
+export type ScenarioResult = components["schemas"]["ScenarioResponse"];
+export type SensitivityMatrix = components["schemas"]["SensitivityMatrixResponse"];
+export type ValuationComparison = components["schemas"]["ValuationComparisonResponse"];
+export type ValuationComparisonItem = components["schemas"]["ValuationComparisonItemResponse"];
 
 export type IndicatorMetadata = components["schemas"]["IndicatorMetadataResponse"];
 export type IndicatorParameter = components["schemas"]["IndicatorParameterResponse"];
@@ -172,6 +180,36 @@ export const api = {
         body: request,
       }),
     ),
+  seedDcfValuation: (projectId: string, securityId: string) =>
+    dataOrThrow(
+      client.GET("/api/projects/{project_id}/valuations/seed/{security_id}", {
+        params: {
+          path: { project_id: projectId, security_id: securityId },
+        },
+      }),
+    ),
+  calculateDcfValuation: (request: FCFFDCFRequest) =>
+    dataOrThrow(
+      client.POST("/api/valuations/dcf", {
+        body: request,
+      }),
+    ),
+  saveDcfValuation: (projectId: string, request: FCFFDCFRequest) =>
+    dataOrThrow(
+      client.POST("/api/projects/{project_id}/valuations/dcf", {
+        params: { path: { project_id: projectId } },
+        body: request,
+      }),
+    ),
+  compareValuations: (projectId: string, request: { run_ids: string[] }) =>
+    dataOrThrow(
+      client.POST("/api/projects/{project_id}/valuations/compare", {
+        params: { path: { project_id: projectId } },
+        body: request,
+      }),
+    ),
+  getValuationExportUrl: (projectId: string, runId: string, format: "html" | "csv" | "json") =>
+    `/api/projects/${projectId}/valuations/${runId}/export/${format}`,
   listValuations: (projectId: string) =>
     dataOrThrow(
       client.GET("/api/projects/{project_id}/valuations", {

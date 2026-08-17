@@ -172,26 +172,66 @@ class ProjectStore:
         record: ValuationRunRecord,
     ) -> str:
         """Persist one completed Valuation as a reproducible Run artifact."""
+        from .reporting import generate_valuation_csv, generate_valuation_html_report
+
         run_id = self.create_run(project_id)
         run_directory = self._directory(project_id) / "runs" / run_id
-        self._write_json(
-            run_directory / "manifest.json",
-            {
-                "id": run_id,
-                "kind": "valuation",
-                "definition_revisions": [record.method_revision],
-                "dataset_versions": record.dataset_version_ids,
-                "parameters": record.parameters,
-                "software_revision": "uncommitted",
-                "environment": {"python": os.sys.version},
-            },
-        )
+        manifest = {
+            "id": run_id,
+            "kind": "valuation",
+            "definition_revisions": [record.method_revision],
+            "dataset_versions": record.dataset_version_ids,
+            "parameters": record.parameters,
+            "software_revision": "uncommitted",
+            "environment": {"python": os.sys.version},
+        }
+        self._write_json(run_directory / "manifest.json", manifest)
         persisted_result = dict(record.result)
         persisted_result["method_revision"] = record.method_revision
         persisted_result["run_id"] = run_id
         self._write_json(run_directory / "artifacts" / "valuation.json", persisted_result)
+
+        # Write self-contained HTML report and CSV summary artifacts
+        html_report = generate_valuation_html_report(persisted_result, manifest)
+        (run_directory / "artifacts" / "valuation_report.html").write_text(
+            html_report, encoding="utf-8"
+        )
+        csv_data = generate_valuation_csv(persisted_result)
+        (run_directory / "artifacts" / "summary.csv").write_text(csv_data, encoding="utf-8")
+
         self._write_json(run_directory / "status.json", {"id": run_id, "status": "completed"})
         return run_id
+
+    def get_valuation_export(
+        self, project_id: str, run_id: str, format_type: str
+    ) -> tuple[str, str, str]:
+        """Return (content, media_type, filename) for an exported Valuation run."""
+        self.get_project(project_id)
+        run_dir = self._directory(project_id) / "runs" / run_id
+        if not run_dir.is_dir():
+            raise ProjectNotFoundError(f"Run {run_id} not found in project {project_id}")
+
+        norm_fmt = format_type.lower().strip()
+        if norm_fmt in ("html", "report"):
+            report_path = run_dir / "artifacts" / "valuation_report.html"
+            if report_path.is_file():
+                return report_path.read_text(encoding="utf-8"), "text/html", f"valuation_{run_id}.html"
+            raise FileNotFoundError(f"HTML report not found for run {run_id}")
+        if norm_fmt == "csv":
+            csv_path = run_dir / "artifacts" / "summary.csv"
+            if csv_path.is_file():
+                return csv_path.read_text(encoding="utf-8"), "text/csv", f"valuation_{run_id}.csv"
+            raise FileNotFoundError(f"CSV export not found for run {run_id}")
+        if norm_fmt in ("json", "manifest"):
+            manifest_path = run_dir / "manifest.json"
+            artifact_path = run_dir / "artifacts" / "valuation.json"
+            combined = {
+                "manifest": json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {},
+                "valuation": json.loads(artifact_path.read_text(encoding="utf-8")) if artifact_path.is_file() else {},
+            }
+            return json.dumps(combined, indent=2), "application/json", f"valuation_manifest_{run_id}.json"
+
+        raise ValueError(f"Unsupported export format: {format_type}. Supported: json, csv, html")
 
     def list_valuation_results(self, project_id: str) -> list[dict[str, JsonValue]]:
         """Read completed Valuation Run artifacts for Project reloads."""
@@ -317,7 +357,11 @@ class ProjectStore:
                 with contextlib.suppress(json.JSONDecodeError, OSError, KeyError, AttributeError):
                     data = json.loads(def_file.read_text(encoding="utf-8"))
                     raw_def = data.get("definition")
-                    def_sec_id = raw_def.get("security_id") if raw_def is not None else None
+                    def_sec_id = (
+                        (raw_def.get("security_id") or raw_def.get("target_security_id"))
+                        if isinstance(raw_def, dict)
+                        else None
+                    )
                     if def_sec_id == valid_id:
                         results.append(
                             {
@@ -352,7 +396,9 @@ class ProjectStore:
                     status_data = json.loads(status_file.read_text(encoding="utf-8"))
                     raw_params = manifest.get("parameters")
                     params_sec_id = (
-                        raw_params.get("security_id") if raw_params is not None else None
+                        (raw_params.get("security_id") or raw_params.get("target_security_id"))
+                        if isinstance(raw_params, dict)
+                        else None
                     )
                     if params_sec_id == valid_id:
                         results.append(
