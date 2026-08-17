@@ -63,6 +63,7 @@ RULES:
 - Dense data = rows (Table, List/Item), never Card-wrapped list items; Card is for standalone widgets. Status = StatusDot/Token; Badge = counts only.
 - Custom styling: component props first; else style/className with tokens — var(--color-*|--spacing-*|--radius-*). No raw hex/px. (No StyleX/Tailwind compiler here — don't use xstyle/utility classes.)
 - Tokens for every value (`astryx docs tokens`). Brand/accent via `astryx theme` — never override --color-* in :root.
+- Colors & Contrast: Use exact Astryx token names (`--color-background-surface`, `--color-background-card`, `--color-text-primary`, `--color-text-supporting`, `--color-text-green`, `--color-text-red`, `--color-icon-blue`, `--color-icon-orange`). Never invent token names (e.g. `--color-bg-*`, `--color-surface`, `--color-fg-*`) and never provide hardcoded hex fallbacks inside `var(...)` (e.g. `var(--color-bg-surface, #ffffff)` or `var(--color-text-danger, #991b1b)`). Ensure high contrast in dark mode (WCAG AA/AAA).
 - SELF-CHECK before you finish: re-read the file and replace any raw <div>/<span> layout, imported .css/@apply, or hardcoded value (#hex, 16px) with the component or a token (var(--color-*|--spacing-*|…)). If unsure a component/prop exists, run `astryx component <Name>` / `astryx search "<thing>"`; don't hand-roll CSS.
 
 MORE CLI:
