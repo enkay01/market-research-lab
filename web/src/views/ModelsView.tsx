@@ -502,9 +502,9 @@ export function ModelsView({ project }: ModelsViewProps) {
                   <VStack
                     gap={2}
                     style={{
-                      border: "1px solid var(--color-border-subtle, #e1e4e8)",
-                      borderRadius: "var(--radius-md, 6px)",
-                      backgroundColor: "var(--color-surface, #ffffff)",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: "var(--radius-element)",
+                      backgroundColor: "var(--color-background-surface)",
                       padding: "16px",
                     }}
                   >
@@ -547,7 +547,7 @@ export function ModelsView({ project }: ModelsViewProps) {
                         y1={chartPoints.chartMargin.top}
                         x2={chartPoints.width - chartPoints.chartMargin.right}
                         y2={chartPoints.chartMargin.top}
-                        stroke="var(--color-border-subtle, #f0f0f0)"
+                        stroke="var(--color-border)"
                         strokeDasharray="3 3"
                       />
                       <line
@@ -555,7 +555,7 @@ export function ModelsView({ project }: ModelsViewProps) {
                         y1={chartPoints.chartMargin.top + chartPoints.innerH / 2}
                         x2={chartPoints.width - chartPoints.chartMargin.right}
                         y2={chartPoints.chartMargin.top + chartPoints.innerH / 2}
-                        stroke="var(--color-border-subtle, #f0f0f0)"
+                        stroke="var(--color-border)"
                         strokeDasharray="3 3"
                       />
                       <line
@@ -563,7 +563,7 @@ export function ModelsView({ project }: ModelsViewProps) {
                         y1={chartPoints.chartMargin.top + chartPoints.innerH}
                         x2={chartPoints.width - chartPoints.chartMargin.right}
                         y2={chartPoints.chartMargin.top + chartPoints.innerH}
-                        stroke="var(--color-border-subtle, #e1e4e8)"
+                        stroke="var(--color-border)"
                       />
 
                       {/* Y-Axis Labels */}
@@ -572,57 +572,54 @@ export function ModelsView({ project }: ModelsViewProps) {
                         y={chartPoints.chartMargin.top + 4}
                         textAnchor="end"
                         fontSize="11"
-                        fill="var(--color-fg-muted, #656d76)"
+                        fill="var(--color-text-supporting)"
                       >
                         ${chartPoints.yMax.toFixed(2)}
+                      </text>
+                      <text
+                        x={chartPoints.chartMargin.left - 8}
+                        y={chartPoints.chartMargin.top + chartPoints.innerH / 2 + 4}
+                        textAnchor="end"
+                        fontSize="11"
+                        fill="var(--color-text-supporting)"
+                      >
+                        ${((chartPoints.yMax + chartPoints.yMin) / 2).toFixed(2)}
                       </text>
                       <text
                         x={chartPoints.chartMargin.left - 8}
                         y={chartPoints.chartMargin.top + chartPoints.innerH + 4}
                         textAnchor="end"
                         fontSize="11"
-                        fill="var(--color-fg-muted, #656d76)"
+                        fill="var(--color-text-supporting)"
                       >
                         ${chartPoints.yMin.toFixed(2)}
                       </text>
 
-                      {/* Warm-up Region Shading */}
-                      {chartPoints.warmupW > 0 && (
-                        <g>
-                          <rect
-                            x={chartPoints.chartMargin.left}
-                            y={chartPoints.chartMargin.top}
-                            width={chartPoints.warmupW}
-                            height={chartPoints.innerH}
-                            fill="var(--color-surface-hover, rgba(0, 0, 0, 0.04))"
-                            stroke="var(--color-border-subtle, #e1e4e8)"
-                            strokeDasharray="4 4"
-                          />
-                          <text
-                            x={chartPoints.chartMargin.left + chartPoints.warmupW / 2}
-                            y={chartPoints.chartMargin.top + 16}
-                            textAnchor="middle"
-                            fontSize="10"
-                            fontWeight="600"
-                            fill="var(--color-fg-muted, #656d76)"
-                          >
-                            Warm-up Zone
-                          </text>
-                        </g>
+                      {/* Warmup Period Shading */}
+                      {chartPoints.warmupWidth > 0 && (
+                        <rect
+                          x={chartPoints.chartMargin.left}
+                          y={chartPoints.chartMargin.top}
+                          width={chartPoints.warmupWidth}
+                          height={chartPoints.innerH}
+                          fill="var(--color-background-wash, rgba(255, 255, 255, 0.04))"
+                          stroke="var(--color-border)"
+                          strokeDasharray="2 2"
+                        />
                       )}
 
-                      {/* Series Paths */}
+                      {/* Series Lines */}
                       <path
                         d={chartPoints.pricePath}
                         fill="none"
-                        stroke="var(--color-fg-muted, #8c959f)"
+                        stroke="var(--color-text-supporting)"
                         strokeWidth="1.5"
                       />
                       {chartPoints.slowMaPath && (
                         <path
                           d={chartPoints.slowMaPath}
                           fill="none"
-                          stroke="var(--color-accent-purple, #8250df)"
+                          stroke="var(--color-icon-purple)"
                           strokeWidth="2.5"
                         />
                       )}
@@ -630,7 +627,7 @@ export function ModelsView({ project }: ModelsViewProps) {
                         <path
                           d={chartPoints.fastMaPath}
                           fill="none"
-                          stroke="var(--color-accent-blue, #0969da)"
+                          stroke="var(--color-icon-blue)"
                           strokeWidth="2.5"
                         />
                       )}
@@ -642,7 +639,7 @@ export function ModelsView({ project }: ModelsViewProps) {
                           y1={chartPoints.chartMargin.top}
                           x2={chartPoints.getX(hoveredIndex)}
                           y2={chartPoints.chartMargin.top + chartPoints.innerH}
-                          stroke="var(--color-border-hover, #57606a)"
+                          stroke="var(--color-border)"
                           strokeDasharray="2 2"
                         />
                       )}
@@ -672,9 +669,9 @@ export function ModelsView({ project }: ModelsViewProps) {
                         justify="between"
                         align="center"
                         style={{
-                          backgroundColor: "var(--color-surface-hover, #f6f8fa)",
+                          backgroundColor: "var(--color-background-wash, rgba(255, 255, 255, 0.08))",
                           padding: "8px 12px",
-                          borderRadius: "var(--radius-sm, 4px)",
+                          borderRadius: "var(--radius-inner)",
                         }}
                       >
                         <HStack gap={3}>
@@ -768,9 +765,9 @@ export function ModelsView({ project }: ModelsViewProps) {
                                       style={{
                                         color:
                                           spreadVal > 0
-                                            ? "var(--color-fg-success, #1a7f37)"
+                                            ? "var(--color-text-green)"
                                             : spreadVal < 0
-                                              ? "var(--color-fg-danger, #cf222e)"
+                                              ? "var(--color-text-red)"
                                               : "inherit",
                                       }}
                                     >

@@ -12,8 +12,32 @@ async function main() {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
 
-  console.log('Navigating to http://127.0.0.1:8000 ...');
-  await page.goto('http://127.0.0.1:8000');
+  console.log('Navigating to http://127.0.0.1:5173 ...');
+  await page.goto('http://127.0.0.1:5173');
+  await page.waitForLoadState('networkidle');
+  await page.waitForTimeout(1000);
+
+  // Ingest fresh Tiingo dataset via API
+  console.log('Ingesting Tiingo dataset via API...');
+  const ingestRes = await page.request.post('http://127.0.0.1:8000/api/datasets/download', {
+    data: {
+      provider: 'tiingo',
+      symbols: ['AAPL', 'MSFT', 'SPY'],
+      start_date: '2024-01-02',
+      end_date: '2024-06-28',
+    }
+  });
+  console.log('Ingestion response:', ingestRes.status());
+
+  // Create clean project
+  const projRes = await page.request.post('http://127.0.0.1:8000/api/projects', {
+    data: { name: 'Multi-Security E2E Portfolio' }
+  });
+  const projJson = await projRes.json();
+  console.log('Created project:', projJson.id);
+
+  // Reload page to select the new project
+  await page.goto('http://127.0.0.1:5173');
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(1000);
 
@@ -23,7 +47,23 @@ async function main() {
   // Navigate to Backtests view
   console.log('Navigating to Backtests...');
   await page.getByText('Backtests', { exact: true }).click();
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(1000);
+
+  // Select dataset with bars if available
+  const datasetSelect = page.getByLabel('Dataset Version');
+  if (await datasetSelect.isVisible()) {
+    const options = await datasetSelect.locator('option').all();
+    for (const opt of options) {
+      const text = await opt.innerText();
+      if (!text.includes('(0 bars)')) {
+        const val = await opt.getAttribute('value');
+        if (val) {
+          await datasetSelect.selectOption(val);
+          break;
+        }
+      }
+    }
+  }
 
   // Set multi-symbol universe and benchmark
   console.log('Filling simulation setup...');
@@ -46,7 +86,7 @@ async function main() {
   await runBtn.click();
 
   // Wait for result
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(4000);
   await page.screenshot({ path: path.join(outDir, 'shot_03_backtest_overview.png') });
 
   // Navigate through sub-tabs

@@ -172,7 +172,7 @@ function EquityDrawdownChart({
           {benchPoints && (
             <polyline
               fill="none"
-              stroke="var(--color-warning, #f59e0b)"
+              stroke="var(--color-icon-orange)"
               strokeWidth="2"
               strokeDasharray="4 2"
               points={benchPoints}
@@ -182,7 +182,7 @@ function EquityDrawdownChart({
           {/* Portfolio Equity Polyline */}
           <polyline
             fill="none"
-            stroke="var(--color-brand-primary, #3b82f6)"
+            stroke="var(--color-icon-blue)"
             strokeWidth="2.5"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -193,7 +193,7 @@ function EquityDrawdownChart({
           {ddPoints && (
             <polyline
               fill="none"
-              stroke="var(--color-text-danger, #ef4444)"
+              stroke="var(--color-icon-red)"
               strokeWidth="1.5"
               strokeDasharray="3 3"
               points={ddPoints}
@@ -203,15 +203,15 @@ function EquityDrawdownChart({
         <HStack justify="between">
           <Text type="supporting">{equityCurve[0]?.session_date}</Text>
           <HStack gap={3}>
-            <Text type="supporting" style={{ color: "var(--color-brand-primary, #3b82f6)" }}>
+            <Text type="supporting" style={{ color: "var(--color-text-blue)" }}>
               — Portfolio Equity
             </Text>
             {benchPoints && (
-              <Text type="supporting" style={{ color: "var(--color-warning, #f59e0b)" }}>
+              <Text type="supporting" style={{ color: "var(--color-text-orange)" }}>
                 - - Benchmark
               </Text>
             )}
-            <Text type="supporting" style={{ color: "var(--color-text-danger, #ef4444)" }}>
+            <Text type="supporting" style={{ color: "var(--color-text-red)" }}>
               --- Max Drawdown
             </Text>
           </HStack>
@@ -264,10 +264,12 @@ export function BacktestView({ project }: BacktestViewProps) {
           api.listDatasets(),
           api.listSecurities({ limit: 200 }),
         ]);
-        setDatasets(dsList);
+        const dailyBarDatasets = dsList.filter((d: any) => d.dataset_type !== "corporate_actions");
+        setDatasets(dailyBarDatasets);
         setSecurities(secList);
-        if (dsList.length > 0) {
-          setSelectedDatasetId(dsList[0].id);
+        if (dailyBarDatasets.length > 0) {
+          const validDs = dailyBarDatasets.find((d: any) => (d.row_count ?? d.total_bars ?? 0) > 0) || dailyBarDatasets[0];
+          setSelectedDatasetId(validDs.id);
         }
         if (secList.length > 0) {
           const syms = secList.slice(0, 2).map((s) => s.symbol);
@@ -515,9 +517,9 @@ export function BacktestView({ project }: BacktestViewProps) {
                     label="Dataset Version"
                     value={selectedDatasetId}
                     onChange={handleDatasetChange}
-                    options={datasets.map((d) => ({
+                    options={datasets.map((d: any) => ({
                       value: d.id,
-                      label: `${d.source || "Dataset"} — ${d.id.slice(0, 16)}... (${d.total_bars ?? 0} bars)`,
+                      label: `${d.source || "Dataset"} — ${d.id.slice(0, 16)}... (${d.row_count ?? d.total_bars ?? 0} bars)`,
                     }))}
                     placeholder="Select market dataset"
                     hasSearch
@@ -594,8 +596,8 @@ export function BacktestView({ project }: BacktestViewProps) {
                     subtext={`Benchmark Rel: ${percentage(currentResult.metrics.benchmark_relative_return)}`}
                     valueColor={
                       (currentResult.metrics.total_return ?? 0) >= 0
-                        ? "var(--color-text-success, #166534)"
-                        : "var(--color-text-danger, #991b1b)"
+                        ? "var(--color-text-green)"
+                        : "var(--color-text-red)"
                     }
                   />
                   <KpiCard
@@ -612,7 +614,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                     label="Max Drawdown"
                     value={percentage(currentResult.metrics.max_drawdown)}
                     subtext={`Calmar: ${decimalFormat(currentResult.metrics.calmar_ratio)}`}
-                    valueColor="var(--color-text-danger, #991b1b)"
+                    valueColor="var(--color-text-red)"
                   />
                   <KpiCard
                     label="Win / Hit Rate"
@@ -782,8 +784,8 @@ export function BacktestView({ project }: BacktestViewProps) {
                                   style={{
                                     color:
                                       tr.pnl >= 0
-                                        ? "var(--color-text-success, #166534)"
-                                        : "var(--color-text-danger, #991b1b)",
+                                        ? "var(--color-text-green)"
+                                        : "var(--color-text-red)",
                                   }}
                                 >
                                   {currencyFormat(tr.pnl)}
@@ -795,8 +797,8 @@ export function BacktestView({ project }: BacktestViewProps) {
                                   style={{
                                     color:
                                       tr.return_pct >= 0
-                                        ? "var(--color-text-success, #166534)"
-                                        : "var(--color-text-danger, #991b1b)",
+                                        ? "var(--color-text-green)"
+                                        : "var(--color-text-red)",
                                   }}
                                 >
                                   {percentage(tr.return_pct)}
@@ -1042,8 +1044,8 @@ export function BacktestView({ project }: BacktestViewProps) {
                                   style={{
                                     color:
                                       (r.metrics.total_return ?? 0) >= 0
-                                        ? "var(--color-text-success, #166534)"
-                                        : "var(--color-text-danger, #991b1b)",
+                                        ? "var(--color-text-green)"
+                                        : "var(--color-text-red)",
                                   }}
                                 >
                                   {percentage(r.metrics.total_return)}
@@ -1087,7 +1089,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                             <TableCell><Text type="supporting">Max Drawdown</Text></TableCell>
                             {comparisonRuns.map((r) => (
                               <TableCell key={r.run_id}>
-                                <Text weight="bold" style={{ color: "var(--color-text-danger, #991b1b)" }}>
+                                <Text weight="bold" style={{ color: "var(--color-text-red)" }}>
                                   {percentage(r.metrics.max_drawdown)}
                                 </Text>
                               </TableCell>
@@ -1183,7 +1185,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                           cursor: "pointer",
                           background:
                             rId === currentRunId
-                              ? "var(--color-bg-subtle, #f1f5f9)"
+                              ? "var(--color-background-wash, rgba(255, 255, 255, 0.08))"
                               : undefined,
                         }}
                       >
@@ -1199,8 +1201,8 @@ export function BacktestView({ project }: BacktestViewProps) {
                             style={{
                               color:
                                 (run.metrics.total_return ?? 0) >= 0
-                                  ? "var(--color-text-success, #166534)"
-                                  : "var(--color-text-danger, #991b1b)",
+                                  ? "var(--color-text-green)"
+                                  : "var(--color-text-red)",
                             }}
                           >
                             {percentage(run.metrics.total_return)}
