@@ -61,11 +61,12 @@ from .predictive_models import (
     PredictiveModelCalculation,
     PredictiveModelCalculationError,
     PredictiveModelDataError,
+    PredictiveModelForecast,
     PredictiveModelMetadata,
     PredictiveModelNotFoundError,
+    PredictiveModelOutput,
     PredictiveModelParameter,
     PredictiveModelParameterError,
-    PredictiveModelPrediction,
     get_predictive_model_spec,
     list_predictive_models,
     run_predictive_model,
@@ -637,13 +638,43 @@ class PredictiveModelArtifactResponse(BaseModel):
     parameters: dict[str, JsonValue]
     seed: int | None
     training_metrics: dict[str, float]
+    feature_definition: dict[str, JsonValue] = Field(default_factory=dict)
+    preprocessing: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class PredictiveModelSplitResponse(BaseModel):
+    period: Literal["training", "validation", "test"]
+    start: str
+    end: str
+    feature_start: str
+    feature_end: str
+    observations: int
+    labelled_observations: int
+    fit_scope: str
+
+
+class PredictiveModelPeriodMetricsResponse(BaseModel):
+    period: Literal["training", "validation", "test"]
+    observations: int
+    metrics: dict[str, float]
 
 
 class PredictiveModelPredictionResponse(BaseModel):
     session_date: str
     feature_value: float
     predicted_value: float
-    actual_target: float | None
+    actual_target: float
+    target_date: str | None = None
+    period: Literal["training", "validation", "test"] | None = None
+
+
+class PredictiveModelForecastResponse(BaseModel):
+    session_date: str
+    feature_value: float
+    predicted_value: float
+    actual_target: None = None
+    target_date: None = None
+    period: None = None
 
 
 class PredictiveModelRunResponse(BaseModel):
@@ -665,13 +696,17 @@ class PredictiveModelRunResponse(BaseModel):
     output_meaning: str
     outputs: list[str]
     artifact: PredictiveModelArtifactResponse
-    predictions: list[PredictiveModelPredictionResponse]
+    predictions: list[PredictiveModelPredictionResponse | PredictiveModelForecastResponse]
     metrics: dict[str, float]
     training_start: str
     training_end: str
     completed_at: str | None = None
     as_of: datetime | None = None
     out_of_sample_status: str
+    evaluation_mode: Literal["holdout", "expanding", "rolling"] = "holdout"
+    splits: list[PredictiveModelSplitResponse] = Field(default_factory=list)
+    period_metrics: list[PredictiveModelPeriodMetricsResponse] = Field(default_factory=list)
+    fold_artifacts: list[PredictiveModelArtifactResponse] = Field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -1012,17 +1047,30 @@ def _predictive_artifact_response(
         parameters=artifact.parameters,
         seed=artifact.seed,
         training_metrics=metrics,
+        feature_definition=artifact.feature_definition,
+        preprocessing=artifact.preprocessing,
     )
 
 
 def _predictive_prediction_response(
-    prediction: PredictiveModelPrediction,
-) -> PredictiveModelPredictionResponse:
+    prediction: PredictiveModelOutput,
+) -> PredictiveModelPredictionResponse | PredictiveModelForecastResponse:
+    if isinstance(prediction, PredictiveModelForecast):
+        return PredictiveModelForecastResponse(
+            session_date=prediction.session_date,
+            feature_value=prediction.feature_value,
+            predicted_value=prediction.predicted_value,
+            actual_target=prediction.actual_target,
+            target_date=prediction.target_date,
+            period=prediction.period,
+        )
     return PredictiveModelPredictionResponse(
         session_date=prediction.session_date,
         feature_value=prediction.feature_value,
         predicted_value=prediction.predicted_value,
         actual_target=prediction.actual_target,
+        target_date=prediction.target_date,
+        period=prediction.period,
     )
 
 
@@ -1057,6 +1105,32 @@ def _predictive_run_response(
         completed_at=context.completed_at,
         as_of=context.as_of,
         out_of_sample_status=calculation.out_of_sample_status,
+        evaluation_mode=calculation.evaluation.mode,
+        splits=[
+            PredictiveModelSplitResponse(
+                period=split.period,
+                start=split.start,
+                end=split.end,
+                feature_start=split.feature_start,
+                feature_end=split.feature_end,
+                observations=split.observations,
+                labelled_observations=split.labelled_observations,
+                fit_scope=split.fit_scope,
+            )
+            for split in calculation.evaluation.splits
+        ],
+        period_metrics=[
+            PredictiveModelPeriodMetricsResponse(
+                period=period_metrics.period,
+                observations=period_metrics.observations,
+                metrics=period_metrics.metrics,
+            )
+            for period_metrics in calculation.evaluation.period_metrics
+        ],
+        fold_artifacts=[
+            _predictive_artifact_response(fold_artifact)
+            for fold_artifact in calculation.fold_artifacts
+        ],
     )
 
 
@@ -2832,6 +2906,10 @@ def create_app(
                 artifact=calculation.artifact.to_json(),
                 predictions=[prediction.to_json() for prediction in calculation.predictions],
                 result=base_response.model_dump(mode="json"),
+                evaluation=calculation.evaluation.to_json(),
+                fold_artifacts=[
+                    fold_artifact.to_json() for fold_artifact in calculation.fold_artifacts
+                ],
             ),
         )
         return base_response.model_copy(update={"run_id": run_id})
@@ -2889,6 +2967,59 @@ def create_app(
                 "model_revision": item.get("model_revision"),
                 "status": "completed",
             }
+        )
+
+    @app.get(
+        "/api/projects/{project_id}/predictive-models/runs/{run_id}/export/{format_type}",
+        tags=["predictive-models"],
+        responses={
+            200: {
+                "content": {
+                    "text/html": {"schema": {"type": "string"}},
+                    "text/csv": {"schema": {"type": "string"}},
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "manifest": {
+                                    "type": "object",
+                                    "additionalProperties": True,
+                                },
+                                "predictive_model": {
+                                    "type": "object",
+                                    "additionalProperties": True,
+                                },
+                            },
+                            "required": ["manifest", "predictive_model"],
+                        }
+                    },
+                }
+            }
+        },
+    )
+    def export_predictive_model(
+        project_id: UUID,
+        run_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
+        format_type: Literal["html", "csv", "json"] = FastAPIPath(),
+    ) -> Response:
+        try:
+            artifact = store.get_predictive_model_export(
+                str(project_id), run_id, format_type
+            )
+        except FileNotFoundError as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(error),
+            ) from error
+        except ValueError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(error),
+            ) from error
+        return Response(
+            content=artifact.content,
+            media_type=artifact.media_type,
+            headers={"Content-Disposition": f'attachment; filename="{artifact.filename}"'},
         )
 
     @app.get(

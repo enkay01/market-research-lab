@@ -1074,7 +1074,10 @@ export function ModelsView({ project }: ModelsViewProps) {
                           label={`In-Sample R² ${predictiveResult.metrics.in_sample_r2.toFixed(3)}`}
                           color="green"
                         />
-                        <Token label="OOS Pending Issue #33" color="orange" />
+                        <Token
+                          label={`Chronological ${predictiveResult.evaluation_mode} evaluation`}
+                          color="orange"
+                        />
                       </HStack>
                     </HStack>
 
@@ -1094,12 +1097,50 @@ export function ModelsView({ project }: ModelsViewProps) {
                       </VStack>
                     </Card>
 
+                    <VStack gap={3}>
+                      <Heading level={4}>Chronological Evaluation</Heading>
+                      <Text type="supporting">
+                        The initial fit uses training observations only. Each later fold uses only data available before its target date. Metric scope: training is in-sample; validation and out-of-sample are held out. Warnings: none recorded.
+                      </Text>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHeaderCell>Period</TableHeaderCell>
+                            <TableHeaderCell>Target Dates</TableHeaderCell>
+                            <TableHeaderCell>Feature Dates</TableHeaderCell>
+                            <TableHeaderCell>Observations</TableHeaderCell>
+                            <TableHeaderCell>RMSE</TableHeaderCell>
+                            <TableHeaderCell>R²</TableHeaderCell>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {(predictiveResult.splits ?? []).map((split) => {
+                            const metrics = (predictiveResult.period_metrics ?? []).find(
+                              (item) => item.period === split.period,
+                            )?.metrics;
+                            return (
+                              <TableRow key={split.period}>
+                                <TableCell>{split.period === "test" ? "out-of-sample" : split.period}</TableCell>
+                                <TableCell>{split.start} to {split.end}</TableCell>
+                                <TableCell>{split.feature_start} to {split.feature_end}</TableCell>
+                                <TableCell>{split.observations}</TableCell>
+                                <TableCell>{metrics?.rmse?.toFixed(6) ?? "Not available"}</TableCell>
+                                <TableCell>{metrics?.r2?.toFixed(3) ?? "Not available"}</TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </VStack>
+
                     <VStack gap={2}>
                       <Heading level={4}>Timestamped Model Output</Heading>
                       <Table>
                         <TableHeader>
                           <TableRow>
                             <TableHeaderCell>Session Date</TableHeaderCell>
+                            <TableHeaderCell>Period</TableHeaderCell>
+                            <TableHeaderCell>Target Date</TableHeaderCell>
                             <TableHeaderCell>Momentum Feature</TableHeaderCell>
                             <TableHeaderCell>Predicted Next Return</TableHeaderCell>
                             <TableHeaderCell>Actual Next Return</TableHeaderCell>
@@ -1109,12 +1150,18 @@ export function ModelsView({ project }: ModelsViewProps) {
                           {predictiveResult.predictions.map((prediction) => (
                             <TableRow key={prediction.session_date}>
                               <TableCell>{prediction.session_date}</TableCell>
+                              <TableCell>
+                                {prediction.period === "test"
+                                  ? "out-of-sample"
+                                  : prediction.period ?? "Not labelled"}
+                              </TableCell>
+                              <TableCell>{prediction.target_date ?? "Not available"}</TableCell>
                               <TableCell>{prediction.feature_value.toFixed(6)}</TableCell>
                               <TableCell>
                                 <Token label={prediction.predicted_value.toFixed(6)} color="blue" />
                               </TableCell>
                               <TableCell>
-                                {prediction.actual_target === null
+                                {prediction.actual_target == null
                                   ? "Not available yet"
                                   : prediction.actual_target.toFixed(6)}
                               </TableCell>
@@ -1283,29 +1330,58 @@ export function ModelsView({ project }: ModelsViewProps) {
                 {currentPredictiveModel && (
                   <VStack gap={3}>
                     <Heading level={4}>Typed Parameters</Heading>
-                    {currentPredictiveModel.parameters.map((parameter) => (
-                      <VStack gap={1} key={parameter.name}>
-                        <TextInput
-                          label={`${parameter.name} (${parameter.param_type})`}
-                          value={String(predictiveParams[parameter.name] ?? parameter.default ?? "")}
-                          onChange={(val) =>
-                            setPredictiveParams((previous) => ({
-                              ...previous,
-                              [parameter.name]: typeof val === "string" ? val : "",
-                            }))
-                          }
-                        />
-                        <Text type="supporting">
-                          {parameter.description}
-                          {parameter.min_value !== null ? ` (min: ${parameter.min_value}` : ""}
-                          {parameter.max_value !== null
-                            ? `, max: ${parameter.max_value})`
-                            : parameter.min_value !== null
-                              ? ")"
-                              : ""}
-                        </Text>
-                      </VStack>
-                    ))}
+                    {currentPredictiveModel.parameters.map((parameter) => {
+                      if (parameter.options && parameter.options.length > 0) {
+                        return (
+                          <VStack gap={1} key={parameter.name}>
+                            <Text weight="medium">{parameter.name}</Text>
+                            <SegmentedControl
+                              label={parameter.name}
+                              value={String(predictiveParams[parameter.name] ?? parameter.default)}
+                              onChange={(val) =>
+                                setPredictiveParams((previous) => ({
+                                  ...previous,
+                                  [parameter.name]: val,
+                                }))
+                              }
+                            >
+                              {parameter.options.map((option) => (
+                                <SegmentedControlItem
+                                  key={option}
+                                  value={option}
+                                  label={option.toUpperCase()}
+                                />
+                              ))}
+                            </SegmentedControl>
+                            <Text type="supporting">{parameter.description}</Text>
+                          </VStack>
+                        );
+                      }
+
+                      return (
+                        <VStack gap={1} key={parameter.name}>
+                          <TextInput
+                            label={`${parameter.name} (${parameter.param_type})`}
+                            value={String(predictiveParams[parameter.name] ?? parameter.default ?? "")}
+                            onChange={(val) =>
+                              setPredictiveParams((previous) => ({
+                                ...previous,
+                                [parameter.name]: typeof val === "string" ? val : "",
+                              }))
+                            }
+                          />
+                          <Text type="supporting">
+                            {parameter.description}
+                            {parameter.min_value !== null ? ` (min: ${parameter.min_value}` : ""}
+                            {parameter.max_value !== null
+                              ? `, max: ${parameter.max_value})`
+                              : parameter.min_value !== null
+                                ? ")"
+                                : ""}
+                          </Text>
+                        </VStack>
+                      );
+                    })}
                   </VStack>
                 )}
 

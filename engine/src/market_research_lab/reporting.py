@@ -385,6 +385,211 @@ def generate_valuation_csv(result_data: dict[str, JsonValue]) -> str:
     return output.getvalue()
 
 
+def generate_predictive_model_html_report(
+    result_data: dict[str, JsonValue],
+    manifest_data: dict[str, JsonValue],
+) -> str:
+    """Generate a self-contained report with labelled chronological model metrics."""
+    model_name = html.escape(
+        str(result_data.get("display_name") or result_data.get("model_name") or "Predictive Model")
+    )
+    run_id = html.escape(str(result_data.get("run_id") or manifest_data.get("id") or "N/A"))
+    revision_values = manifest_data.get("definition_revisions")
+    revisions = revision_values if isinstance(revision_values, list) else []
+    revision = html.escape(
+        str(result_data.get("model_revision") or (revisions[0] if revisions else "unversioned"))
+    )
+    datasets_raw = manifest_data.get("dataset_versions")
+    datasets = datasets_raw if isinstance(datasets_raw, list) else []
+    evaluation_raw = result_data.get("evaluation")
+    evaluation = evaluation_raw if isinstance(evaluation_raw, dict) else {}
+    splits_raw = evaluation.get("splits") or result_data.get("splits")
+    splits = splits_raw if isinstance(splits_raw, list) else []
+    metrics_raw = evaluation.get("period_metrics") or result_data.get("period_metrics")
+    period_metrics = metrics_raw if isinstance(metrics_raw, list) else []
+    parameters_raw = manifest_data.get("parameters")
+    parameters = parameters_raw if isinstance(parameters_raw, dict) else {}
+    preprocessing = (
+        result_data.get("artifact", {}).get("preprocessing", {})
+        if isinstance(result_data.get("artifact"), dict)
+        else {}
+    )
+    evaluation_mode = html.escape(
+        str(evaluation.get("mode") or result_data.get("evaluation_mode") or "holdout")
+    )
+    warnings_raw = result_data.get("warnings")
+    warnings = warnings_raw if isinstance(warnings_raw, list) else []
+
+    doc = [
+        "<!DOCTYPE html>",
+        '<html lang="en">',
+        "<head>",
+        '  <meta charset="utf-8">',
+        f"  <title>{model_name} — Chronological Evaluation</title>",
+        "  <style>",
+        "    body { font-family: sans-serif; line-height: 1.5; color: #1e293b; "
+        "max-width: 960px; margin: 40px auto; padding: 0 20px; }",
+        "    h1, h2 { color: #0f172a; }",
+        "    .meta { background: #f8fafc; border: 1px solid #e2e8f0; "
+        "border-radius: 8px; padding: 16px; }",
+        "    table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; }",
+        "    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e2e8f0; }",
+        "    th { background: #f8fafc; }",
+        "    .note { background: #eff6ff; border-left: 4px solid #2563eb; padding: 12px 16px; }",
+        "  </style>",
+        "</head>",
+        "<body>",
+        f"  <h1>{model_name}</h1>",
+        f'  <div class="meta"><strong>Run:</strong> {run_id}<br>'
+        f'<strong>Definition Revision:</strong> {revision}<br>'
+        f'<strong>Dataset Versions:</strong> '
+        f'{html.escape(", ".join(str(dataset) for dataset in datasets))}<br>'
+        f'<strong>Evaluation Mode:</strong> {evaluation_mode}<br>'
+        '<strong>Metric Scope:</strong> In-sample training; held-out validation and '
+        'out-of-sample</div>',
+        '  <p class="note">The initial fit uses training observations only. Each later '
+        'fold uses only data available before its target date.</p>',
+        "  <h2>Chronological Periods</h2>",
+        "  <table>",
+        "    <thead><tr><th>Period</th><th>Target Dates</th><th>Feature Dates</th>"
+        "<th>Observations</th><th>Fit Scope</th></tr></thead>",
+        "    <tbody>",
+    ]
+    for split in splits:
+        if isinstance(split, dict):
+            period = split.get("period", "")
+            period_label = "out-of-sample" if period == "test" else period
+            doc.append(
+                "      <tr>"
+                f"<td>{html.escape(str(period_label))}</td>"
+                f"<td>{html.escape(str(split.get('start', '')))} to "
+                f"{html.escape(str(split.get('end', '')))}</td>"
+                f"<td>{html.escape(str(split.get('feature_start', '')))} to "
+                f"{html.escape(str(split.get('feature_end', '')))}</td>"
+                f"<td>{html.escape(str(split.get('observations', '')))}</td>"
+                f"<td>{html.escape(str(split.get('fit_scope', '')))}</td>"
+                "</tr>"
+            )
+    doc.extend(
+        ["    </tbody>", "  </table>", "  <h2>Period Metrics</h2>", "  <table>"]
+    )
+    doc.append(
+        "    <thead><tr><th>Period</th><th>Observations</th><th>Metric</th>"
+        "<th>Value</th></tr></thead>"
+    )
+    doc.append("    <tbody>")
+    for period_metric in period_metrics:
+        if not isinstance(period_metric, dict):
+            continue
+        metric_values = period_metric.get("metrics")
+        if not isinstance(metric_values, dict):
+            continue
+        for metric_name, metric_value in metric_values.items():
+            period = period_metric.get("period", "")
+            period_label = "out-of-sample" if period == "test" else period
+            doc.append(
+                "      <tr>"
+                f"<td>{html.escape(str(period_label))}</td>"
+                f"<td>{html.escape(str(period_metric.get('observations', '')))}</td>"
+                f"<td>{html.escape(str(metric_name))}</td>"
+                f"<td>{html.escape(str(metric_value))}</td>"
+                "</tr>"
+            )
+    doc.extend(
+        ["    </tbody>", "  </table>", "  <h2>Assumptions and Provenance</h2>", "  <table>"]
+    )
+    doc.append("    <tbody>")
+    for label, value in (
+        ("Target", result_data.get("target", "")),
+        ("Horizon", result_data.get("horizon", "")),
+        ("Features", result_data.get("features", "")),
+        ("Parameters", parameters),
+        ("Preprocessing", preprocessing),
+    ):
+        doc.append(
+            f"      <tr><th>{html.escape(label)}</th>"
+            f"<td>{html.escape(str(value))}</td></tr>"
+        )
+    doc.extend(
+        [
+            "    </tbody>",
+            "  </table>",
+            "  <h2>Warnings</h2>",
+            "  <ul>",
+        ]
+    )
+    if warnings:
+        for warning in warnings:
+            doc.append(f"    <li>{html.escape(str(warning))}</li>")
+    else:
+        doc.append("    <li>No warnings recorded.</li>")
+    doc.extend(
+        [
+            "  </ul>",
+            "  <footer>Market Research Lab — Predictive Model Run</footer>",
+            "</body>",
+            "</html>",
+        ]
+    )
+    return "\n".join(doc)
+
+
+def generate_predictive_model_csv(result_data: dict[str, JsonValue]) -> str:
+    """Generate a CSV export with period-labelled metrics and predictions."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Predictive Model", result_data.get("model_name", "")])
+    writer.writerow(["Run ID", result_data.get("run_id", "")])
+    writer.writerow(["Model Revision", result_data.get("model_revision", "")])
+    writer.writerow([])
+    writer.writerow(["Period", "Observations", "Metric", "Value"])
+    metrics_raw = result_data.get("period_metrics")
+    period_metrics = metrics_raw if isinstance(metrics_raw, list) else []
+    for period_metric in period_metrics:
+        if not isinstance(period_metric, dict):
+            continue
+        values = period_metric.get("metrics")
+        if not isinstance(values, dict):
+            continue
+        period = period_metric.get("period", "")
+        period_label = "out-of-sample" if period == "test" else period
+        for metric_name, metric_value in values.items():
+            writer.writerow(
+                [
+                    period_label,
+                    period_metric.get("observations", ""),
+                    metric_name,
+                    metric_value,
+                ]
+            )
+    writer.writerow([])
+    writer.writerow(
+        [
+            "Session Date",
+            "Target Date",
+            "Period",
+            "Feature Value",
+            "Predicted Value",
+            "Actual Target",
+        ]
+    )
+    predictions_raw = result_data.get("predictions")
+    predictions = predictions_raw if isinstance(predictions_raw, list) else []
+    for prediction in predictions:
+        if isinstance(prediction, dict):
+            writer.writerow(
+                [
+                    prediction.get("session_date", ""),
+                    prediction.get("target_date", ""),
+                    prediction.get("period", ""),
+                    prediction.get("feature_value", ""),
+                    prediction.get("predicted_value", ""),
+                    prediction.get("actual_target", ""),
+                ]
+            )
+    return output.getvalue()
+
+
 # ---------------------------------------------------------------------------
 # Backtest HTML and CSV Exporters
 # ---------------------------------------------------------------------------

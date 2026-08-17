@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import NamedTuple
 
@@ -71,6 +72,9 @@ def test_predictive_model_metadata_exposes_the_complete_contract(tmp_path: Path)
     assert {parameter["name"] for parameter in metadata["parameters"]} == {
         "momentum_period",
         "training_window",
+        "validation_fraction",
+        "test_fraction",
+        "evaluation_mode",
     }
 
 
@@ -91,7 +95,19 @@ def test_predictive_model_can_run_preview_and_save_a_reproducible_run(
     assert preview_body["artifact"]["training_observations"] == 3
     assert preview_body["predictions"][-1]["actual_target"] is None
     assert preview_body["metrics"]["in_sample_r2"] is not None
-    assert preview_body["out_of_sample_status"] == "not_available_until_chronological_splits"
+    assert preview_body["out_of_sample_status"] == "available"
+    assert preview_body["evaluation_mode"] == "holdout"
+    assert [split["period"] for split in preview_body["splits"]] == [
+        "training",
+        "validation",
+        "test",
+    ]
+    assert [metric["period"] for metric in preview_body["period_metrics"]] == [
+        "training",
+        "validation",
+        "test",
+    ]
+    assert preview_body["period_metrics"][1]["metrics"]["rmse"] >= 0
 
     saved = client.post(
         f"/api/projects/{project_id}/predictive-models/runs",
@@ -117,6 +133,49 @@ def test_predictive_model_can_run_preview_and_save_a_reproducible_run(
     assert reopened.json()["run_id"] == saved_body["run_id"]
     assert reopened.json()["artifact"] == saved_body["artifact"]
     assert reopened.json()["predictions"] == saved_body["predictions"]
+
+    run_root = tmp_path / "projects" / project_id / "runs" / saved_body["run_id"]
+    predictive_model_path = run_root / "artifacts" / "predictive_model.json"
+    legacy_result = json.loads(predictive_model_path.read_text(encoding="utf-8"))
+    for prediction in legacy_result["predictions"]:
+        prediction.pop("target_date", None)
+        prediction.pop("period", None)
+    predictive_model_path.write_text(json.dumps(legacy_result), encoding="utf-8")
+    legacy_reopened = client.get(
+        f"/api/projects/{project_id}/predictive-models/runs/{saved_body['run_id']}"
+    )
+    assert legacy_reopened.status_code == 200
+    assert legacy_reopened.json()["predictions"][-1]["actual_target"] is None
+
+    manifest = (run_root / "manifest.json").read_text(encoding="utf-8")
+    assert '"evaluation"' in manifest
+    assert '"validation"' in manifest
+    assert (run_root / "artifacts" / "predictive_model_report.html").exists()
+    assert (run_root / "artifacts" / "summary.csv").exists()
+
+    report = client.get(
+        f"/api/projects/{project_id}/predictive-models/runs/{saved_body['run_id']}/export/html"
+    )
+    assert report.status_code == 200
+    assert "Chronological Periods" in report.text
+    assert "Validation" in report.text or "validation" in report.text
+    assert "out-of-sample" in report.text
+    assert "Metric Scope" in report.text
+    assert "No warnings recorded" in report.text
+
+    csv_export = client.get(
+        f"/api/projects/{project_id}/predictive-models/runs/{saved_body['run_id']}/export/csv"
+    )
+    assert csv_export.status_code == 200
+    assert "Period,Observations,Metric,Value" in csv_export.text
+    assert "validation" in csv_export.text
+    assert "out-of-sample" in csv_export.text
+
+    json_export = client.get(
+        f"/api/projects/{project_id}/predictive-models/runs/{saved_body['run_id']}/export/json"
+    )
+    assert json_export.status_code == 200
+    assert json_export.json()["manifest"]["evaluation"]["mode"] == "holdout"
 
 
 def test_predictive_model_api_rejects_invalid_parameters_with_stable_error(
