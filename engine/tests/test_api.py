@@ -1265,7 +1265,7 @@ def test_backtest_run_exports_html_csv_json(tmp_path):
 
 def test_backtest_run_multi_symbol_with_benchmark(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
-    project = client.post("/api/projects", json={"name": "Multi-Asset Project"}).json()
+    project = client.post("/api/projects", json={"name": "Multi-Security Project"}).json()
 
     csv_content = (
         "symbol,date,open,high,low,close,volume,available_at\n"

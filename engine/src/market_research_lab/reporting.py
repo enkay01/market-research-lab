@@ -669,7 +669,7 @@ def generate_backtest_html_report(
         doc.append('  <div class="scroll-table">')
         doc.append("    <table>")
         doc.append(
-            '      <thead><tr><th>Session Date</th><th class="num">Target Weight</th><th class="num">Shares</th><th class="num">Close Price</th><th class="num">Cash Balance</th><th class="num">Position Value</th><th class="num">Portfolio Value</th></tr></thead>'
+            '      <thead><tr><th>Session Date</th><th class="num">Target Weight</th><th>Positions Breakdown</th><th class="num">Cash Balance</th><th class="num">Position Value</th><th class="num">Portfolio Value</th><th class="num">Gross Exposure</th></tr></thead>'
         )
         doc.append("      <tbody>")
         for row in ledger:
@@ -680,8 +680,23 @@ def generate_backtest_html_report(
                     if weight is not None and isinstance(weight, (int, float))
                     else "—"
                 )
+                raw_positions = row.get("positions")
+                positions_dict = raw_positions if isinstance(raw_positions, dict) else {}
+                if positions_dict:
+                    pos_parts = []
+                    for sym, pos_data in positions_dict.items():
+                        if isinstance(pos_data, dict):
+                            sh = float(pos_data.get("shares", 0))
+                            val = float(pos_data.get("position_value", 0))
+                            pos_parts.append(f"{html.escape(sym)}: {sh:.2f} sh (${val:,.2f})")
+                    pos_summary = "<br>".join(pos_parts) if pos_parts else "Flat"
+                else:
+                    shares_held = float(row.get("shares", 0))
+                    pos_summary = f"{shares_held:.2f} sh" if shares_held > 0 else "Flat"
+
+                gross_exp = float(row.get("gross_exposure", 0))
                 doc.append(
-                    f'        <tr><td>{row.get("session_date")}</td><td class="num">{weight_str}</td><td class="num">{float(row.get("shares", 0)):.2f}</td><td class="num">${float(row.get("close_price", 0)):.2f}</td><td class="num">${float(row.get("cash", 0)):,.2f}</td><td class="num">${float(row.get("position_value", 0)):,.2f}</td><td class="num"><strong>${float(row.get("portfolio_value", 0)):,.2f}</strong></td></tr>'
+                    f'        <tr><td>{row.get("session_date")}</td><td class="num">{weight_str}</td><td><small>{pos_summary}</small></td><td class="num">${float(row.get("cash", 0)):,.2f}</td><td class="num">${float(row.get("position_value", 0)):,.2f}</td><td class="num"><strong>${float(row.get("portfolio_value", 0)):,.2f}</strong></td><td class="num">{gross_exp * 100:.0f}%</td></tr>'
                 )
         doc.append("      </tbody>")
         doc.append("    </table>")
@@ -870,26 +885,36 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
         [
             "Session Date",
             "Signal Weight",
-            "Signal Decision Time",
-            "Shares",
-            "Close Price",
+            "Positions",
             "Cash",
             "Position Value",
             "Portfolio Value",
+            "Gross Exposure",
+            "Net Exposure",
         ]
     )
     for row in ledger:
         if isinstance(row, dict):
+            raw_positions = row.get("positions")
+            positions_dict = raw_positions if isinstance(raw_positions, dict) else {}
+            if positions_dict:
+                pos_summary = "; ".join(
+                    f"{sym}:{pos.get('shares', 0)}sh"
+                    for sym, pos in positions_dict.items()
+                    if isinstance(pos, dict)
+                )
+            else:
+                pos_summary = f"{row.get('shares', 0)}sh"
             writer.writerow(
                 [
                     row.get("session_date", ""),
                     row.get("signal_weight", ""),
-                    row.get("signal_decision_time", ""),
-                    row.get("shares", ""),
-                    row.get("close_price", ""),
+                    pos_summary,
                     row.get("cash", ""),
                     row.get("position_value", ""),
                     row.get("portfolio_value", ""),
+                    row.get("gross_exposure", ""),
+                    row.get("net_exposure", ""),
                 ]
             )
 

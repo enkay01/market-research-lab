@@ -418,7 +418,7 @@ export function BacktestView({ project }: BacktestViewProps) {
             <HStack align="center" gap={3}>
               <Heading level={2}>Backtest Simulation Engine</Heading>
               <Token label={`Strategy: ${strategyName}`} color="purple" />
-              {project && <Badge label={`Project: ${project.name}`} variant="purple" />}
+              {project && <Token label={`Project: ${project.name}`} color="purple" />}
               {currentRunId && <Token label={`Run: ${currentRunId.slice(0, 8)}`} color="blue" />}
             </HStack>
 
