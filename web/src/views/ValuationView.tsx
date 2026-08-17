@@ -52,18 +52,12 @@ function currencyFormat(value: number | null | undefined, currency: string = "US
 
 function ValuationKpiCard({ label, value }: { label: string; value: string }) {
   return (
-    <VStack
-      gap={1}
-      style={{
-        padding: "var(--spacing-4, 1rem)",
-        background: "var(--color-bg-subtle, #f8fafc)",
-        borderRadius: "var(--radius-medium, 0.5rem)",
-        flex: 1,
-      }}
-    >
-      <Text type="supporting">{label}</Text>
-      <Heading level={2}>{value}</Heading>
-    </VStack>
+    <Card padding={4} style={{ flex: 1 }}>
+      <VStack gap={1}>
+        <Text type="supporting">{label}</Text>
+        <Heading level={2}>{value}</Heading>
+      </VStack>
+    </Card>
   );
 }
 

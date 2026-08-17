@@ -688,6 +688,10 @@ export interface components {
             manifest: {
                 [key: string]: components["schemas"]["JsonValue-Output"];
             };
+            /** Benchmark Equity Curve */
+            benchmark_equity_curve?: components["schemas"]["EquityPointResponse"][];
+            /** Rejections */
+            rejections?: components["schemas"]["ConstraintRejectionResponse"][];
         };
         /** BacktestRunRequest */
         BacktestRunRequest: {
@@ -698,7 +702,11 @@ export interface components {
             /** Dataset Version Id */
             dataset_version_id: string;
             /** Symbol */
-            symbol: string;
+            symbol?: string | null;
+            /** Symbols */
+            symbols?: string[] | null;
+            /** Benchmark Symbol */
+            benchmark_symbol?: string | null;
             /** Start Date */
             start_date: string;
             /** End Date */
@@ -843,6 +851,19 @@ export interface components {
             method_revision?: string | null;
             /** Run Id */
             run_id?: string | null;
+        };
+        /** ConstraintRejectionResponse */
+        ConstraintRejectionResponse: {
+            /** Session Date */
+            session_date: string;
+            /** Security Id */
+            security_id: string;
+            /** Rule */
+            rule: string;
+            /** Reason */
+            reason: string;
+            /** Requested Weight */
+            requested_weight?: number | null;
         };
         /** CorporateActionResponse */
         CorporateActionResponse: {
@@ -1432,6 +1453,35 @@ export interface components {
             position_value: number;
             /** Portfolio Value */
             portfolio_value: number;
+            /** Positions */
+            positions?: {
+                [key: string]: components["schemas"]["PositionSnapshotResponse"];
+            };
+            /** Signal Weights */
+            signal_weights?: {
+                [key: string]: number;
+            };
+            /**
+             * Gross Exposure
+             * @default 0
+             */
+            gross_exposure: number;
+            /**
+             * Net Exposure
+             * @default 0
+             */
+            net_exposure: number;
+        };
+        /** PositionSnapshotResponse */
+        PositionSnapshotResponse: {
+            /** Shares */
+            shares: number;
+            /** Close Price */
+            close_price: number;
+            /** Position Value */
+            position_value: number;
+            /** Weight */
+            weight: number;
         };
         /** ProjectCreateRequest */
         ProjectCreateRequest: {

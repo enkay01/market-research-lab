@@ -10,3 +10,5 @@ web/vite.config.js
 web/vite.config.d.ts
 workspace/
 /.playwright-mcp
+test-results/
+web/test-results/

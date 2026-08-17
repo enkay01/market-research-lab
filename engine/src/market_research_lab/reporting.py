@@ -27,9 +27,7 @@ def generate_valuation_html_report(
     target_dict = target_raw if isinstance(target_raw, dict) else {}
     symbol = html.escape(str(result_data.get("symbol") or target_dict.get("symbol") or ""))
     name = html.escape(str(result_data.get("name") or target_dict.get("name") or ""))
-    currency = html.escape(
-        str(result_data.get("currency") or target_dict.get("currency") or "USD")
-    )
+    currency = html.escape(str(result_data.get("currency") or target_dict.get("currency") or "USD"))
 
     doc = [
         "<!DOCTYPE html>",
@@ -88,7 +86,9 @@ def generate_valuation_html_report(
             else "—"
         )
         ev_str = (
-            f"{currency} {float(ev):.2f}" if ev is not None and isinstance(ev, (int, float)) else "—"
+            f"{currency} {float(ev):.2f}"
+            if ev is not None and isinstance(ev, (int, float))
+            else "—"
         )
         eq_str = (
             f"{currency} {float(eq_val):.2f}"
@@ -122,39 +122,37 @@ def generate_valuation_html_report(
         if isinstance(inputs, dict):
             doc.append("  <h3>Valuation Assumptions</h3>")
             doc.append("  <table>")
-            doc.append(
-                '    <thead><tr><th>Assumption</th><th class="num">Value</th></tr></thead>'
-            )
+            doc.append('    <thead><tr><th>Assumption</th><th class="num">Value</th></tr></thead>')
             doc.append("    <tbody>")
             doc.append(
-                f"      <tr><td>Base Revenue</td><td class=\"num\">{currency} {float(inputs.get('base_revenue', 0)):.2f}</td></tr>"
+                f'      <tr><td>Base Revenue</td><td class="num">{currency} {float(inputs.get("base_revenue", 0)):.2f}</td></tr>'
             )
             doc.append(
-                f"      <tr><td>Revenue Growth Rate</td><td class=\"num\">{float(inputs.get('revenue_growth_rate', 0))*100:.1f}%</td></tr>"
+                f'      <tr><td>Revenue Growth Rate</td><td class="num">{float(inputs.get("revenue_growth_rate", 0)) * 100:.1f}%</td></tr>'
             )
             doc.append(
-                f"      <tr><td>Operating Margin</td><td class=\"num\">{float(inputs.get('operating_margin', 0))*100:.1f}%</td></tr>"
+                f'      <tr><td>Operating Margin</td><td class="num">{float(inputs.get("operating_margin", 0)) * 100:.1f}%</td></tr>'
             )
             doc.append(
-                f"      <tr><td>Effective Tax Rate</td><td class=\"num\">{float(inputs.get('tax_rate', 0))*100:.1f}%</td></tr>"
+                f'      <tr><td>Effective Tax Rate</td><td class="num">{float(inputs.get("tax_rate", 0)) * 100:.1f}%</td></tr>'
             )
             doc.append(
-                f"      <tr><td>Reinvestment Rate (% NOPAT)</td><td class=\"num\">{float(inputs.get('reinvestment_rate', 0))*100:.1f}%</td></tr>"
+                f'      <tr><td>Reinvestment Rate (% NOPAT)</td><td class="num">{float(inputs.get("reinvestment_rate", 0)) * 100:.1f}%</td></tr>'
             )
             doc.append(
-                f"      <tr><td>WACC / Discount Rate</td><td class=\"num\">{float(inputs.get('wacc', 0))*100:.2f}%</td></tr>"
+                f'      <tr><td>WACC / Discount Rate</td><td class="num">{float(inputs.get("wacc", 0)) * 100:.2f}%</td></tr>'
             )
             doc.append(
-                f"      <tr><td>Perpetual Terminal Growth Rate</td><td class=\"num\">{float(inputs.get('terminal_growth_rate', 0))*100:.2f}%</td></tr>"
+                f'      <tr><td>Perpetual Terminal Growth Rate</td><td class="num">{float(inputs.get("terminal_growth_rate", 0)) * 100:.2f}%</td></tr>'
             )
             doc.append(
-                f"      <tr><td>Shares Outstanding</td><td class=\"num\">{float(inputs.get('shares_outstanding', 0)):.2f}</td></tr>"
+                f'      <tr><td>Shares Outstanding</td><td class="num">{float(inputs.get("shares_outstanding", 0)):.2f}</td></tr>'
             )
             doc.append(
-                f"      <tr><td>Total Debt</td><td class=\"num\">{currency} {float(inputs.get('total_debt', 0)):.2f}</td></tr>"
+                f'      <tr><td>Total Debt</td><td class="num">{currency} {float(inputs.get("total_debt", 0)):.2f}</td></tr>'
             )
             doc.append(
-                f"      <tr><td>Cash & Equivalents</td><td class=\"num\">{currency} {float(inputs.get('cash', 0)):.2f}</td></tr>"
+                f'      <tr><td>Cash & Equivalents</td><td class="num">{currency} {float(inputs.get("cash", 0)):.2f}</td></tr>'
             )
             doc.append("    </tbody>")
             doc.append("  </table>")
@@ -172,7 +170,7 @@ def generate_valuation_html_report(
             for cf in cfs:
                 if isinstance(cf, dict):
                     doc.append(
-                        f"      <tr><td>Year {cf.get('year')}</td><td class=\"num\">{float(cf.get('revenue', 0)):.2f}</td><td class=\"num\">{float(cf.get('revenue_growth', 0))*100:.1f}%</td><td class=\"num\">{float(cf.get('operating_income', 0)):.2f}</td><td class=\"num\">{float(cf.get('nopat', 0)):.2f}</td><td class=\"num\">{float(cf.get('reinvestment', 0)):.2f}</td><td class=\"num\">{float(cf.get('free_cash_flow', 0)):.2f}</td><td class=\"num\">{float(cf.get('discount_factor', 0)):.4f}</td><td class=\"num\">{float(cf.get('present_value', 0)):.2f}</td></tr>"
+                        f'      <tr><td>Year {cf.get("year")}</td><td class="num">{float(cf.get("revenue", 0)):.2f}</td><td class="num">{float(cf.get("revenue_growth", 0)) * 100:.1f}%</td><td class="num">{float(cf.get("operating_income", 0)):.2f}</td><td class="num">{float(cf.get("nopat", 0)):.2f}</td><td class="num">{float(cf.get("reinvestment", 0)):.2f}</td><td class="num">{float(cf.get("free_cash_flow", 0)):.2f}</td><td class="num">{float(cf.get("discount_factor", 0)):.4f}</td><td class="num">{float(cf.get("present_value", 0)):.2f}</td></tr>'
                     )
             doc.append("    </tbody>")
             doc.append("  </table>")
@@ -200,7 +198,7 @@ def generate_valuation_html_report(
                     rg_sc = float(sc.get("revenue_growth_rate", 0)) * 100
                     om_sc = float(sc.get("operating_margin", 0)) * 100
                     doc.append(
-                        f"      <tr><td><strong>{html.escape(str(sc.get('name')))}</strong></td><td class=\"num\">{wacc_sc:.1f}%</td><td class=\"num\">{tg_sc:.1f}%</td><td class=\"num\">{rg_sc:.1f}%</td><td class=\"num\">{om_sc:.1f}%</td><td class=\"num\"><strong>{svps_str}</strong></td></tr>"
+                        f'      <tr><td><strong>{html.escape(str(sc.get("name")))}</strong></td><td class="num">{wacc_sc:.1f}%</td><td class="num">{tg_sc:.1f}%</td><td class="num">{rg_sc:.1f}%</td><td class="num">{om_sc:.1f}%</td><td class="num"><strong>{svps_str}</strong></td></tr>'
                     )
             doc.append("    </tbody>")
             doc.append("  </table>")
@@ -228,9 +226,7 @@ def generate_valuation_html_report(
                 ev_ebitda = comp.get("ev_to_ebitda")
                 fcf_y = comp.get("free_cash_flow_yield")
                 pe_str = (
-                    f"{float(pe):.2f}x"
-                    if pe is not None and isinstance(pe, (int, float))
-                    else "—"
+                    f"{float(pe):.2f}x" if pe is not None and isinstance(pe, (int, float)) else "—"
                 )
                 ev_rev_str = (
                     f"{float(ev_rev):.2f}x"
@@ -248,7 +244,7 @@ def generate_valuation_html_report(
                     else "—"
                 )
                 doc.append(
-                    f"      <tr><td>{c_name}</td><td class=\"num\">{pe_str}</td><td class=\"num\">{ev_rev_str}</td><td class=\"num\">{ev_ebitda_str}</td><td class=\"num\">{fcf_y_str}</td></tr>"
+                    f'      <tr><td>{c_name}</td><td class="num">{pe_str}</td><td class="num">{ev_rev_str}</td><td class="num">{ev_ebitda_str}</td><td class="num">{fcf_y_str}</td></tr>'
                 )
         doc.append("    </tbody>")
         doc.append("  </table>")
@@ -425,13 +421,26 @@ def generate_backtest_html_report(
 
     dataset_versions = manifest_data.get("dataset_versions")
     if not dataset_versions:
-        dataset_versions = [spec.get("dataset_version_id")] if spec.get("dataset_version_id") else []
+        dataset_versions = (
+            [spec.get("dataset_version_id")] if spec.get("dataset_version_id") else []
+        )
     dataset_version_list = (
         dataset_versions if isinstance(dataset_versions, list) else [str(dataset_versions)]
     )
 
+    universe_raw = spec.get("universe") or manifest_data.get("universe")
+    if not universe_raw:
+        universe_raw = [security_id] if security_id and security_id != "N/A" else []
+    universe_list = universe_raw if isinstance(universe_raw, list) else [str(universe_raw)]
+    benchmark_id = html.escape(
+        str(spec.get("benchmark_security_id") or manifest_data.get("benchmark_security_id") or "")
+    )
+
     raw_warnings = result_data.get("warnings")
     warnings = raw_warnings if isinstance(raw_warnings, list) else []
+
+    raw_rejections = result_data.get("rejections")
+    rejections = raw_rejections if isinstance(raw_rejections, list) else []
 
     metrics_raw = result_data.get("metrics")
     metrics = metrics_raw if isinstance(metrics_raw, dict) else {}
@@ -451,9 +460,14 @@ def generate_backtest_html_report(
     num_trades = int(metrics.get("num_trades", 0))
     num_fills = int(metrics.get("num_fills", 0))
 
-    hit_rate_str = f"{float(hit_rate)*100:.1f}%" if hit_rate is not None else "—"
-    bench_rel_str = (
-        f"{float(bench_rel)*100:+.2f}%" if bench_rel is not None else "—"
+    hit_rate_str = f"{float(hit_rate) * 100:.1f}%" if hit_rate is not None else "—"
+    bench_rel_str = f"{float(bench_rel) * 100:+.2f}%" if bench_rel is not None else "—"
+
+    universe_display = ", ".join(universe_list) if universe_list else security_id
+    title_symbol = (
+        universe_display
+        if len(universe_list) <= 3
+        else f"{universe_list[0]} +{len(universe_list) - 1} more"
     )
 
     doc = [
@@ -461,7 +475,7 @@ def generate_backtest_html_report(
         '<html lang="en">',
         "<head>",
         '  <meta charset="utf-8">',
-        f"  <title>Backtest Report — {security_id} ({strategy_name}:{strategy_rev})</title>",
+        f"  <title>Backtest Report — {title_symbol} ({strategy_name}:{strategy_rev})</title>",
         "  <style>",
         "    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.5; color: #1e293b; max-width: 1040px; margin: 40px auto; padding: 0 20px; }",
         "    h1, h2, h3 { color: #0f172a; margin-top: 28px; }",
@@ -476,14 +490,16 @@ def generate_backtest_html_report(
         "    th { background: #f8fafc; font-weight: 600; color: #475569; position: sticky; top: 0; }",
         "    .num { text-align: right; font-variant-numeric: tabular-nums; }",
         "    .warning { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; border-radius: 4px; }",
+        "    .rejection { background: #fef2f2; border-left: 4px solid #ef4444; padding: 12px 16px; margin: 16px 0; border-radius: 4px; }",
         "    .badge { display: inline-block; background: #e0e7ff; color: #3730a3; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; margin: 2px; }",
+        "    .badge-bench { background: #fef3c7; color: #92400e; }",
         "    .badge-buy { background: #dcfce7; color: #166534; }",
         "    .badge-sell { background: #fef2f2; color: #991b1b; }",
         "    .scroll-table { max-height: 400px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 24px; }",
         "  </style>",
         "</head>",
         "<body>",
-        f"  <h1>Backtest Report: {security_id} — {strategy_name}</h1>",
+        f"  <h1>Backtest Report: {title_symbol} — {strategy_name}</h1>",
         '  <div class="meta">',
         '    <div class="meta-grid">',
         f"      <div><strong>Strategy:</strong> {strategy_name} ({strategy_rev})</div>",
@@ -492,8 +508,12 @@ def generate_backtest_html_report(
         f"      <div><strong>Starting Cash:</strong> ${starting_cash:,.2f} USD</div>",
         "      <div><strong>Sample Status:</strong> Out-of-sample (Point-in-time sequential simulation)</div>",
         f"      <div><strong>Execution:</strong> Next-bar open ({schedule})</div>",
+        f"      <div><strong>Benchmark:</strong> {benchmark_id if benchmark_id else 'None'}</div>",
         "    </div>",
-        '    <div style="margin-top: 12px;"><strong>Dataset Versions:</strong> '
+        '    <div style="margin-top: 12px;"><strong>Universe Securities:</strong> '
+        + "".join(f'<span class="badge">{html.escape(str(s))}</span>' for s in universe_list)
+        + "    </div>",
+        '    <div style="margin-top: 8px;"><strong>Dataset Versions:</strong> '
         + "".join(
             f'<span class="badge">{html.escape(str(ds))}</span>' for ds in dataset_version_list
         )
@@ -507,17 +527,28 @@ def generate_backtest_html_report(
             doc.append(f"    <li>{html.escape(str(w))}</li>")
         doc.append("  </ul></div>")
 
+    if rejections:
+        doc.append('  <div class="rejection"><strong>Constraint Rejections:</strong><ul>')
+        for r in rejections:
+            if isinstance(r, dict):
+                doc.append(
+                    f"    <li><strong>{r.get('session_date')}: {r.get('security_id')}</strong> [{r.get('rule')}] {html.escape(str(r.get('reason')))}</li>"
+                )
+            else:
+                doc.append(f"    <li>{html.escape(str(r))}</li>")
+        doc.append("  </ul></div>")
+
     # Headline Performance Metrics
     doc.append("  <h2>Performance Overview</h2>")
     doc.append('  <div class="metric-grid">')
     doc.append(
-        f'    <div class="metric-card"><div class="metric-label">Total Return</div><div class="metric-value">{total_return*100:+.2f}%</div></div>'
+        f'    <div class="metric-card"><div class="metric-label">Total Return</div><div class="metric-value">{total_return * 100:+.2f}%</div></div>'
     )
     doc.append(
-        f'    <div class="metric-card"><div class="metric-label">Annualized Return</div><div class="metric-value">{ann_return*100:+.2f}%</div></div>'
+        f'    <div class="metric-card"><div class="metric-label">Annualized Return</div><div class="metric-value">{ann_return * 100:+.2f}%</div></div>'
     )
     doc.append(
-        f'    <div class="metric-card"><div class="metric-label">Annual Volatility</div><div class="metric-value">{ann_vol*100:.2f}%</div></div>'
+        f'    <div class="metric-card"><div class="metric-label">Annual Volatility</div><div class="metric-value">{ann_vol * 100:.2f}%</div></div>'
     )
     doc.append(
         f'    <div class="metric-card"><div class="metric-label">Sharpe Ratio</div><div class="metric-value">{sharpe:.2f}</div></div>'
@@ -526,7 +557,7 @@ def generate_backtest_html_report(
         f'    <div class="metric-card"><div class="metric-label">Sortino Ratio</div><div class="metric-value">{sortino:.2f}</div></div>'
     )
     doc.append(
-        f'    <div class="metric-card"><div class="metric-label">Max Drawdown</div><div class="metric-value">{max_dd*100:.2f}%</div></div>'
+        f'    <div class="metric-card"><div class="metric-label">Max Drawdown</div><div class="metric-value">{max_dd * 100:.2f}%</div></div>'
     )
     doc.append(
         f'    <div class="metric-card"><div class="metric-label">Calmar Ratio</div><div class="metric-value">{calmar:.2f}</div></div>'
@@ -538,7 +569,7 @@ def generate_backtest_html_report(
         f'    <div class="metric-card"><div class="metric-label">Turnover</div><div class="metric-value">{turnover:.2f}x</div></div>'
     )
     doc.append(
-        f'    <div class="metric-card"><div class="metric-label">Gross / Net Exposure</div><div class="metric-value">{gross_exp*100:.0f}% / {net_exp*100:.0f}%</div></div>'
+        f'    <div class="metric-card"><div class="metric-label">Gross / Net Exposure</div><div class="metric-value">{gross_exp * 100:.0f}% / {net_exp * 100:.0f}%</div></div>'
     )
     doc.append(
         f'    <div class="metric-card"><div class="metric-label">Benchmark Relative</div><div class="metric-value">{bench_rel_str}</div></div>'
@@ -552,28 +583,30 @@ def generate_backtest_html_report(
     doc.append("  <h2>Execution Model & Strategy Assumptions</h2>")
     doc.append("  <table>")
     doc.append(
-        "    <thead><tr><th>Parameter / Assumption</th><th class=\"num\">Value</th></tr></thead>"
+        '    <thead><tr><th>Parameter / Assumption</th><th class="num">Value</th></tr></thead>'
     )
     doc.append("    <tbody>")
-    doc.append(f"      <tr><td>Security Identifier</td><td class=\"num\">{security_id}</td></tr>")
-    doc.append(f"      <tr><td>Strategy Algorithm</td><td class=\"num\">{strategy_name}</td></tr>")
     doc.append(
-        f"      <tr><td>Strategy Revision</td><td class=\"num\">{strategy_rev}</td></tr>"
+        f'      <tr><td>Universe</td><td class="num">{html.escape(", ".join(universe_list))}</td></tr>'
     )
-    doc.append(f"      <tr><td>Price Field</td><td class=\"num\">{price_field}</td></tr>")
-    doc.append(f"      <tr><td>Rebalance Schedule</td><td class=\"num\">{schedule}</td></tr>")
+    if benchmark_id:
+        doc.append(f'      <tr><td>Benchmark Security</td><td class="num">{benchmark_id}</td></tr>')
+    doc.append(f'      <tr><td>Strategy Algorithm</td><td class="num">{strategy_name}</td></tr>')
+    doc.append(f'      <tr><td>Strategy Revision</td><td class="num">{strategy_rev}</td></tr>')
+    doc.append(f'      <tr><td>Price Field</td><td class="num">{price_field}</td></tr>')
+    doc.append(f'      <tr><td>Rebalance Schedule</td><td class="num">{schedule}</td></tr>')
     doc.append(
-        f"      <tr><td>Commission Rate</td><td class=\"num\">{commission_rate*10000:.1f} bps ({commission_rate*100:.3f}%)</td></tr>"
+        f'      <tr><td>Commission Rate</td><td class="num">{commission_rate * 10000:.1f} bps ({commission_rate * 100:.3f}%)</td></tr>'
     )
     doc.append(
-        f"      <tr><td>Slippage Rate</td><td class=\"num\">{slippage_rate*10000:.1f} bps ({slippage_rate*100:.3f}%)</td></tr>"
+        f'      <tr><td>Slippage Rate</td><td class="num">{slippage_rate * 10000:.1f} bps ({slippage_rate * 100:.3f}%)</td></tr>'
     )
 
     params_raw = spec.get("parameters")
     if isinstance(params_raw, dict):
         for k, v in sorted(params_raw.items()):
             doc.append(
-                f"      <tr><td>Strategy Parameter: {html.escape(k)}</td><td class=\"num\">{html.escape(str(v))}</td></tr>"
+                f'      <tr><td>Strategy Parameter: {html.escape(k)}</td><td class="num">{html.escape(str(v))}</td></tr>'
             )
     doc.append("    </tbody>")
     doc.append("  </table>")
@@ -596,7 +629,7 @@ def generate_backtest_html_report(
                 entry_cost = float(tr.get("entry_cost", 0.0))
                 exit_proceeds = float(tr.get("exit_proceeds", 0.0))
                 doc.append(
-                    f"        <tr><td>{html.escape(str(tr.get('trade_id')))}</td><td><strong>{html.escape(str(tr.get('security_id')))}</strong></td><td>{tr.get('entry_date')}</td><td>{tr.get('exit_date')}</td><td class=\"num\">${float(tr.get('entry_price', 0)):.2f}</td><td class=\"num\">${float(tr.get('exit_price', 0)):.2f}</td><td class=\"num\">{float(tr.get('quantity', 0)):.2f}</td><td class=\"num\">${(entry_cost - exit_proceeds + pnl):.2f}</td><td class=\"num\" style=\"color: {'#166534' if pnl >= 0 else '#991b1b'};\"><strong>${pnl:+,.2f}</strong></td><td class=\"num\" style=\"color: {'#166534' if ret_pct >= 0 else '#991b1b'};\">{ret_pct*100:+.2f}%</td></tr>"
+                    f'        <tr><td>{html.escape(str(tr.get("trade_id")))}</td><td><strong>{html.escape(str(tr.get("security_id")))}</strong></td><td>{tr.get("entry_date")}</td><td>{tr.get("exit_date")}</td><td class="num">${float(tr.get("entry_price", 0)):.2f}</td><td class="num">${float(tr.get("exit_price", 0)):.2f}</td><td class="num">{float(tr.get("quantity", 0)):.2f}</td><td class="num">${(entry_cost - exit_proceeds + pnl):.2f}</td><td class="num" style="color: {"#166534" if pnl >= 0 else "#991b1b"};"><strong>${pnl:+,.2f}</strong></td><td class="num" style="color: {"#166534" if ret_pct >= 0 else "#991b1b"};">{ret_pct * 100:+.2f}%</td></tr>'
                 )
         doc.append("      </tbody>")
         doc.append("    </table>")
@@ -620,7 +653,7 @@ def generate_backtest_html_report(
                 side = str(fill.get("side", "")).upper()
                 badge_class = "badge-buy" if side == "BUY" else "badge-sell"
                 doc.append(
-                    f"        <tr><td>{fill.get('session_date')}</td><td><span class=\"badge {badge_class}\">{side}</span></td><td><strong>{html.escape(str(fill.get('security_id')))}</strong></td><td class=\"num\">{float(fill.get('quantity', 0)):.2f}</td><td class=\"num\">${float(fill.get('price', 0)):.2f}</td><td class=\"num\">${float(fill.get('notional', 0)):,.2f}</td><td class=\"num\">${float(fill.get('commission', 0)):.2f}</td><td class=\"num\">${float(fill.get('slippage_cost', 0)):.2f}</td><td><small>{html.escape(str(fill.get('rationale', '')))}</small></td></tr>"
+                    f'        <tr><td>{fill.get("session_date")}</td><td><span class="badge {badge_class}">{side}</span></td><td><strong>{html.escape(str(fill.get("security_id")))}</strong></td><td class="num">{float(fill.get("quantity", 0)):.2f}</td><td class="num">${float(fill.get("price", 0)):.2f}</td><td class="num">${float(fill.get("notional", 0)):,.2f}</td><td class="num">${float(fill.get("commission", 0)):.2f}</td><td class="num">${float(fill.get("slippage_cost", 0)):.2f}</td><td><small>{html.escape(str(fill.get("rationale", "")))}</small></td></tr>'
                 )
         doc.append("      </tbody>")
         doc.append("    </table>")
@@ -636,19 +669,34 @@ def generate_backtest_html_report(
         doc.append('  <div class="scroll-table">')
         doc.append("    <table>")
         doc.append(
-            '      <thead><tr><th>Session Date</th><th class="num">Target Weight</th><th class="num">Shares</th><th class="num">Close Price</th><th class="num">Cash Balance</th><th class="num">Position Value</th><th class="num">Portfolio Value</th></tr></thead>'
+            '      <thead><tr><th>Session Date</th><th class="num">Target Weight</th><th>Positions Breakdown</th><th class="num">Cash Balance</th><th class="num">Position Value</th><th class="num">Portfolio Value</th><th class="num">Gross Exposure</th></tr></thead>'
         )
         doc.append("      <tbody>")
         for row in ledger:
             if isinstance(row, dict):
                 weight = row.get("signal_weight")
                 weight_str = (
-                    f"{float(weight)*100:.0f}%"
+                    f"{float(weight) * 100:.0f}%"
                     if weight is not None and isinstance(weight, (int, float))
                     else "—"
                 )
+                raw_positions = row.get("positions")
+                positions_dict = raw_positions if isinstance(raw_positions, dict) else {}
+                if positions_dict:
+                    pos_parts = []
+                    for sym, pos_data in positions_dict.items():
+                        if isinstance(pos_data, dict):
+                            sh = float(pos_data.get("shares", 0))
+                            val = float(pos_data.get("position_value", 0))
+                            pos_parts.append(f"{html.escape(sym)}: {sh:.2f} sh (${val:,.2f})")
+                    pos_summary = "<br>".join(pos_parts) if pos_parts else "Flat"
+                else:
+                    shares_held = float(row.get("shares", 0))
+                    pos_summary = f"{shares_held:.2f} sh" if shares_held > 0 else "Flat"
+
+                gross_exp = float(row.get("gross_exposure", 0))
                 doc.append(
-                    f"        <tr><td>{row.get('session_date')}</td><td class=\"num\">{weight_str}</td><td class=\"num\">{float(row.get('shares', 0)):.2f}</td><td class=\"num\">${float(row.get('close_price', 0)):.2f}</td><td class=\"num\">${float(row.get('cash', 0)):,.2f}</td><td class=\"num\">${float(row.get('position_value', 0)):,.2f}</td><td class=\"num\"><strong>${float(row.get('portfolio_value', 0)):,.2f}</strong></td></tr>"
+                    f'        <tr><td>{row.get("session_date")}</td><td class="num">{weight_str}</td><td><small>{pos_summary}</small></td><td class="num">${float(row.get("cash", 0)):,.2f}</td><td class="num">${float(row.get("position_value", 0)):,.2f}</td><td class="num"><strong>${float(row.get("portfolio_value", 0)):,.2f}</strong></td><td class="num">{gross_exp * 100:.0f}%</td></tr>'
                 )
         doc.append("      </tbody>")
         doc.append("    </table>")
@@ -684,6 +732,11 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
         ]
     )
     writer.writerow(["Security ID", spec.get("security_id", "")])
+    universe_str = (
+        ", ".join(spec.get("universe", [])) if spec.get("universe") else spec.get("security_id", "")
+    )
+    writer.writerow(["Universe", universe_str])
+    writer.writerow(["Benchmark Security", spec.get("benchmark_security_id", "None")])
     writer.writerow(["Dataset Version ID", spec.get("dataset_version_id", "")])
     writer.writerow(["Start Date", spec.get("start_date", "")])
     writer.writerow(["End Date", spec.get("end_date", "")])
@@ -721,13 +774,31 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
     writer.writerow(["Number of Fills", metrics.get("num_fills", "")])
     writer.writerow([])
 
-    # Warnings
+    # Warnings & Rejections
     raw_warnings = result_data.get("warnings")
     warnings = raw_warnings if isinstance(raw_warnings, list) else []
     if warnings:
         writer.writerow(["Warnings", ""])
         for w in warnings:
             writer.writerow(["Warning", str(w)])
+        writer.writerow([])
+
+    raw_rejections = result_data.get("rejections")
+    rejections = raw_rejections if isinstance(raw_rejections, list) else []
+    if rejections:
+        writer.writerow(["Constraint Rejections", ""])
+        for r in rejections:
+            if isinstance(r, dict):
+                writer.writerow(
+                    [
+                        r.get("session_date", ""),
+                        r.get("security_id", ""),
+                        r.get("rule", ""),
+                        r.get("reason", ""),
+                    ]
+                )
+            else:
+                writer.writerow(["Rejection", str(r)])
         writer.writerow([])
 
     # Section 3: Closed Trades Log
@@ -814,26 +885,36 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
         [
             "Session Date",
             "Signal Weight",
-            "Signal Decision Time",
-            "Shares",
-            "Close Price",
+            "Positions",
             "Cash",
             "Position Value",
             "Portfolio Value",
+            "Gross Exposure",
+            "Net Exposure",
         ]
     )
     for row in ledger:
         if isinstance(row, dict):
+            raw_positions = row.get("positions")
+            positions_dict = raw_positions if isinstance(raw_positions, dict) else {}
+            if positions_dict:
+                pos_summary = "; ".join(
+                    f"{sym}:{pos.get('shares', 0)}sh"
+                    for sym, pos in positions_dict.items()
+                    if isinstance(pos, dict)
+                )
+            else:
+                pos_summary = f"{row.get('shares', 0)}sh"
             writer.writerow(
                 [
                     row.get("session_date", ""),
                     row.get("signal_weight", ""),
-                    row.get("signal_decision_time", ""),
-                    row.get("shares", ""),
-                    row.get("close_price", ""),
+                    pos_summary,
                     row.get("cash", ""),
                     row.get("position_value", ""),
                     row.get("portfolio_value", ""),
+                    row.get("gross_exposure", ""),
+                    row.get("net_exposure", ""),
                 ]
             )
 
