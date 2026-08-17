@@ -1116,3 +1116,76 @@ def test_strategy_only_uses_observations_eligible_at_decision_time(tmp_path):
     assert late.status_code == 200
     assert late.json()["targets"][0]["weight"] == 1.0
     assert late.json()["latest_session_date"] == "2024-01-09"
+
+
+def test_backtest_run_end_to_end_returns_ledger_and_metrics(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+
+    project = client.post("/api/projects", json={"name": "Backtest project"}).json()
+
+    csv_content = (
+        "symbol,date,open,high,low,close,volume,available_at\n"
+        "AAPL,2024-01-02,100,105,99,102,1000,2024-01-02T20:00:00Z\n"
+        "AAPL,2024-01-03,102,108,101,106,1200,2024-01-03T20:00:00Z\n"
+        "AAPL,2024-01-04,106,110,105,108,1100,2024-01-04T20:00:00Z\n"
+        "AAPL,2024-01-05,108,112,107,110,1300,2024-01-05T20:00:00Z\n"
+        "AAPL,2024-01-08,110,114,109,112,1500,2024-01-08T20:00:00Z\n"
+        "AAPL,2024-01-09,112,116,111,114,1400,2024-01-09T20:00:00Z\n"
+        "AAPL,2024-01-10,114,118,113,116,1600,2024-01-10T20:00:00Z\n"
+    )
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "test_source"},
+        files={"file": ("bars.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
+    )
+    assert imported.status_code == 201
+    dataset_version_id = imported.json()["dataset_version_id"]
+
+    response = client.post(
+        f"/api/projects/{project['id']}/backtests",
+        json={
+            "strategy_name": "long_flat_moving_average",
+            "strategy_revision": "long_flat_moving_average:v1",
+            "dataset_version_id": dataset_version_id,
+            "symbol": "AAPL",
+            "start_date": "2024-01-02",
+            "end_date": "2024-01-10",
+            "starting_cash": 100000,
+            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+        },
+    )
+    assert response.status_code == 201
+    result = response.json()
+    assert result["run_id"]
+    assert result["strategy_revision"] == "long_flat_moving_average:v1"
+    assert result["ledger"]
+    assert "total_return" in result["metrics"]
+    assert result["manifest"]["kind"] == "backtest"
+
+    listed = client.get(f"/api/projects/{project['id']}/backtests")
+    assert listed.status_code == 200
+    assert listed.json()[0]["run_id"] == result["run_id"]
+
+    single = client.get(f"/api/projects/{project['id']}/backtests/{result['run_id']}")
+    assert single.status_code == 200
+    assert single.json()["run_id"] == result["run_id"]
+
+
+def test_backtest_run_rejects_start_after_end(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Bad window"}).json()
+
+    response = client.post(
+        f"/api/projects/{project['id']}/backtests",
+        json={
+            "strategy_name": "long_flat_moving_average",
+            "strategy_revision": "long_flat_moving_average:v1",
+            "dataset_version_id": "any-dataset",
+            "symbol": "AAPL",
+            "start_date": "2024-01-10",
+            "end_date": "2024-01-02",
+            "starting_cash": 100000,
+            "parameters": {},
+        },
+    )
+    assert response.status_code == 422
