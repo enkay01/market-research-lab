@@ -1244,11 +1244,13 @@ def create_app(
     store = ProjectStore(workspace_root)
     market_store = MarketDataStore(workspace_root)
     app = FastAPI(title="Market Research Lab", version="0.1.0")
-    env_file = (
-        repository_root / ".env.local"
-        if workspace_root == repository_root / "workspace"
-        else workspace_root / ".env.local"
-    )
+    env_candidates = [
+        repository_root / ".env.local",
+        repository_root / ".env",
+        workspace_root / ".env.local",
+        workspace_root / ".env",
+    ]
+    env_file = next((p for p in env_candidates if p.exists()), env_candidates[0])
     register_provider_download_route(
         app,
         market_store=market_store,
