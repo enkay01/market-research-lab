@@ -3,7 +3,7 @@ import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 
-const SCREENSHOTS_DIR = "C:/Users/stroo/.gemini/antigravity/brain/9b834304-e384-4e15-bc26-1927768ea0a3/screenshots";
+const SCREENSHOTS_DIR = "C:/Users/stroo/.gemini/antigravity/brain/a7e60a11-936c-441d-a94c-567fee262ef6/screenshots";
 fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
 
 async function run() {
@@ -23,7 +23,7 @@ async function run() {
       "--port",
       "8000",
     ],
-    { cwd: "d:/stroo/Documents/GitHub/market-research-lab", stdio: "inherit" }
+    { cwd: "d:/stroo/Documents/GitHub/market-research-lab", stdio: "inherit", shell: true }
   );
 
   let online = false;
@@ -44,6 +44,33 @@ async function run() {
     throw new Error("Server failed to start on port 8000");
   }
   console.log("Backend server is online.");
+
+  console.log("1b. Starting Vite dev server on port 5173...");
+  const vite = spawn(
+    "npm",
+    ["run", "dev", "--", "--port", "5173"],
+    { cwd: "d:/stroo/Documents/GitHub/market-research-lab/web", stdio: "inherit", shell: true }
+  );
+
+  let viteOnline = false;
+  for (let i = 0; i < 40; i++) {
+    try {
+      const res = await fetch("http://localhost:5173");
+      if (res.ok) {
+        viteOnline = true;
+        break;
+      }
+    } catch {
+      await new Promise((r) => setTimeout(r, 400));
+    }
+  }
+
+  if (!viteOnline) {
+    vite.kill();
+    server.kill();
+    throw new Error("Vite failed to start on port 5173");
+  }
+  console.log("Vite dev server is online.");
 
   try {
     // 2. Ingest market data for AAPL, MSFT, NVDA
@@ -97,7 +124,7 @@ NVDA,free_cash_flow,2026Q2,140.0,USD,2026-07-15T00:00:00Z
     const projRes = await fetch("http://127.0.0.1:8000/api/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "Valuation Lab Fund" }),
+      body: JSON.stringify({ name: "Epic 3 Valuation Suite" }),
     });
     const project = await projRes.json();
     console.log(`Created project: ${project.id} - ${project.name}`);
@@ -108,7 +135,6 @@ NVDA,free_cash_flow,2026Q2,140.0,USD,2026-07-15T00:00:00Z
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page = await context.newPage();
 
-    // Start Vite preview or connect to local dev
     await page.goto("http://localhost:5173", { waitUntil: "networkidle" });
     await page.screenshot({ path: path.join(SCREENSHOTS_DIR, "01_initial_dashboard.png") });
 
@@ -121,41 +147,66 @@ NVDA,free_cash_flow,2026Q2,140.0,USD,2026-07-15T00:00:00Z
       await page.click("text=Valuation");
     }
     await page.waitForTimeout(1000);
-    await page.screenshot({ path: path.join(SCREENSHOTS_DIR, "02_valuation_view.png") });
 
-    // Select peer securities (MSFT & NVDA)
-    console.log("6. Selecting peer securities...");
-    const msftCheckbox = page.locator('input[type="checkbox"][value="MSFT"]');
-    if (await msftCheckbox.count()) {
-      await msftCheckbox.check();
-    } else {
-      await page.click("text=MSFT");
-    }
-
-    const nvdaCheckbox = page.locator('input[type="checkbox"][value="NVDA"]');
-    if (await nvdaCheckbox.count()) {
-      await nvdaCheckbox.check();
-    } else {
-      await page.click("text=NVDA");
-    }
-    await page.waitForTimeout(500);
-    await page.screenshot({ path: path.join(SCREENSHOTS_DIR, "03_peers_selected.png") });
-
-    // Click Calculate
-    console.log("7. Calculating Comparable-Company Valuation...");
+    // 6. Test FCFF DCF Calculation
+    console.log("6. Testing FCFF DCF Calculation...");
     await page.click('button:has-text("Calculate")');
     await page.waitForTimeout(1500);
-    await page.screenshot({ path: path.join(SCREENSHOTS_DIR, "04_valuation_calculated.png") });
+    await page.screenshot({ path: path.join(SCREENSHOTS_DIR, "02_dcf_valuation_calculated.png") });
 
-    // Click Save Revision
-    console.log("8. Saving Valuation Revision...");
+    // 7. Save DCF Revision v1
+    console.log("7. Saving FCFF DCF Revision v1...");
     await page.click('button:has-text("Save Revision")');
     await page.waitForTimeout(1500);
-    await page.screenshot({ path: path.join(SCREENSHOTS_DIR, "05_revision_saved.png") });
+    await page.screenshot({ path: path.join(SCREENSHOTS_DIR, "03_dcf_revision1_saved.png") });
+
+    // 8. Edit Revenue Growth and Save DCF Revision v2
+    console.log("8. Modifying assumptions and saving Revision v2...");
+    const revGrowthInput = page.locator('input').nth(1); // Revenue growth input
+    await revGrowthInput.fill("12.0");
+    await page.waitForTimeout(500);
+    await page.click('button:has-text("Save Revision")');
+    await page.waitForTimeout(1500);
+    await page.screenshot({ path: path.join(SCREENSHOTS_DIR, "04_dcf_revision2_saved.png") });
+
+    // 9. Switch to Comparables tab
+    console.log("9. Testing Trading Comparables...");
+    await page.getByText("Comparables", { exact: true }).click();
+    await page.waitForTimeout(1000);
+
+    // Select peer securities (MSFT)
+    const msftItem = page.locator('li:has-text("MSFT")');
+    if (await msftItem.count()) {
+      await msftItem.first().click();
+    }
+    await page.waitForTimeout(500);
+    await page.click('button:has-text("Calculate")');
+    await page.waitForTimeout(1500);
+    await page.click('button:has-text("Save Revision")');
+    await page.waitForTimeout(1500);
+    await page.screenshot({ path: path.join(SCREENSHOTS_DIR, "05_comparables_saved.png") });
+
+    // 10. Switch to Side-by-Side Comparison tab
+    console.log("10. Testing Side-by-Side Comparison...");
+    await page.getByText("Compare Revisions", { exact: true }).click();
+    await page.waitForTimeout(1000);
+
+    // Check all saved runs by clicking each list item
+    const runItems = page.locator('li[data-pressable-container="true"]');
+    const count = await runItems.count();
+    console.log(`Found ${count} saved run items`);
+    for (let i = 0; i < count; i++) {
+      await runItems.nth(i).click();
+    }
+    await page.waitForTimeout(500);
+    await page.click('button:has-text("Compare Selected Valuations")');
+    await page.waitForTimeout(1500);
+    await page.screenshot({ path: path.join(SCREENSHOTS_DIR, "06_valuation_comparison_view.png") });
 
     console.log("E2E valuation test flow completed successfully!");
     await browser.close();
   } finally {
+    vite.kill();
     server.kill();
   }
 }
