@@ -307,45 +307,61 @@ def evaluate_comparables(
     )
 
 
-def _compute_dcf_values(
-    base_revenue: float,
-    growth_rate: float,
-    operating_margin: float,
-    tax_rate: float,
-    reinvestment_rate: float,
-    wacc: float,
-    terminal_growth_rate: float,
-    forecast_years: int,
-    cash: float,
-    total_debt: float,
-    shares_outstanding: float,
-) -> tuple[float | None, float | None, float | None]:
+@dataclass(frozen=True)
+class _DcfParameters:
+    base_revenue: float
+    growth_rate: float
+    operating_margin: float
+    tax_rate: float
+    reinvestment_rate: float
+    wacc: float
+    terminal_growth_rate: float
+    forecast_years: int
+    cash: float
+    total_debt: float
+    shares_outstanding: float
+
+
+@dataclass(frozen=True)
+class _ComputedDcfValues:
+    enterprise_value: float | None
+    equity_value: float | None
+    value_per_share: float | None
+
+
+def _compute_dcf_values(params: _DcfParameters) -> _ComputedDcfValues:
     """Helper calculating (EV, Equity Value, Value Per Share) for given parameters."""
-    if wacc <= 0 or wacc <= terminal_growth_rate:
-        return None, None, None
+    if params.wacc <= 0 or params.wacc <= params.terminal_growth_rate:
+        return _ComputedDcfValues(None, None, None)
 
     pv_sum = 0.0
-    current_revenue = base_revenue
+    current_revenue = params.base_revenue
     last_fcf = 0.0
-    for year in range(1, forecast_years + 1):
-        current_revenue *= 1.0 + growth_rate
-        ebit = current_revenue * operating_margin
-        tax = ebit * tax_rate
+    for year in range(1, params.forecast_years + 1):
+        current_revenue *= 1.0 + params.growth_rate
+        ebit = current_revenue * params.operating_margin
+        tax = ebit * params.tax_rate
         nopat = ebit - tax
-        reinvest = nopat * reinvestment_rate
+        reinvest = nopat * params.reinvestment_rate
         fcf = nopat - reinvest
-        df = 1.0 / ((1.0 + wacc) ** year)
+        df = 1.0 / ((1.0 + params.wacc) ** year)
         pv_sum += fcf * df
         last_fcf = fcf
 
-    terminal_fcf = last_fcf * (1.0 + terminal_growth_rate)
-    terminal_value = terminal_fcf / (wacc - terminal_growth_rate)
-    pv_terminal_value = terminal_value / ((1.0 + wacc) ** forecast_years)
+    terminal_fcf = last_fcf * (1.0 + params.terminal_growth_rate)
+    terminal_value = terminal_fcf / (params.wacc - params.terminal_growth_rate)
+    pv_terminal_value = terminal_value / ((1.0 + params.wacc) ** params.forecast_years)
     enterprise_value = pv_sum + pv_terminal_value
-    equity_value = enterprise_value + cash - total_debt
-    value_per_share = equity_value / shares_outstanding if shares_outstanding > 0 else None
+    equity_value = enterprise_value + params.cash - params.total_debt
+    value_per_share = (
+        equity_value / params.shares_outstanding if params.shares_outstanding > 0 else None
+    )
 
-    return enterprise_value, equity_value, value_per_share
+    return _ComputedDcfValues(
+        enterprise_value=enterprise_value,
+        equity_value=equity_value,
+        value_per_share=value_per_share,
+    )
 
 
 def evaluate_fcff_dcf(
@@ -454,18 +470,20 @@ def evaluate_fcff_dcf(
     bear_g = max(0.0, inputs.terminal_growth_rate - 0.005)
     bear_rev_g = inputs.revenue_growth_rate - 0.02
     bear_margin = max(0.0, inputs.operating_margin - 0.03)
-    bear_ev, bear_eq, bear_vps = _compute_dcf_values(
-        inputs.base_revenue,
-        bear_rev_g,
-        bear_margin,
-        inputs.tax_rate,
-        inputs.reinvestment_rate,
-        bear_wacc,
-        bear_g,
-        forecast_years,
-        inputs.cash,
-        inputs.total_debt,
-        inputs.shares_outstanding,
+    bear_vals = _compute_dcf_values(
+        _DcfParameters(
+            base_revenue=inputs.base_revenue,
+            growth_rate=bear_rev_g,
+            operating_margin=bear_margin,
+            tax_rate=inputs.tax_rate,
+            reinvestment_rate=inputs.reinvestment_rate,
+            wacc=bear_wacc,
+            terminal_growth_rate=bear_g,
+            forecast_years=forecast_years,
+            cash=inputs.cash,
+            total_debt=inputs.total_debt,
+            shares_outstanding=inputs.shares_outstanding,
+        )
     )
     scenarios.append(
         ScenarioResult(
@@ -474,9 +492,9 @@ def evaluate_fcff_dcf(
             terminal_growth_rate=bear_g,
             revenue_growth_rate=bear_rev_g,
             operating_margin=bear_margin,
-            enterprise_value=bear_ev,
-            equity_value=bear_eq,
-            value_per_share=bear_vps,
+            enterprise_value=bear_vals.enterprise_value,
+            equity_value=bear_vals.equity_value,
+            value_per_share=bear_vals.value_per_share,
         )
     )
 
@@ -499,18 +517,20 @@ def evaluate_fcff_dcf(
     bull_g = inputs.terminal_growth_rate + 0.005
     bull_rev_g = inputs.revenue_growth_rate + 0.02
     bull_margin = inputs.operating_margin + 0.03
-    bull_ev, bull_eq, bull_vps = _compute_dcf_values(
-        inputs.base_revenue,
-        bull_rev_g,
-        bull_margin,
-        inputs.tax_rate,
-        inputs.reinvestment_rate,
-        bull_wacc,
-        bull_g,
-        forecast_years,
-        inputs.cash,
-        inputs.total_debt,
-        inputs.shares_outstanding,
+    bull_vals = _compute_dcf_values(
+        _DcfParameters(
+            base_revenue=inputs.base_revenue,
+            growth_rate=bull_rev_g,
+            operating_margin=bull_margin,
+            tax_rate=inputs.tax_rate,
+            reinvestment_rate=inputs.reinvestment_rate,
+            wacc=bull_wacc,
+            terminal_growth_rate=bull_g,
+            forecast_years=forecast_years,
+            cash=inputs.cash,
+            total_debt=inputs.total_debt,
+            shares_outstanding=inputs.shares_outstanding,
+        )
     )
     scenarios.append(
         ScenarioResult(
@@ -519,9 +539,9 @@ def evaluate_fcff_dcf(
             terminal_growth_rate=bull_g,
             revenue_growth_rate=bull_rev_g,
             operating_margin=bull_margin,
-            enterprise_value=bull_ev,
-            equity_value=bull_eq,
-            value_per_share=bull_vps,
+            enterprise_value=bull_vals.enterprise_value,
+            equity_value=bull_vals.equity_value,
+            value_per_share=bull_vals.value_per_share,
         )
     )
 
@@ -546,20 +566,22 @@ def evaluate_fcff_dcf(
         row: list[float | None] = []
         for g in growth_steps:
             if w > g and w > 0:
-                _, _, vps = _compute_dcf_values(
-                    inputs.base_revenue,
-                    inputs.revenue_growth_rate,
-                    inputs.operating_margin,
-                    inputs.tax_rate,
-                    inputs.reinvestment_rate,
-                    w,
-                    g,
-                    forecast_years,
-                    inputs.cash,
-                    inputs.total_debt,
-                    inputs.shares_outstanding,
+                sens_vals = _compute_dcf_values(
+                    _DcfParameters(
+                        base_revenue=inputs.base_revenue,
+                        growth_rate=inputs.revenue_growth_rate,
+                        operating_margin=inputs.operating_margin,
+                        tax_rate=inputs.tax_rate,
+                        reinvestment_rate=inputs.reinvestment_rate,
+                        wacc=w,
+                        terminal_growth_rate=g,
+                        forecast_years=forecast_years,
+                        cash=inputs.cash,
+                        total_debt=inputs.total_debt,
+                        shares_outstanding=inputs.shares_outstanding,
+                    )
                 )
-                row.append(vps)
+                row.append(sens_vals.value_per_share)
             else:
                 row.append(None)
         grid.append(tuple(row))
@@ -602,7 +624,8 @@ def evaluate_fcff_dcf(
 # Method Registry & Domain Evaluator
 # ---------------------------------------------------------------------------
 
-ValuationMethod = Callable[..., Any]
+ValuationResult = FCFFDCFResult | ComparableCompanyResult
+ValuationMethod = Callable[..., ValuationResult]
 VALUATION_METHODS: dict[str, ValuationMethod] = {
     "trading_comparables": evaluate_comparables,
     "fcff_dcf": evaluate_fcff_dcf,
@@ -614,7 +637,7 @@ def evaluate(
     *args: Any,
     calculated_at: str,
     **kwargs: Any,
-) -> Any:
+) -> ValuationResult:
     """Evaluate a named Valuation method through the domain registry."""
     evaluator = VALUATION_METHODS.get(method)
     if evaluator is None:

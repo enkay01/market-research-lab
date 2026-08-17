@@ -1369,10 +1369,10 @@ def create_app(
     market_store = MarketDataStore(workspace_root)
     app = FastAPI(title="Market Research Lab", version="0.1.0")
     env_candidates = [
-        repository_root / ".env.local",
-        repository_root / ".env",
         workspace_root / ".env.local",
         workspace_root / ".env",
+        repository_root / ".env.local",
+        repository_root / ".env",
     ]
     env_file = next((p for p in env_candidates if p.exists()), env_candidates[0])
     register_provider_download_route(
@@ -1845,13 +1845,22 @@ def create_app(
         run_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
         format_type: str = FastAPIPath(pattern=r"^(html|csv|json)$"),
     ) -> Response:
-        content, media_type, filename = store.get_valuation_export(
-            str(project_id), run_id, format_type
-        )
+        try:
+            artifact = store.get_valuation_export(str(project_id), run_id, format_type)
+        except FileNotFoundError as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(error),
+            ) from error
+        except ValueError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(error),
+            ) from error
         return Response(
-            content=content,
-            media_type=media_type,
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            content=artifact.content,
+            media_type=artifact.media_type,
+            headers={"Content-Disposition": f'attachment; filename="{artifact.filename}"'},
         )
 
     @app.get(
@@ -1954,6 +1963,33 @@ def create_app(
             item["result"],
             run_id=run_id,
             strategy_revision=item["strategy_revision"],
+        )
+
+    @app.get(
+        "/api/projects/{project_id}/backtests/{run_id}/export/{format_type}",
+        tags=["backtests"],
+    )
+    def export_backtest(
+        project_id: UUID,
+        run_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
+        format_type: str = FastAPIPath(pattern=r"^(html|csv|json)$"),
+    ) -> Response:
+        try:
+            artifact = store.get_backtest_export(str(project_id), run_id, format_type)
+        except FileNotFoundError as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(error),
+            ) from error
+        except ValueError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(error),
+            ) from error
+        return Response(
+            content=artifact.content,
+            media_type=artifact.media_type,
+            headers={"Content-Disposition": f'attachment; filename="{artifact.filename}"'},
         )
 
     @app.get(
