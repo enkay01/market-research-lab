@@ -1,4 +1,4 @@
-"""Deterministic single-Security Backtest engine with a dated portfolio ledger."""
+"""Deterministic multi-Security long-only Backtest engine with a dated portfolio ledger."""
 
 from __future__ import annotations
 
@@ -41,13 +41,15 @@ class BacktestSpecification:
     strategy_name: str
     strategy_revision: str
     dataset_version_id: str
-    security_id: str
-    start_date: str  # "YYYY-MM-DD"
-    end_date: str  # "YYYY-MM-DD"
-    starting_cash: float
+    security_id: str = ""
+    start_date: str = ""  # "YYYY-MM-DD"
+    end_date: str = ""  # "YYYY-MM-DD"
+    starting_cash: float = 100000.0
     parameters: dict[str, JsonValue] = field(default_factory=dict)
     price_field: Literal["close", "open", "high", "low"] = "close"
     execution: ExecutionModelAssumptions = field(default_factory=ExecutionModelAssumptions)
+    universe: tuple[str, ...] = ()
+    benchmark_security_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -68,18 +70,43 @@ class Fill:
 
 
 @dataclass(frozen=True)
+class PositionSnapshot:
+    """Mark-to-market snapshot for one Security's position at bar close."""
+
+    shares: float
+    close_price: float
+    position_value: float
+    weight: float  # position_value / portfolio_value
+
+
+@dataclass(frozen=True)
+class ConstraintRejection:
+    """Record of an execution or portfolio constraint rejection."""
+
+    session_date: str
+    security_id: str
+    rule: str
+    reason: str
+    requested_weight: float | None = None
+
+
+@dataclass(frozen=True)
 class LedgerRow:
     """Immutable mark-to-market row for one bar close."""
 
     session_date: str
-    signal_weight: float | None  # target weight decided at this bar's close
+    signal_weight: float | None  # target weight for primary security (compat)
     signal_decision_time: str | None
-    fill: Fill | None  # fill executed at this bar's open (from prior signal)
-    shares: float
-    close_price: float
+    fill: Fill | None  # first fill on this date (compat)
+    shares: float  # primary security shares (compat)
+    close_price: float  # primary security close price (compat)
     cash: float
-    position_value: float  # shares * close_price
-    portfolio_value: float  # cash + position_value
+    position_value: float  # total position value across all securities
+    portfolio_value: float  # cash + total position value
+    positions: dict[str, PositionSnapshot] = field(default_factory=dict)
+    signal_weights: dict[str, float] = field(default_factory=dict)
+    gross_exposure: float = 0.0
+    net_exposure: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -142,6 +169,8 @@ class BacktestResult:
     metrics: BacktestMetrics
     warnings: tuple[str, ...]
     manifest: dict[str, JsonValue]
+    benchmark_equity_curve: tuple[EquityPoint, ...] = ()
+    rejections: tuple[ConstraintRejection, ...] = ()
 
     def to_json(self) -> dict[str, JsonValue]:
         from dataclasses import asdict
@@ -151,29 +180,20 @@ class BacktestResult:
 
 @dataclass(frozen=True)
 class PortfolioState:
-    """Full-precision cash and share holdings at one point in time."""
+    """Full-precision cash and multi-security share holdings at one point in time."""
 
     cash: float
-    shares: float
+    positions: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class PendingTarget:
     """Target weight decided at the previous bar's close, awaiting a fill."""
 
+    security_id: str
     weight: float
     decision_time: str
     rationale: str
-
-
-@dataclass(frozen=True)
-class FillOutcome:
-    """Result of reconciling one Pending Target against a Portfolio State."""
-
-    fill: Fill | None
-    state: PortfolioState
-    opened_position: bool  # went flat -> long
-    closed_position: bool  # went long -> flat
 
 
 @dataclass(frozen=True)
@@ -181,6 +201,7 @@ class OpenTrade:
     """Entry half of a round trip, held until the position is closed."""
 
     trade_id: str
+    security_id: str
     entry_date: str
     entry_price: float
     quantity: float
@@ -192,22 +213,31 @@ def _valid_date(value: str) -> bool:
     return _DATE_PATTERN.fullmatch(value) is not None
 
 
-def _validate_specification(specification: BacktestSpecification) -> None:
-    """Validate the Specification's parameters, raising on bad input."""
+def _resolve_universe(specification: BacktestSpecification) -> tuple[str, ...]:
+    """Resolve the effective universe tuple from universe or security_id."""
+    if specification.universe:
+        return specification.universe
+    if specification.security_id:
+        return (specification.security_id,)
+    return ()
+
+
+def _validate_specification(specification: BacktestSpecification) -> tuple[str, ...]:
+    """Validate the Specification's parameters, returning the normalized universe."""
+    universe = _resolve_universe(specification)
+    if not universe:
+        raise BacktestParameterError("universe or security_id must specify at least one security.")
+
     if not math.isfinite(specification.starting_cash) or specification.starting_cash <= 0.0:
         raise BacktestParameterError(
             f"starting_cash must be finite and > 0, got {specification.starting_cash}."
         )
     commission = specification.execution.commission_rate
     if not math.isfinite(commission) or commission < 0.0:
-        raise BacktestParameterError(
-            f"commission_rate must be finite and >= 0, got {commission}."
-        )
+        raise BacktestParameterError(f"commission_rate must be finite and >= 0, got {commission}.")
     slippage = specification.execution.slippage_rate
     if not math.isfinite(slippage) or not 0.0 <= slippage < 1.0:
-        raise BacktestParameterError(
-            f"slippage_rate must be finite and in [0, 1), got {slippage}."
-        )
+        raise BacktestParameterError(f"slippage_rate must be finite and in [0, 1), got {slippage}.")
     if specification.price_field not in {"close", "open", "high", "low"}:
         raise BacktestParameterError(
             f"price_field must be one of 'close', 'open', 'high', 'low', "
@@ -226,6 +256,7 @@ def _validate_specification(specification: BacktestSpecification) -> None:
             f"start_date must be <= end_date, got "
             f"{specification.start_date} > {specification.end_date}."
         )
+    return universe
 
 
 def _price_value(bar: DailyBar, price_field: str) -> float:
@@ -246,79 +277,20 @@ def _market_view(
     eligible = [
         bar
         for bar in sorted_bars
-        if bar.available_at is not None and bar.available_at <= decision_time
+        if bar.security_id == security_id
+        and bar.available_at is not None
+        and bar.available_at <= decision_time
     ]
     if not eligible:
         raise BacktestError(
-            f"no bars are point-in-time eligible at decision time '{decision_time}'."
+            f"no bars are point-in-time eligible for '{security_id}' at "
+            f"decision time '{decision_time}'."
         )
     eligible.sort(key=lambda bar: bar.session_date)
     return MarketView(
         security_id=security_id,
         session_dates=tuple(bar.session_date for bar in eligible),
         prices=tuple(_price_value(bar, price_field) for bar in eligible),
-    )
-
-
-def _execute_fill(
-    state: PortfolioState,
-    target: PendingTarget,
-    bar: DailyBar,
-    assumptions: ExecutionModelAssumptions,
-) -> FillOutcome:
-    """Reconcile one pending target against the current long/flat position.
-
-    Long/flat slice: a target weight <= 0 demands a flat position; a positive
-    weight either opens a fully invested long (cash / effective buy price) when
-    flat or holds the current shares when already long. A fill only occurs when
-    the resulting share delta exceeds EPS. Cash and shares stay at full float
-    precision; only the recorded Fill fields are rounded.
-    """
-    open_price = bar.open
-    if target.weight <= 0.0:
-        target_shares = 0.0
-    elif state.shares <= EPS:
-        denominator = open_price * (1.0 + assumptions.slippage_rate)
-        denominator *= 1.0 + assumptions.commission_rate
-        target_shares = state.cash / denominator if denominator > 0.0 else 0.0
-    else:
-        target_shares = state.shares
-
-    delta = target_shares - state.shares
-    if abs(delta) < EPS:
-        return FillOutcome(fill=None, state=state, opened_position=False, closed_position=False)
-
-    was_flat = state.shares <= EPS
-    side: Literal["buy", "sell"] = "buy" if delta > 0.0 else "sell"
-    slippage = assumptions.slippage_rate
-    effective_price = (
-        open_price * (1.0 + slippage) if delta > 0.0 else open_price * (1.0 - slippage)
-    )
-    notional = delta * effective_price
-    commission = abs(notional) * assumptions.commission_rate
-    slippage_cost = abs(delta) * open_price * slippage
-    new_state = PortfolioState(
-        cash=state.cash - notional - commission,
-        shares=target_shares,
-    )
-    fill = Fill(
-        trade_id="",
-        security_id=bar.security_id,
-        session_date=bar.session_date,
-        decision_time=target.decision_time,
-        side=side,
-        quantity=round(abs(delta), 6),
-        price=round(effective_price, 4),
-        notional=round(notional, 4),
-        commission=round(commission, 4),
-        slippage_cost=round(slippage_cost, 4),
-        rationale=target.rationale,
-    )
-    return FillOutcome(
-        fill=fill,
-        state=new_state,
-        opened_position=was_flat and target_shares > EPS,
-        closed_position=not was_flat and target_shares <= EPS,
     )
 
 
@@ -337,19 +309,39 @@ def _build_trade(open_trade: OpenTrade, fill: Fill) -> Trade:
         entry_cost=open_trade.entry_cost,
         exit_proceeds=exit_proceeds,
         pnl=pnl,
-        return_pct=pnl / open_trade.entry_cost,
+        return_pct=pnl / open_trade.entry_cost if open_trade.entry_cost > 0 else 0.0,
     )
 
 
-def _compute_metrics(
-    ledger: Sequence[LedgerRow],
-    starting_cash: float,
-    fills: Sequence[Fill],
-    trades: Sequence[Trade],
-) -> BacktestMetrics:
+@dataclass(frozen=True)
+class BenchmarkCalculationResult:
+    """Benchmark equity curve and buy-and-hold total return."""
+
+    curve: tuple[EquityPoint, ...]
+    total_return: float | None
+
+
+@dataclass(frozen=True)
+class MetricsCalculationInput:
+    """Input payload for risk/return metric derivation."""
+
+    ledger: Sequence[LedgerRow]
+    starting_cash: float
+    fills: Sequence[Fill]
+    trades: Sequence[Trade]
+    benchmark_relative_return: float | None = None
+
+
+def _compute_metrics(calc_input: MetricsCalculationInput) -> BacktestMetrics:
     """Derive headline risk/return metrics from the mark-to-market ledger."""
+    ledger = calc_input.ledger
+    starting_cash = calc_input.starting_cash
+    fills = calc_input.fills
+    trades = calc_input.trades
+    benchmark_relative_return = calc_input.benchmark_relative_return
+
     equities = [row.portfolio_value for row in ledger]
-    total_return = equities[-1] / starting_cash - 1.0
+    total_return = (equities[-1] / starting_cash - 1.0) if (equities and starting_cash > 0) else 0.0
 
     returns = [
         equities[i] / equities[i - 1] - 1.0
@@ -367,32 +359,25 @@ def _compute_metrics(
 
     annualized_volatility = volatility * math.sqrt(252.0)
     sharpe_ratio = (mean_return / volatility) * math.sqrt(252.0) if volatility > 0.0 else 0.0
-    downside = (
-        math.sqrt(statistics.mean(min(x, 0.0) ** 2 for x in returns)) if returns else 0.0
-    )
+    downside = math.sqrt(statistics.mean(min(x, 0.0) ** 2 for x in returns)) if returns else 0.0
     sortino_ratio = (mean_return / downside) * math.sqrt(252.0) if downside > 0.0 else 0.0
 
     running_peak = -math.inf
     drawdowns: list[float] = []
     for equity in equities:
         running_peak = max(running_peak, equity)
-        drawdowns.append(equity / running_peak - 1.0)
+        drawdowns.append(equity / running_peak - 1.0 if running_peak > 0 else 0.0)
     max_drawdown = min(drawdowns) if drawdowns else 0.0
 
     calmar_ratio = annualized_return / abs(max_drawdown) if max_drawdown < 0.0 else 0.0
     hit_rate = sum(1.0 for trade in trades if trade.pnl > 0.0) / len(trades) if trades else None
 
     mean_equity = statistics.mean(equities) if equities else 0.0
-    turnover = (
-        sum(abs(fill.notional) for fill in fills) / mean_equity if mean_equity > 0.0 else 0.0
-    )
+    turnover = sum(abs(fill.notional) for fill in fills) / mean_equity if mean_equity > 0.0 else 0.0
 
-    last_row = ledger[-1]
-    exposure = (
-        last_row.position_value / last_row.portfolio_value
-        if last_row.portfolio_value != 0.0
-        else 0.0
-    )
+    last_row = ledger[-1] if ledger else None
+    gross_exp = last_row.gross_exposure if last_row else 0.0
+    net_exp = last_row.net_exposure if last_row else 0.0
 
     return BacktestMetrics(
         total_return=round(total_return, 6),
@@ -404,142 +389,481 @@ def _compute_metrics(
         calmar_ratio=round(calmar_ratio, 6),
         hit_rate=round(hit_rate, 6) if hit_rate is not None else None,
         turnover=round(turnover, 6),
-        gross_exposure=round(exposure, 6),
-        net_exposure=round(exposure, 6),
-        benchmark_relative_return=None,
+        gross_exposure=round(gross_exp, 6),
+        net_exposure=round(net_exp, 6),
+        benchmark_relative_return=round(benchmark_relative_return, 6)
+        if benchmark_relative_return is not None
+        else None,
         num_trades=len(trades),
         num_fills=len(fills),
     )
 
 
+def _compute_benchmark_curve(
+    benchmark_symbol: str,
+    bars_by_symbol: dict[str, dict[str, DailyBar]],
+    session_dates: Sequence[str],
+    starting_cash: float,
+) -> BenchmarkCalculationResult:
+    """Compute the point-in-time benchmark buy-and-hold equity curve and return."""
+    bench_bars = bars_by_symbol.get(benchmark_symbol)
+    if not bench_bars:
+        return BenchmarkCalculationResult(curve=(), total_return=None)
+
+    available_dates = [d for d in session_dates if d in bench_bars]
+    if not available_dates:
+        return BenchmarkCalculationResult(curve=(), total_return=None)
+
+    first_close = bench_bars[available_dates[0]].close
+    if first_close <= 0:
+        return BenchmarkCalculationResult(curve=(), total_return=None)
+
+    curve: list[EquityPoint] = []
+    running_peak = -math.inf
+    last_known_close = first_close
+
+    for date_str in session_dates:
+        if date_str in bench_bars:
+            last_known_close = bench_bars[date_str].close
+        equity = starting_cash * (last_known_close / first_close)
+        running_peak = max(running_peak, equity)
+        drawdown = equity / running_peak - 1.0 if running_peak > 0 else 0.0
+        curve.append(
+            EquityPoint(
+                session_date=date_str,
+                equity=round(equity, 4),
+                drawdown=round(drawdown, 6),
+            )
+        )
+
+    bench_total_return = (curve[-1].equity / starting_cash) - 1.0 if curve else None
+    return BenchmarkCalculationResult(curve=tuple(curve), total_return=bench_total_return)
+
+
 def run_backtest(
     specification: BacktestSpecification, *, bars: Sequence[DailyBar]
 ) -> BacktestResult:
-    """Run a deterministic next-open Backtest over one Security's daily bars."""
-    _validate_specification(specification)
+    """Run a deterministic next-open Backtest over a multi-Security universe."""
+    universe = _validate_specification(specification)
     get_strategy_spec(specification.strategy_name)
+
     for bar in bars:
         if not bar.available_at or not bar.available_at.strip():
             raise BacktestError(
-                "Backtest requires point-in-time availability ('available_at') "
-                "on every DailyBar."
+                "Backtest requires point-in-time availability ('available_at') on every DailyBar."
             )
 
-    bars_sorted = sorted(bars, key=lambda bar: (bar.available_at, bar.session_date))
-    window = [
-        bar
-        for bar in bars_sorted
-        if specification.start_date <= bar.session_date <= specification.end_date
-    ]
-    if not window:
+    # Index bars by symbol and session_date
+    bars_by_symbol: dict[str, dict[str, DailyBar]] = {}
+    for bar in bars:
+        bars_by_symbol.setdefault(bar.security_id, {})[bar.session_date] = bar
+
+    # Determine unique sorted simulation dates in the window [start_date, end_date]
+    universe_and_bench = set(universe)
+    if specification.benchmark_security_id:
+        universe_and_bench.add(specification.benchmark_security_id)
+
+    window_dates_set: set[str] = set()
+    for sym in universe:
+        if sym in bars_by_symbol:
+            for session_date in bars_by_symbol[sym]:
+                if specification.start_date <= session_date <= specification.end_date:
+                    window_dates_set.add(session_date)
+
+    if not window_dates_set:
         raise BacktestError("no bars within [start_date, end_date]")
 
+    sorted_window_dates = sorted(window_dates_set)
+    sorted_all_bars = sorted(bars, key=lambda b: (b.available_at, b.session_date))
+
     cash = specification.starting_cash
-    shares = 0.0
-    pending: PendingTarget | None = None
-    open_trade: OpenTrade | None = None
+    positions: dict[str, float] = {sym: 0.0 for sym in universe}
+    holding_target_weights: dict[str, float] = {sym: 0.0 for sym in universe}
+    pending_targets: dict[str, PendingTarget] = {}
+    open_trades: dict[str, OpenTrade] = {}
     trade_counter = 0
+
     signals: list[StrategyTarget] = []
     fills: list[Fill] = []
     trades: list[Trade] = []
     ledger: list[LedgerRow] = []
     warnings: list[str] = []
+    rejections: list[ConstraintRejection] = []
 
-    for bar in window:
-        fill = None
-        if pending is not None:
-            outcome = _execute_fill(
-                PortfolioState(cash, shares), pending, bar, specification.execution
+    primary_symbol = universe[0]
+
+    for date_str in sorted_window_dates:
+        fills_today: list[Fill] = []
+
+        # -------------------------------------------------------------
+        # STEP 1: Reconcile pending targets at today's open price
+        # -------------------------------------------------------------
+        if pending_targets:
+            # Calculate open portfolio value using today's open prices
+            open_prices: dict[str, float] = {}
+            for sym in universe:
+                bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
+                if bar_sym is not None:
+                    open_prices[sym] = bar_sym.open
+                else:
+                    # If no bar today, fallback to latest close
+                    open_prices[sym] = 0.0
+
+            curr_positions_val_at_open = sum(
+                positions.get(sym, 0.0) * open_prices.get(sym, 0.0) for sym in universe
             )
-            cash, shares = outcome.state.cash, outcome.state.shares
-            if outcome.fill is not None:
-                fill = outcome.fill
-                if outcome.opened_position:
-                    trade_counter += 1
-                    trade_id = f"trade-{trade_counter}"
-                    fill = replace(fill, trade_id=trade_id)
-                    open_trade = OpenTrade(
+            portfolio_val_at_open = cash + curr_positions_val_at_open
+
+            # Compute desired share deltas for each symbol
+            desired_deltas: dict[str, float] = {}
+            for sym in universe:
+                target = pending_targets.get(sym)
+                target_w = target.weight if target is not None else 0.0
+                curr_shares = positions.get(sym, 0.0)
+                open_p = open_prices.get(sym, 0.0)
+
+                if open_p <= 0.0 or target_w <= 0.0:
+                    target_shares = 0.0
+                    holding_target_weights[sym] = 0.0
+                elif curr_shares <= EPS:
+                    denom = open_p * (1.0 + specification.execution.slippage_rate)
+                    denom *= 1.0 + specification.execution.commission_rate
+                    if len(universe) == 1:
+                        target_shares = cash / denom if denom > 0.0 else 0.0
+                    else:
+                        target_val = portfolio_val_at_open * target_w
+                        target_shares = target_val / denom if denom > 0.0 else 0.0
+                    holding_target_weights[sym] = target_w
+                else:
+                    # If already holding and target weight hasn't changed, hold current shares
+                    if abs(target_w - holding_target_weights.get(sym, 0.0)) < EPS:
+                        target_shares = curr_shares
+                    else:
+                        denom = open_p * (1.0 + specification.execution.slippage_rate)
+                        denom *= 1.0 + specification.execution.commission_rate
+                        target_val = portfolio_val_at_open * target_w
+                        target_shares = target_val / denom if denom > 0.0 else 0.0
+                        holding_target_weights[sym] = target_w
+
+                desired_deltas[sym] = target_shares - curr_shares
+
+            # Execution ordering: SELLS execute before BUYS
+            sell_symbols = [s for s in universe if desired_deltas.get(s, 0.0) < -EPS]
+            buy_symbols = [s for s in universe if desired_deltas.get(s, 0.0) > EPS]
+
+            # 1a. Process SELLS
+            for sym in sell_symbols:
+                bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
+                if bar_sym is None:
+                    continue
+                open_p = bar_sym.open
+                delta = desired_deltas[sym]
+                curr_shares = positions.get(sym, 0.0)
+                sell_qty = min(abs(delta), curr_shares)  # Long-only constraint: cannot oversell
+
+                if sell_qty <= EPS:
+                    continue
+
+                target = pending_targets.get(sym)
+                decision_time = target.decision_time if target else bar_sym.available_at
+                rationale = target.rationale if target else "Rebalance sell"
+
+                slippage = specification.execution.slippage_rate
+                effective_price = open_p * (1.0 - slippage)
+                notional = -sell_qty * effective_price
+                commission = abs(notional) * specification.execution.commission_rate
+                slippage_cost = sell_qty * open_p * slippage
+
+                cash += abs(notional) - commission
+                positions[sym] = max(0.0, curr_shares - sell_qty)
+
+                trade_id = ""
+                open_tr = open_trades.get(sym)
+                if open_tr is not None:
+                    trade_id = open_tr.trade_id
+
+                fill = Fill(
+                    trade_id=trade_id,
+                    security_id=sym,
+                    session_date=date_str,
+                    decision_time=decision_time,
+                    side="sell",
+                    quantity=round(sell_qty, 6),
+                    price=round(effective_price, 4),
+                    notional=round(notional, 4),
+                    commission=round(commission, 4),
+                    slippage_cost=round(slippage_cost, 4),
+                    rationale=rationale,
+                )
+                fills.append(fill)
+                fills_today.append(fill)
+
+                # Close round trip trade if position closed
+                if positions[sym] <= EPS and open_tr is not None:
+                    trades.append(_build_trade(open_tr, fill))
+                    del open_trades[sym]
+
+            # 1b. Process BUYS
+            for sym in buy_symbols:
+                bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
+                if bar_sym is None:
+                    continue
+                open_p = bar_sym.open
+                delta = desired_deltas[sym]
+                curr_shares = positions.get(sym, 0.0)
+
+                slippage = specification.execution.slippage_rate
+                effective_price = open_p * (1.0 + slippage)
+                cost_per_share = effective_price * (1.0 + specification.execution.commission_rate)
+
+                desired_cost = delta * cost_per_share
+                target = pending_targets.get(sym)
+                decision_time = target.decision_time if target else bar_sym.available_at
+                rationale = target.rationale if target else "Rebalance buy"
+
+                if cash <= EPS:
+                    # Cash limit rejection
+                    rejections.append(
+                        ConstraintRejection(
+                            session_date=date_str,
+                            security_id=sym,
+                            rule="cash_limit",
+                            reason=f"Insufficient cash ({cash:.2f}) to execute buy for {sym}.",
+                            requested_weight=target.weight if target else None,
+                        )
+                    )
+                    warnings.append(f"Insufficient cash to buy {sym} on {date_str}.")
+                    continue
+
+                if desired_cost > cash:
+                    # Partial fill to available cash
+                    buy_qty = cash / cost_per_share
+                    rejections.append(
+                        ConstraintRejection(
+                            session_date=date_str,
+                            security_id=sym,
+                            rule="partial_fill_cash_limit",
+                            reason=(
+                                f"Partial fill for {sym} ({buy_qty:.4f} of {delta:.4f} shares) "
+                                "due to cash limit."
+                            ),
+                            requested_weight=target.weight if target else None,
+                        )
+                    )
+                else:
+                    buy_qty = delta
+
+                if buy_qty <= EPS:
+                    continue
+
+                notional = buy_qty * effective_price
+                commission = notional * specification.execution.commission_rate
+                slippage_cost = buy_qty * open_p * slippage
+
+                cash = max(0.0, cash - notional - commission)
+                was_flat = positions.get(sym, 0.0) <= EPS
+                positions[sym] = curr_shares + buy_qty
+
+                trade_counter += 1
+                trade_id = f"trade-{trade_counter}"
+                fill = Fill(
+                    trade_id=trade_id,
+                    security_id=sym,
+                    session_date=date_str,
+                    decision_time=decision_time,
+                    side="buy",
+                    quantity=round(buy_qty, 6),
+                    price=round(effective_price, 4),
+                    notional=round(notional, 4),
+                    commission=round(commission, 4),
+                    slippage_cost=round(slippage_cost, 4),
+                    rationale=rationale,
+                )
+                fills.append(fill)
+                fills_today.append(fill)
+
+                if was_flat:
+                    open_trades[sym] = OpenTrade(
                         trade_id=trade_id,
-                        entry_date=bar.session_date,
+                        security_id=sym,
+                        entry_date=date_str,
                         entry_price=fill.price,
                         quantity=fill.quantity,
                         entry_cost=fill.notional + fill.commission,
                     )
-                elif outcome.closed_position and open_trade is not None:
-                    fill = replace(fill, trade_id=open_trade.trade_id)
-                fills.append(fill)
-                if outcome.closed_position and open_trade is not None:
-                    trades.append(_build_trade(open_trade, fill))
-                    open_trade = None
-        pending = None
 
-        view = _market_view(
-            specification.security_id,
-            bars_sorted,
-            bar.available_at,
-            specification.price_field,
-        )
-        evaluation = evaluate_strategy(
-            specification.strategy_name,
-            view,
-            specification.parameters,
-            decision_time=bar.available_at,
-        )
-        if len(evaluation.targets) != 1:
-            raise BacktestError("single-Security backtest requires exactly one target")
-        target = evaluation.targets[0]
-        signals.append(target)
-        pending = PendingTarget(target.weight, bar.available_at, target.rationale)
+        pending_targets.clear()
 
-        close_price = _price_value(bar, specification.price_field)
-        position_value = shares * close_price
-        portfolio_value = cash + position_value
+        # -------------------------------------------------------------
+        # STEP 2: Evaluate Strategy on today's close for each security
+        # -------------------------------------------------------------
+        today_signal_weights: dict[str, float] = {}
+        primary_target: StrategyTarget | None = None
+        universe_k = len(universe)
+
+        for sym in universe:
+            bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
+            if bar_sym is None:
+                continue
+
+            view = _market_view(
+                sym, sorted_all_bars, bar_sym.available_at, specification.price_field
+            )
+            evaluation = evaluate_strategy(
+                specification.strategy_name,
+                view,
+                specification.parameters,
+                decision_time=bar_sym.available_at,
+            )
+
+            # In multi-security universe, normalize allocation by universe size
+            for raw_t in evaluation.targets:
+                norm_weight = raw_t.weight / universe_k if universe_k > 0 else 0.0
+
+                # Long-only constraint check: negative weights are rejected
+                if norm_weight < 0.0:
+                    rejections.append(
+                        ConstraintRejection(
+                            session_date=date_str,
+                            security_id=sym,
+                            rule="long_only_no_short",
+                            reason=(
+                                f"Negative target weight ({norm_weight}) rejected in "
+                                "long-only mode."
+                            ),
+                            requested_weight=norm_weight,
+                        )
+                    )
+                    norm_weight = 0.0
+
+                target = replace(raw_t, weight=round(norm_weight, 6))
+                signals.append(target)
+                today_signal_weights[sym] = target.weight
+                pending_targets[sym] = PendingTarget(
+                    security_id=sym,
+                    weight=target.weight,
+                    decision_time=bar_sym.available_at,
+                    rationale=target.rationale,
+                )
+                if sym == primary_symbol:
+                    primary_target = target
+
+        # -------------------------------------------------------------
+        # STEP 3: Mark-to-market at today's close
+        # -------------------------------------------------------------
+        position_snapshots: dict[str, PositionSnapshot] = {}
+        total_pos_val = 0.0
+        primary_close = 0.0
+        primary_shares = positions.get(primary_symbol, 0.0)
+
+        for sym in universe:
+            bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
+            close_p = _price_value(bar_sym, specification.price_field) if bar_sym else 0.0
+            if sym == primary_symbol:
+                primary_close = close_p
+
+            shares_sym = positions.get(sym, 0.0)
+            val_sym = shares_sym * close_p
+            total_pos_val += val_sym
+
+        portfolio_val = cash + total_pos_val
+
+        for sym in universe:
+            bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
+            close_p = _price_value(bar_sym, specification.price_field) if bar_sym else 0.0
+            shares_sym = positions.get(sym, 0.0)
+            val_sym = shares_sym * close_p
+            w_sym = (val_sym / portfolio_val) if portfolio_val > 0.0 else 0.0
+
+            position_snapshots[sym] = PositionSnapshot(
+                shares=round(shares_sym, 6),
+                close_price=round(close_p, 4),
+                position_value=round(val_sym, 4),
+                weight=round(w_sym, 6),
+            )
+
+        gross_exp = (total_pos_val / portfolio_val) if portfolio_val > 0.0 else 0.0
+        net_exp = gross_exp  # Long-only
+
         ledger.append(
             LedgerRow(
-                session_date=bar.session_date,
-                signal_weight=target.weight,
-                signal_decision_time=bar.available_at,
-                fill=fill,
-                shares=round(shares, 6),
-                close_price=close_price,
+                session_date=date_str,
+                signal_weight=primary_target.weight if primary_target else None,
+                signal_decision_time=primary_target.decision_time if primary_target else None,
+                fill=fills_today[0] if fills_today else None,
+                shares=round(primary_shares, 6),
+                close_price=primary_close,
                 cash=round(cash, 4),
-                position_value=round(position_value, 4),
-                portfolio_value=round(portfolio_value, 4),
+                position_value=round(total_pos_val, 4),
+                portfolio_value=round(portfolio_val, 4),
+                positions=position_snapshots,
+                signal_weights=today_signal_weights,
+                gross_exposure=round(gross_exp, 6),
+                net_exposure=round(net_exp, 6),
             )
         )
 
     if not fills:
         warnings.append("No fills occurred during the backtest window.")
 
-    if pending is not None:
-        position_weight = 1.0 if shares > EPS else 0.0
-        if abs(pending.weight - position_weight) > EPS:
-            warnings.append(
-                f"Final signal on {window[-1].session_date} "
-                f"(weight {pending.weight}) has no subsequent bar to fill."
-            )
+    if pending_targets:
+        for sym, pending in pending_targets.items():
+            curr_w = position_snapshots.get(sym, PositionSnapshot(0, 0, 0, 0)).weight
+            if abs(pending.weight - curr_w) > EPS:
+                warnings.append(
+                    f"Final signal for {sym} on {sorted_window_dates[-1]} "
+                    f"(weight {pending.weight}) has no subsequent bar to fill."
+                )
 
     running_peak = -math.inf
     curve: list[EquityPoint] = []
+    drawdown_curve: list[EquityPoint] = []
     for row in ledger:
         running_peak = max(running_peak, row.portfolio_value)
-        drawdown = row.portfolio_value / running_peak - 1.0
-        curve.append(
-            EquityPoint(
-                session_date=row.session_date,
-                equity=round(row.portfolio_value, 4),
-                drawdown=round(drawdown, 6),
-            )
+        drawdown = (row.portfolio_value / running_peak - 1.0) if running_peak > 0 else 0.0
+        pt = EquityPoint(
+            session_date=row.session_date,
+            equity=round(row.portfolio_value, 4),
+            drawdown=round(drawdown, 6),
         )
+        curve.append(pt)
+        drawdown_curve.append(pt)
 
-    metrics = _compute_metrics(ledger, specification.starting_cash, fills, trades)
+    # -------------------------------------------------------------
+    # Benchmark calculations
+    # -------------------------------------------------------------
+    benchmark_equity_curve: tuple[EquityPoint, ...] = ()
+    bench_relative_return: float | None = None
+    if specification.benchmark_security_id:
+        bench_result = _compute_benchmark_curve(
+            specification.benchmark_security_id,
+            bars_by_symbol,
+            sorted_window_dates,
+            specification.starting_cash,
+        )
+        benchmark_equity_curve = bench_result.curve
+        if bench_result.total_return is not None and curve:
+            port_total_return = (curve[-1].equity / specification.starting_cash) - 1.0
+            bench_relative_return = port_total_return - bench_result.total_return
+
+    metrics = _compute_metrics(
+        MetricsCalculationInput(
+            ledger=ledger,
+            starting_cash=specification.starting_cash,
+            fills=fills,
+            trades=trades,
+            benchmark_relative_return=bench_relative_return,
+        )
+    )
 
     manifest: dict[str, JsonValue] = {
         "kind": "backtest",
         "strategy_name": specification.strategy_name,
         "strategy_revision": specification.strategy_revision,
         "dataset_version_id": specification.dataset_version_id,
-        "security_id": specification.security_id,
+        "security_id": specification.security_id or primary_symbol,
+        "universe": list(universe),
+        "benchmark_security_id": specification.benchmark_security_id,
         "start_date": specification.start_date,
         "end_date": specification.end_date,
         "starting_cash": specification.starting_cash,
@@ -554,12 +878,11 @@ def run_backtest(
         "signal_count": len(signals),
         "fill_count": len(fills),
         "trade_count": len(trades),
+        "rejection_count": len(rejections),
         "costs": {
             "total_commission": round(sum(fill.commission for fill in fills), 4),
             "total_slippage": round(sum(fill.slippage_cost for fill in fills), 4),
-            "total_costs": round(
-                sum(fill.commission + fill.slippage_cost for fill in fills), 4
-            ),
+            "total_costs": round(sum(fill.commission + fill.slippage_cost for fill in fills), 4),
         },
     }
 
@@ -570,8 +893,10 @@ def run_backtest(
         trades=tuple(trades),
         ledger=tuple(ledger),
         equity_curve=tuple(curve),
-        drawdown_curve=tuple(curve),
+        drawdown_curve=tuple(drawdown_curve),
         metrics=metrics,
         warnings=tuple(warnings),
         manifest=manifest,
+        benchmark_equity_curve=benchmark_equity_curve,
+        rejections=tuple(rejections),
     )

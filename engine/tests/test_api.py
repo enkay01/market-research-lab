@@ -677,8 +677,9 @@ def test_comparable_valuation_uses_local_inputs_and_keeps_provenance(tmp_path):
     assert result["target"]["ev_to_revenue"] == 3.3
     assert result["peers"][0]["ev_to_ebitda"] == 13
     assert result["peer_medians"]["free_cash_flow_yield"] == 0.05
-    assert result["target"]["inputs"]["provenance"]["revenue"] == (
-        fundamental_import.json()["dataset_version_id"]
+    assert (
+        result["target"]["inputs"]["provenance"]["revenue"]
+        == (fundamental_import.json()["dataset_version_id"])
     )
     assert result["target"]["inputs"]["units"]["revenue"] == "USD"
     project = client.post("/api/projects", json={"name": "Comparable research"}).json()
@@ -691,12 +692,7 @@ def test_comparable_valuation_uses_local_inputs_and_keeps_provenance(tmp_path):
     assert saved_result["method_revision"] == "trading_comparables:v1"
     assert saved_result["run_id"]
     manifest = (
-        tmp_path
-        / "projects"
-        / project["id"]
-        / "runs"
-        / saved_result["run_id"]
-        / "manifest.json"
+        tmp_path / "projects" / project["id"] / "runs" / saved_result["run_id"] / "manifest.json"
     )
     assert manifest.exists()
     reloaded = client.get(f"/api/projects/{project['id']}/valuations")
@@ -864,9 +860,11 @@ def test_dcf_valuation_endpoints_seed_revisions_and_durability(tmp_path):
     assert val_list.status_code == 200
     vals = val_list.json()
     assert len(vals) == 3
-    assert {v["method_revision"] for v in vals} == {"fcff_dcf:v1", "fcff_dcf:v2", "trading_comparables:v1"}
-
-
+    assert {v["method_revision"] for v in vals} == {
+        "fcff_dcf:v1",
+        "fcff_dcf:v2",
+        "trading_comparables:v1",
+    }
 
 
 def test_indicator_endpoints_and_definition_lifecycle(tmp_path: pytest.TempPathFactory):
@@ -977,7 +975,6 @@ def test_indicator_endpoints_and_definition_lifecycle(tmp_path: pytest.TempPathF
     assert save_def_res.json()["revision"] == "v1"
 
 
-
 def test_strategy_endpoints_and_definition_lifecycle(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
 
@@ -1058,9 +1055,7 @@ def test_strategy_endpoints_and_definition_lifecycle(tmp_path):
     strategy_defs = tmp_path / "projects" / proj_id / "definitions" / "strategy"
     assert strategy_defs.is_dir()
     revision_files = [
-        entry / "v1" / "definition.json"
-        for entry in strategy_defs.iterdir()
-        if entry.is_dir()
+        entry / "v1" / "definition.json" for entry in strategy_defs.iterdir() if entry.is_dir()
     ]
     assert any(path.is_file() for path in revision_files)
 
@@ -1200,7 +1195,9 @@ def test_backtest_run_rejects_start_after_end(tmp_path):
     status_file = json.loads((failed_run / "status.json").read_text(encoding="utf-8"))
     assert status_file["status"] == "failed"
     assert "start_date must not be after end_date" in status_file["error"]
-    error_artifact = json.loads((failed_run / "artifacts" / "error.json").read_text(encoding="utf-8"))
+    error_artifact = json.loads(
+        (failed_run / "artifacts" / "error.json").read_text(encoding="utf-8")
+    )
     assert "start_date must not be after end_date" in error_artifact["error"]
 
 
@@ -1265,3 +1262,53 @@ def test_backtest_run_exports_html_csv_json(tmp_path):
     assert "manifest" in data
     assert "backtest" in data
 
+
+def test_backtest_run_multi_symbol_with_benchmark(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Multi-Asset Project"}).json()
+
+    csv_content = (
+        "symbol,date,open,high,low,close,volume,available_at\n"
+        "AAPL,2024-01-02,100,105,99,102,1000,2024-01-02T20:00:00Z\n"
+        "AAPL,2024-01-03,102,108,101,106,1200,2024-01-03T20:00:00Z\n"
+        "AAPL,2024-01-04,106,110,105,108,1100,2024-01-04T20:00:00Z\n"
+        "AAPL,2024-01-05,108,112,107,110,1300,2024-01-05T20:00:00Z\n"
+        "MSFT,2024-01-02,200,205,198,202,2000,2024-01-02T20:00:00Z\n"
+        "MSFT,2024-01-03,202,208,201,206,2200,2024-01-03T20:00:00Z\n"
+        "MSFT,2024-01-04,206,210,205,208,2100,2024-01-04T20:00:00Z\n"
+        "MSFT,2024-01-05,208,212,207,210,2300,2024-01-05T20:00:00Z\n"
+        "SPY,2024-01-02,400,405,398,402,5000,2024-01-02T20:00:00Z\n"
+        "SPY,2024-01-03,402,408,401,404,5200,2024-01-03T20:00:00Z\n"
+        "SPY,2024-01-04,404,410,403,406,5100,2024-01-04T20:00:00Z\n"
+        "SPY,2024-01-05,406,412,405,408,5300,2024-01-05T20:00:00Z\n"
+    )
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "test_source"},
+        files={"file": ("multi_bars.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
+    )
+    assert imported.status_code == 201
+    version_id = imported.json()["dataset_version_id"]
+
+    response = client.post(
+        f"/api/projects/{project['id']}/backtests",
+        json={
+            "strategy_name": "long_flat_moving_average",
+            "strategy_revision": "long_flat_moving_average:v1",
+            "dataset_version_id": version_id,
+            "symbols": ["AAPL", "MSFT"],
+            "benchmark_symbol": "SPY",
+            "start_date": "2024-01-02",
+            "end_date": "2024-01-05",
+            "starting_cash": 100000,
+            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+        },
+    )
+    assert response.status_code == 201
+    result = response.json()
+    assert result["run_id"]
+    assert result["specification"]["universe"] == ["AAPL", "MSFT"]
+    assert len(result["benchmark_equity_curve"]) == 4
+    assert result["metrics"]["benchmark_relative_return"] is not None
+    assert "AAPL" in result["ledger"][0]["positions"]
+    assert "MSFT" in result["ledger"][0]["positions"]

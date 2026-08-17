@@ -27,7 +27,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .backtest import (
     BacktestError,
@@ -89,7 +89,6 @@ from .valuation import (
     FCFFDCFInput,
     FCFFDCFResult,
     evaluate,
-    evaluate_fcff_dcf,
 )
 
 
@@ -215,9 +214,7 @@ class WatchlistResponse(BaseModel):
 class WatchlistQueryOptions(BaseModel):
     query: str | None = Field(default=None, description="Filter symbol or name")
     exchange: str | None = Field(default=None, description="Filter exchange")
-    thesis_status: str | None = Field(
-        default=None, description="all | has_thesis | no_thesis"
-    )
+    thesis_status: str | None = Field(default=None, description="all | has_thesis | no_thesis")
     sort_by: str = Field(
         default="symbol", description="symbol | name | exchange | thesis_updated_at"
     )
@@ -356,12 +353,18 @@ class ComparableValuationResponse(BaseModel):
 class FCFFDCFRequest(BaseModel):
     target_security_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,64}$")
     base_revenue: float = Field(gt=0, description="Base period revenue")
-    revenue_growth_rate: float = Field(ge=-0.99, le=10.0, description="Forecast revenue growth rate")
+    revenue_growth_rate: float = Field(
+        ge=-0.99, le=10.0, description="Forecast revenue growth rate"
+    )
     operating_margin: float = Field(ge=-1.0, le=1.0, description="Forecast operating margin")
     tax_rate: float = Field(ge=0.0, le=1.0, description="Effective tax rate")
-    reinvestment_rate: float = Field(ge=0.0, le=2.0, description="Reinvestment rate as fraction of NOPAT")
+    reinvestment_rate: float = Field(
+        ge=0.0, le=2.0, description="Reinvestment rate as fraction of NOPAT"
+    )
     wacc: float = Field(gt=0.0, le=1.0, description="Weighted Average Cost of Capital")
-    terminal_growth_rate: float = Field(ge=-0.1, le=0.2, description="Perpetual terminal growth rate")
+    terminal_growth_rate: float = Field(
+        ge=-0.1, le=0.2, description="Perpetual terminal growth rate"
+    )
     shares_outstanding: float = Field(gt=0.0, description="Shares outstanding")
     total_debt: float = Field(default=0.0, ge=0.0, description="Total debt")
     cash: float = Field(default=0.0, ge=0.0, description="Cash and cash equivalents")
@@ -634,7 +637,9 @@ class BacktestRunRequest(BaseModel):
     strategy_name: str = Field(min_length=1, max_length=64)
     strategy_revision: str = Field(min_length=1, max_length=64)
     dataset_version_id: str = Field(min_length=1)
-    symbol: str = Field(min_length=1, max_length=32)
+    symbol: str | None = Field(default=None, max_length=32)
+    symbols: list[str] | None = None
+    benchmark_symbol: str | None = Field(default=None, max_length=32)
     start_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     end_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     starting_cash: float = Field(gt=0)
@@ -643,6 +648,14 @@ class BacktestRunRequest(BaseModel):
     execution: ExecutionModelAssumptionsRequest = Field(
         default_factory=ExecutionModelAssumptionsRequest
     )
+
+    @model_validator(mode="after")
+    def validate_symbols(self) -> BacktestRunRequest:
+        if not self.symbol and not self.symbols:
+            raise ValueError("Either 'symbol' or 'symbols' must be provided.")
+        if self.symbols is not None and len(self.symbols) == 0:
+            raise ValueError("'symbols' must not be empty.")
+        return self
 
 
 class FillResponse(BaseModel):
@@ -659,6 +672,21 @@ class FillResponse(BaseModel):
     rationale: str
 
 
+class PositionSnapshotResponse(BaseModel):
+    shares: float
+    close_price: float
+    position_value: float
+    weight: float
+
+
+class ConstraintRejectionResponse(BaseModel):
+    session_date: str
+    security_id: str
+    rule: str
+    reason: str
+    requested_weight: float | None = None
+
+
 class LedgerRowResponse(BaseModel):
     session_date: str
     signal_weight: float | None = None
@@ -669,6 +697,10 @@ class LedgerRowResponse(BaseModel):
     cash: float
     position_value: float
     portfolio_value: float
+    positions: dict[str, PositionSnapshotResponse] = Field(default_factory=dict)
+    signal_weights: dict[str, float] = Field(default_factory=dict)
+    gross_exposure: float = 0.0
+    net_exposure: float = 0.0
 
 
 class TradeResponse(BaseModel):
@@ -721,6 +753,8 @@ class BacktestResultResponse(BaseModel):
     metrics: BacktestMetricsResponse
     warnings: list[str]
     manifest: dict[str, JsonValue]
+    benchmark_equity_curve: list[EquityPointResponse] = Field(default_factory=list)
+    rejections: list[ConstraintRejectionResponse] = Field(default_factory=list)
 
 
 def _backtest_result_response(
@@ -902,9 +936,7 @@ def _comparable_company_input(
         for alias in field_aliases
     }
     for dataset_version_id in summary.fundamentals_dataset_versions:
-        facts = market_store.fundamentals(
-            dataset_version_id, symbol=summary.security.security_id
-        )
+        facts = market_store.fundamentals(dataset_version_id, symbol=summary.security.security_id)
         for fact in facts:
             field_name = aliases.get(fact.field.lower())
             if field_name is None:
@@ -918,9 +950,7 @@ def _comparable_company_input(
             if current is None or timestamp >= current[1]:
                 latest_facts[field_name] = (value, timestamp, fact.unit, dataset_version_id)
 
-    provenance = {
-        field_name: fact[3] for field_name, fact in latest_facts.items()
-    }
+    provenance = {field_name: fact[3] for field_name, fact in latest_facts.items()}
     input_warnings: list[str] = []
     financial_fields = (
         "total_debt",
@@ -930,9 +960,7 @@ def _comparable_company_input(
         "net_income",
         "free_cash_flow",
     )
-    values = {
-        field_name: _fact_value(latest_facts, field_name) for field_name in financial_fields
-    }
+    values = {field_name: _fact_value(latest_facts, field_name) for field_name in financial_fields}
     for field_name in financial_fields:
         fact = latest_facts.get(field_name)
         if fact is not None and fact[2].upper() != summary.security.currency.upper():
@@ -948,23 +976,17 @@ def _comparable_company_input(
         )
         shares = None
     market_cap = (
-        summary.latest_close * shares[0]
-        if summary.latest_close is not None and shares
-        else None
+        summary.latest_close * shares[0] if summary.latest_close is not None and shares else None
     )
     if summary.daily_bars_dataset_versions and market_cap is not None:
         provenance["market_cap"] = summary.daily_bars_dataset_versions[-1]
     units = {field_name: fact[2] for field_name, fact in latest_facts.items()}
     if market_cap is not None:
         units["market_cap"] = summary.security.currency
-    input_dataset_versions = {
-        field_name: (fact[3],) for field_name, fact in latest_facts.items()
-    }
+    input_dataset_versions = {field_name: (fact[3],) for field_name, fact in latest_facts.items()}
     if market_cap is not None and shares is not None:
         bar_version = summary.daily_bars_dataset_versions[-1]
-        input_dataset_versions["market_cap"] = tuple(
-            dict.fromkeys((bar_version, shares[3]))
-        )
+        input_dataset_versions["market_cap"] = tuple(dict.fromkeys((bar_version, shares[3])))
     return ComparableCompanyInput(
         security_id=summary.security.security_id,
         symbol=summary.security.symbol,
@@ -999,9 +1021,7 @@ def _comparable_valuation_response(
     run_id: str | None = None,
 ) -> ComparableValuationResponse:
     response = ComparableValuationResponse.model_validate(result, from_attributes=True)
-    return response.model_copy(
-        update={"method_revision": method_revision, "run_id": run_id}
-    )
+    return response.model_copy(update={"method_revision": method_revision, "run_id": run_id})
 
 
 class FactSortKey(NamedTuple):
@@ -1009,9 +1029,7 @@ class FactSortKey(NamedTuple):
     key: str
 
 
-def _fact_order(
-    available_at: str | None, filed_at: str | None, fiscal_period: str
-) -> FactSortKey:
+def _fact_order(available_at: str | None, filed_at: str | None, fiscal_period: str) -> FactSortKey:
     for timestamp in (available_at, filed_at):
         if timestamp:
             try:
@@ -1044,9 +1062,7 @@ def _calculate_comparable_result(
     )
 
 
-def _dcf_company_seed(
-    market_store: MarketDataStore, security_id: str
-) -> FCFFDCFSeedResponse:
+def _dcf_company_seed(market_store: MarketDataStore, security_id: str) -> FCFFDCFSeedResponse:
     company = _comparable_company_input(market_store, security_id)
     summary = market_store.get_security_summary(security_id)
     latest_price = summary.latest_close if summary else None
@@ -1064,9 +1080,13 @@ def _dcf_company_seed(
 
     warnings = list(company.input_warnings)
     if revenue is None or revenue <= 0:
-        warnings.append(f"{company.symbol}: Historical revenue not found; please specify base revenue.")
+        warnings.append(
+            f"{company.symbol}: Historical revenue not found; please specify base revenue."
+        )
     if shares is None or shares <= 0:
-        warnings.append(f"{company.symbol}: Shares outstanding not found; please specify shares outstanding.")
+        warnings.append(
+            f"{company.symbol}: Shares outstanding not found; please specify shares outstanding."
+        )
 
     return FCFFDCFSeedResponse(
         security_id=company.security_id,
@@ -1093,9 +1113,7 @@ def _dcf_company_seed(
     )
 
 
-def _calculate_dcf_result(
-    market_store: MarketDataStore, request: FCFFDCFRequest
-) -> FCFFDCFResult:
+def _calculate_dcf_result(market_store: MarketDataStore, request: FCFFDCFRequest) -> FCFFDCFResult:
     company = _comparable_company_input(market_store, request.target_security_id)
     dcf_input = FCFFDCFInput(
         security_id=company.security_id,
@@ -1275,9 +1293,7 @@ def _build_watchlist_response(
         if not sec:
             continue
         thesis = (
-            all_theses.get(sec_id)
-            or all_theses.get(sec.security_id)
-            or all_theses.get(sec.symbol)
+            all_theses.get(sec_id) or all_theses.get(sec.security_id) or all_theses.get(sec.symbol)
         )
         has_thesis = thesis is not None and bool(thesis.content.strip())
         thesis_updated = thesis.updated_at if thesis else None
@@ -1328,9 +1344,7 @@ def _build_watchlist_response(
     if options.sort_by == "name":
         filtered.sort(key=lambda item: item.security.name.lower(), reverse=reverse)
     elif options.sort_by == "exchange":
-        filtered.sort(
-            key=lambda item: (item.security.exchange or "").lower(), reverse=reverse
-        )
+        filtered.sort(key=lambda item: (item.security.exchange or "").lower(), reverse=reverse)
     elif options.sort_by == "thesis_updated_at":
         filtered.sort(key=lambda item: item.thesis_updated_at or "", reverse=reverse)
     else:  # default 'symbol'
@@ -1489,9 +1503,7 @@ def create_app(
         )
 
     @app.exception_handler(StrategyEvaluationError)
-    async def strategy_evaluation_error(
-        _: Request, error: StrategyEvaluationError
-    ) -> JSONResponse:
+    async def strategy_evaluation_error(_: Request, error: StrategyEvaluationError) -> JSONResponse:
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content=ErrorResponse(
@@ -1502,9 +1514,7 @@ def create_app(
         )
 
     @app.exception_handler(BacktestParameterError)
-    async def backtest_parameter_error(
-        _: Request, error: BacktestParameterError
-    ) -> JSONResponse:
+    async def backtest_parameter_error(_: Request, error: BacktestParameterError) -> JSONResponse:
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content=ErrorResponse(
@@ -1623,9 +1633,7 @@ def create_app(
     def calculate_comparable_valuation(
         request: ComparableValuationRequest,
     ) -> ComparableValuationResponse:
-        return _comparable_valuation_response(
-            _calculate_comparable_result(market_store, request)
-        )
+        return _comparable_valuation_response(_calculate_comparable_result(market_store, request))
 
     @app.post(
         "/api/projects/{project_id}/valuations/comparables",
@@ -1680,9 +1688,7 @@ def create_app(
     def calculate_dcf_valuation(
         request: FCFFDCFRequest,
     ) -> FCFFDCFValuationResponse:
-        return _dcf_valuation_response(
-            _calculate_dcf_result(market_store, request)
-        )
+        return _dcf_valuation_response(_calculate_dcf_result(market_store, request))
 
     @app.post(
         "/api/projects/{project_id}/valuations/dcf",
@@ -1690,9 +1696,7 @@ def create_app(
         status_code=status.HTTP_201_CREATED,
         tags=["valuations"],
     )
-    def save_dcf_valuation(
-        project_id: UUID, request: FCFFDCFRequest
-    ) -> FCFFDCFValuationResponse:
+    def save_dcf_valuation(project_id: UUID, request: FCFFDCFRequest) -> FCFFDCFValuationResponse:
         result = _calculate_dcf_result(market_store, request)
         definition = {
             "method": "fcff_dcf",
@@ -1723,9 +1727,7 @@ def create_app(
                 result=_dcf_valuation_response(result).model_dump(),
             ),
         )
-        return _dcf_valuation_response(
-            result, method_revision=method_revision, run_id=run_id
-        )
+        return _dcf_valuation_response(result, method_revision=method_revision, run_id=run_id)
 
     @app.post(
         "/api/projects/{project_id}/valuations/compare",
@@ -1762,9 +1764,12 @@ def create_app(
                 base_sc = scenarios_list[1] if len(scenarios_list) > 1 else {}
                 key_assump: dict[str, JsonValue] = {
                     "wacc": inputs.get("wacc") or base_sc.get("wacc"),
-                    "terminal_growth_rate": inputs.get("terminal_growth_rate") or base_sc.get("terminal_growth_rate"),
-                    "revenue_growth_rate": inputs.get("revenue_growth_rate") or base_sc.get("revenue_growth_rate"),
-                    "operating_margin": inputs.get("operating_margin") or base_sc.get("operating_margin"),
+                    "terminal_growth_rate": inputs.get("terminal_growth_rate")
+                    or base_sc.get("terminal_growth_rate"),
+                    "revenue_growth_rate": inputs.get("revenue_growth_rate")
+                    or base_sc.get("revenue_growth_rate"),
+                    "operating_margin": inputs.get("operating_margin")
+                    or base_sc.get("operating_margin"),
                     "tax_rate": inputs.get("tax_rate"),
                     "reinvestment_rate": inputs.get("reinvestment_rate"),
                     "forecast_years": result_dict.get("forecast_years"),
@@ -1792,9 +1797,7 @@ def create_app(
                 target = result_dict.get("target", {})
                 peers = result_dict.get("peers", [])
                 peer_syms: list[JsonValue] = [
-                    str(p.get("symbol"))
-                    for p in peers
-                    if isinstance(p, dict) and p.get("symbol")
+                    str(p.get("symbol")) for p in peers if isinstance(p, dict) and p.get("symbol")
                 ]
                 key_assump_comp: dict[str, JsonValue] = {
                     "peer_count": len(peers),
@@ -1835,7 +1838,6 @@ def create_app(
             items=items,
             compared_at=datetime.now(UTC).isoformat(),
         )
-
 
     @app.get(
         "/api/projects/{project_id}/valuations/{run_id}/export/{format_type}",
@@ -1897,34 +1899,68 @@ def create_app(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="start_date must not be after end_date.",
             )
-        security = market_store.get_security(request.symbol)
-        if not security:
-            store.create_failed_backtest_run(
-                str(project_id),
-                FailedBacktestRunRecord(
-                    strategy_revision=request.strategy_revision,
-                    dataset_version_ids=[request.dataset_version_id],
-                    parameters=dict(request.parameters),
-                    error_message=f"Security not found: {request.symbol}",
-                ),
-            )
-            raise SecurityNotFoundError(request.symbol)
-        try:
-            market_store.ensure_historical_eligibility(request.dataset_version_id)
-            bars = market_store.history(request.dataset_version_id, symbol=security.security_id)
-            if not bars:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=(
-                        f"No price history found for symbol '{request.symbol}' "
-                        f"in dataset '{request.dataset_version_id}'."
+        target_symbols: list[str] = (
+            request.symbols if request.symbols else ([request.symbol] if request.symbol else [])
+        )
+        resolved_securities = []
+        for sym in target_symbols:
+            sec = market_store.get_security(sym)
+            if not sec:
+                store.create_failed_backtest_run(
+                    str(project_id),
+                    FailedBacktestRunRecord(
+                        strategy_revision=request.strategy_revision,
+                        dataset_version_ids=[request.dataset_version_id],
+                        parameters=dict(request.parameters),
+                        error_message=f"Security not found: {sym}",
                     ),
                 )
+                raise SecurityNotFoundError(sym)
+            resolved_securities.append(sec)
+
+        bench_sec = None
+        if request.benchmark_symbol:
+            bench_sec = market_store.get_security(request.benchmark_symbol)
+            if not bench_sec:
+                store.create_failed_backtest_run(
+                    str(project_id),
+                    FailedBacktestRunRecord(
+                        strategy_revision=request.strategy_revision,
+                        dataset_version_ids=[request.dataset_version_id],
+                        parameters=dict(request.parameters),
+                        error_message=f"Benchmark security not found: {request.benchmark_symbol}",
+                    ),
+                )
+                raise SecurityNotFoundError(request.benchmark_symbol)
+
+        try:
+            market_store.ensure_historical_eligibility(request.dataset_version_id)
+            all_bars = []
+            for sec in resolved_securities:
+                bars_sec = market_store.history(request.dataset_version_id, symbol=sec.security_id)
+                if not bars_sec:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=(
+                            f"No price history found for symbol '{sec.symbol}' "
+                            f"in dataset '{request.dataset_version_id}'."
+                        ),
+                    )
+                all_bars.extend(bars_sec)
+
+            if bench_sec is not None:
+                bench_bars = market_store.history(
+                    request.dataset_version_id, symbol=bench_sec.security_id
+                )
+                all_bars.extend(bench_bars)
+
+            universe_ids = tuple(sec.security_id for sec in resolved_securities)
             spec = BacktestSpecification(
                 strategy_name=request.strategy_name,
                 strategy_revision=request.strategy_revision,
                 dataset_version_id=request.dataset_version_id,
-                security_id=security.security_id,
+                security_id=universe_ids[0] if universe_ids else "",
+                universe=universe_ids,
                 start_date=request.start_date,
                 end_date=request.end_date,
                 starting_cash=request.starting_cash,
@@ -1935,8 +1971,9 @@ def create_app(
                     commission_rate=request.execution.commission_rate,
                     slippage_rate=request.execution.slippage_rate,
                 ),
+                benchmark_security_id=bench_sec.security_id if bench_sec else None,
             )
-            result = run_backtest(spec, bars=bars)
+            result = run_backtest(spec, bars=all_bars)
         except Exception as error:
             store.create_failed_backtest_run(
                 str(project_id),
@@ -2047,9 +2084,7 @@ def create_app(
                 valuations = store.list_valuations_for_security(
                     str(project_id), summary.security.security_id
                 )
-                runs = store.list_runs_for_security(
-                    str(project_id), summary.security.security_id
-                )
+                runs = store.list_runs_for_security(str(project_id), summary.security.security_id)
 
         return SecuritySummaryResponse(
             security=SecurityResponse(
@@ -2233,9 +2268,7 @@ def create_app(
         tags=["datasets"],
     )
     def list_datasets() -> list[CoverageResponse]:
-        return [
-            _coverage_response(report) for report in market_store.list_dataset_versions()
-        ]
+        return [_coverage_response(report) for report in market_store.list_dataset_versions()]
 
     @app.get(
         "/api/datasets/{dataset_version_id}/coverage",

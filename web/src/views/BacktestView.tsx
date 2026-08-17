@@ -3,6 +3,7 @@ import {
   Badge,
   Banner,
   Button,
+  Card,
   EmptyState,
   Heading,
   HStack,
@@ -65,138 +66,159 @@ function KpiCard({
   valueColor?: string;
 }) {
   return (
-    <VStack
-      gap={1}
-      style={{
-        padding: "var(--spacing-3, 0.75rem) var(--spacing-4, 1rem)",
-        background: "var(--color-bg-subtle, #f8fafc)",
-        borderRadius: "var(--radius-medium, 0.5rem)",
-        border: "1px solid var(--color-border, #e2e8f0)",
-        flex: 1,
-        minWidth: "160px",
-      }}
-    >
-      <Text type="supporting">{label}</Text>
-      <Heading level={3} style={{ color: valueColor }}>
-        {value}
-      </Heading>
-      {subtext && <Text type="supporting">{subtext}</Text>}
-    </VStack>
+    <Card padding={3} style={{ flex: 1, minWidth: "160px" }}>
+      <VStack gap={1}>
+        <Text type="supporting">{label}</Text>
+        <Heading level={3} style={{ color: valueColor }}>
+          {value}
+        </Heading>
+        {subtext && <Text type="supporting">{subtext}</Text>}
+      </VStack>
+    </Card>
   );
 }
 
 function EquityDrawdownChart({
   equityCurve,
   drawdownCurve,
+  benchmarkCurve,
 }: {
   equityCurve?: EquityPoint[];
   drawdownCurve?: EquityPoint[];
+  benchmarkCurve?: EquityPoint[];
 }) {
   if (!equityCurve || equityCurve.length < 2) {
     return null;
   }
 
   const width = 800;
-  const height = 180;
+  const height = 200;
   const padding = 20;
 
-  const minEquity = Math.min(...equityCurve.map((p) => p.portfolio_value));
-  const maxEquity = Math.max(...equityCurve.map((p) => p.portfolio_value));
+  const allEquities = [
+    ...equityCurve.map((p) => p.equity),
+    ...(benchmarkCurve || []).map((p) => p.equity),
+  ];
+  const minEquity = Math.min(...allEquities);
+  const maxEquity = Math.max(...allEquities);
   const rangeEquity = maxEquity - minEquity || 1;
 
   const equityPoints = equityCurve
     .map((p, i) => {
       const x = padding + (i / (equityCurve.length - 1)) * (width - 2 * padding);
-      const y = height - padding - ((p.portfolio_value - minEquity) / rangeEquity) * (height - 2 * padding);
+      const y = height - padding - ((p.equity - minEquity) / rangeEquity) * (height - 2 * padding);
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(" ");
 
-  const minDd = drawdownCurve && drawdownCurve.length > 0
-    ? Math.min(...drawdownCurve.map((p) => p.portfolio_value))
-    : 0;
+  const benchPoints =
+    benchmarkCurve && benchmarkCurve.length === equityCurve.length
+      ? benchmarkCurve
+          .map((p, i) => {
+            const x = padding + (i / (benchmarkCurve.length - 1)) * (width - 2 * padding);
+            const y = height - padding - ((p.equity - minEquity) / rangeEquity) * (height - 2 * padding);
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+          })
+          .join(" ")
+      : "";
+
+  const minDd =
+    drawdownCurve && drawdownCurve.length > 0
+      ? Math.min(...drawdownCurve.map((p) => p.drawdown))
+      : 0;
 
   const ddPoints = (drawdownCurve || [])
     .map((p, i) => {
       const x = padding + (i / (drawdownCurve!.length - 1)) * (width - 2 * padding);
-      const y = minDd < 0
-        ? padding + (p.portfolio_value / minDd) * (height - 2 * padding)
-        : padding;
+      const y =
+        minDd < 0
+          ? padding + (p.drawdown / minDd) * (height - 2 * padding)
+          : padding;
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(" ");
 
   return (
-    <VStack
-      gap={2}
-      style={{
-        padding: "var(--spacing-4, 1rem)",
-        background: "var(--color-bg-subtle, #f8fafc)",
-        borderRadius: "var(--radius-medium, 0.5rem)",
-        border: "1px solid var(--color-border, #e2e8f0)",
-      }}
-    >
-      <HStack justify="between" align="center">
-        <Heading level={3}>Equity &amp; Drawdown Curve (Point-in-Time)</Heading>
-        <HStack gap={2}>
-          <Token label={`High: ${currencyFormat(maxEquity)}`} color="green" />
-          <Token label={`Low: ${currencyFormat(minEquity)}`} color="purple" />
+    <Card padding={4}>
+      <VStack gap={3}>
+        <HStack justify="between" align="center">
+          <Heading level={3}>Portfolio &amp; Benchmark Equity Curve (Point-in-Time)</Heading>
+          <HStack gap={2}>
+            <Token label={`High: ${currencyFormat(maxEquity)}`} color="green" />
+            <Token label={`Low: ${currencyFormat(minEquity)}`} color="purple" />
+          </HStack>
         </HStack>
-      </HStack>
 
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        style={{
-          width: "100%",
-          height: "180px",
-          overflow: "visible",
-        }}
-      >
-        {/* Zero baseline */}
-        <line
-          x1={padding}
-          y1={height - padding}
-          x2={width - padding}
-          y2={height - padding}
-          stroke="var(--color-border, #cbd5e1)"
-          strokeWidth="1"
-          strokeDasharray="4 4"
-        />
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          style={{
+            width: "100%",
+            height: "200px",
+            overflow: "visible",
+          }}
+        >
+          {/* Zero baseline */}
+          <line
+            x1={padding}
+            y1={height - padding}
+            x2={width - padding}
+            y2={height - padding}
+            stroke="var(--color-border)"
+            strokeWidth="1"
+            strokeDasharray="4 4"
+          />
 
-        {/* Equity Polyline */}
-        <polyline
-          fill="none"
-          stroke="var(--color-brand-primary, #3b82f6)"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          points={equityPoints}
-        />
+          {/* Benchmark Polyline if available */}
+          {benchPoints && (
+            <polyline
+              fill="none"
+              stroke="var(--color-warning, #f59e0b)"
+              strokeWidth="2"
+              strokeDasharray="4 2"
+              points={benchPoints}
+            />
+          )}
 
-        {/* Drawdown Polyline if available */}
-        {ddPoints && (
+          {/* Portfolio Equity Polyline */}
           <polyline
             fill="none"
-            stroke="var(--color-text-danger, #ef4444)"
-            strokeWidth="1.5"
-            strokeDasharray="3 3"
-            points={ddPoints}
+            stroke="var(--color-brand-primary, #3b82f6)"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            points={equityPoints}
           />
-        )}
-      </svg>
-      <HStack justify="between">
-        <Text type="supporting">{equityCurve[0]?.session_date}</Text>
-        <HStack gap={3}>
-          <Text type="supporting" style={{ color: "var(--color-brand-primary, #3b82f6)" }}>
-            — Portfolio Equity
-          </Text>
-          <Text type="supporting" style={{ color: "var(--color-text-danger, #ef4444)" }}>
-            --- Max Drawdown
-          </Text>
+
+          {/* Drawdown Polyline if available */}
+          {ddPoints && (
+            <polyline
+              fill="none"
+              stroke="var(--color-text-danger, #ef4444)"
+              strokeWidth="1.5"
+              strokeDasharray="3 3"
+              points={ddPoints}
+            />
+          )}
+        </svg>
+        <HStack justify="between">
+          <Text type="supporting">{equityCurve[0]?.session_date}</Text>
+          <HStack gap={3}>
+            <Text type="supporting" style={{ color: "var(--color-brand-primary, #3b82f6)" }}>
+              — Portfolio Equity
+            </Text>
+            {benchPoints && (
+              <Text type="supporting" style={{ color: "var(--color-warning, #f59e0b)" }}>
+                - - Benchmark
+              </Text>
+            )}
+            <Text type="supporting" style={{ color: "var(--color-text-danger, #ef4444)" }}>
+              --- Max Drawdown
+            </Text>
+          </HStack>
+          <Text type="supporting">{equityCurve[equityCurve.length - 1]?.session_date}</Text>
         </HStack>
-        <Text type="supporting">{equityCurve[equityCurve.length - 1]?.session_date}</Text>
-      </HStack>
-    </VStack>
+      </VStack>
+    </Card>
   );
 }
 
@@ -208,8 +230,9 @@ export function BacktestView({ project }: BacktestViewProps) {
   // Datasets & Securities
   const [datasets, setDatasets] = useState<CoverageResponse[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
-  const [securities, setSecurities] = useState<Security[]>([]);
-  const [symbol, setSymbol] = useState<string>("AAPL");
+  const [, setSecurities] = useState<Security[]>([]);
+  const [universeInput, setUniverseInput] = useState<string>("AAPL, MSFT");
+  const [benchmarkInput, setBenchmarkInput] = useState<string>("SPY");
 
   // Strategy & Execution Specification Inputs
   const [strategyName] = useState<string>("long_flat_moving_average");
@@ -247,7 +270,8 @@ export function BacktestView({ project }: BacktestViewProps) {
           setSelectedDatasetId(dsList[0].id);
         }
         if (secList.length > 0) {
-          setSymbol(secList[0].symbol);
+          const syms = secList.slice(0, 2).map((s) => s.symbol);
+          setUniverseInput(syms.join(", "));
         }
       } catch (err: unknown) {
         setMessage(err instanceof Error ? err.message : "Failed to load datasets.");
@@ -270,9 +294,9 @@ export function BacktestView({ project }: BacktestViewProps) {
           setCurrentResult(runs[0]);
         }
         if (runs.length >= 2 && compareRunIds.length === 0) {
-          setCompareRunIds([runs[0].run_id, runs[1].run_id]);
+          setCompareRunIds([runs[0].run_id || "", runs[1].run_id || ""]);
         } else if (runs.length === 1 && compareRunIds.length === 0) {
-          setCompareRunIds([runs[0].run_id]);
+          setCompareRunIds([runs[0].run_id || ""]);
         }
       })
       .catch((err: unknown) => {
@@ -285,7 +309,7 @@ export function BacktestView({ project }: BacktestViewProps) {
     loadSavedRuns();
   }, [project?.id]);
 
-  // When selected dataset changes, inspect dates and symbol
+  // When selected dataset changes, inspect dates
   const handleDatasetChange = async (dsId: string) => {
     setSelectedDatasetId(dsId);
     try {
@@ -297,14 +321,19 @@ export function BacktestView({ project }: BacktestViewProps) {
           setStartDate(first.date);
           setEndDate(last.date);
         }
-        if (typeof first.symbol === "string") {
-          setSymbol(first.symbol);
-        }
       }
     } catch {
       // Keep defaults
     }
   };
+
+  // Parse symbols from input
+  const symbolsList = useMemo(() => {
+    return universeInput
+      .split(/[,;\s]+/)
+      .map((s) => s.trim().toUpperCase())
+      .filter((s) => s.length > 0);
+  }, [universeInput]);
 
   // Run Backtest
   async function handleRunBacktest() {
@@ -318,8 +347,8 @@ export function BacktestView({ project }: BacktestViewProps) {
       setBannerType("warning");
       return;
     }
-    if (!symbol) {
-      setMessage("Specify a security ticker symbol.");
+    if (symbolsList.length === 0) {
+      setMessage("Specify at least one ticker symbol for the Universe.");
       setBannerType("warning");
       return;
     }
@@ -331,7 +360,8 @@ export function BacktestView({ project }: BacktestViewProps) {
         strategy_name: strategyName,
         strategy_revision: strategyRevision,
         dataset_version_id: selectedDatasetId,
-        symbol: symbol.trim().toUpperCase(),
+        symbols: symbolsList,
+        benchmark_symbol: benchmarkInput.trim() ? benchmarkInput.trim().toUpperCase() : undefined,
         start_date: startDate,
         end_date: endDate,
         starting_cash: parseFloat(startingCash) || 100000.0,
@@ -343,7 +373,6 @@ export function BacktestView({ project }: BacktestViewProps) {
         },
         execution: {
           schedule: "daily",
-          fill_price: "next_open",
           commission_rate: (parseFloat(commissionBps) || 0) / 10000,
           slippage_rate: (parseFloat(slippageBps) || 0) / 10000,
         },
@@ -363,7 +392,7 @@ export function BacktestView({ project }: BacktestViewProps) {
   const currentRunId = currentResult?.run_id;
 
   const comparisonRuns = useMemo(() => {
-    return savedRuns.filter((r) => compareRunIds.includes(r.run_id));
+    return savedRuns.filter((r) => r.run_id && compareRunIds.includes(r.run_id));
   }, [savedRuns, compareRunIds]);
 
   const toggleCompareRun = (runId: string) => {
@@ -371,6 +400,14 @@ export function BacktestView({ project }: BacktestViewProps) {
       curr.includes(runId) ? curr.filter((id) => id !== runId) : [...curr, runId]
     );
   };
+
+  const universeDisplay = useMemo(() => {
+    const rawU = (currentResult?.specification as any)?.universe;
+    if (Array.isArray(rawU) && rawU.length > 0) {
+      return rawU.join(", ");
+    }
+    return (currentResult?.specification as any)?.security_id || "—";
+  }, [currentResult]);
 
   return (
     <Layout
@@ -444,7 +481,7 @@ export function BacktestView({ project }: BacktestViewProps) {
               </Banner>
             )}
 
-            {/* Warnings Alert Banner (REP-002) */}
+            {/* Warnings Alert Banner */}
             {currentResult?.warnings && currentResult.warnings.length > 0 && (
               <Banner status="warning" title="Simulation Warnings">
                 <VStack gap={1}>
@@ -455,84 +492,96 @@ export function BacktestView({ project }: BacktestViewProps) {
               </Banner>
             )}
 
+            {/* Constraint Rejections Banner */}
+            {currentResult?.rejections && currentResult.rejections.length > 0 && (
+              <Banner status="warning" title="Long-Only Constraint Rejections">
+                <VStack gap={1}>
+                  {currentResult.rejections.map((r, idx) => (
+                    <Text key={idx}>
+                      <strong>{r.session_date} [{r.security_id}]:</strong> {r.reason}
+                    </Text>
+                  ))}
+                </VStack>
+              </Banner>
+            )}
+
             {/* Simulation Parameters & Execution Setup */}
-            <VStack
-              gap={3}
-              style={{
-                padding: "var(--spacing-4, 1rem)",
-                background: "var(--color-bg-surface, #ffffff)",
-                borderRadius: "var(--radius-medium, 0.5rem)",
-                border: "1px solid var(--color-border, #e2e8f0)",
-              }}
-            >
-              <Heading level={3}>Simulation Setup &amp; Parameters</Heading>
+            <Card padding={4}>
+              <VStack gap={3}>
+                <Heading level={3}>Multi-Security Simulation Setup &amp; Parameters</Heading>
 
-              <HStack gap={3} align="end">
-                <Selector
-                  label="Dataset Version"
-                  value={selectedDatasetId}
-                  onChange={handleDatasetChange}
-                  options={datasets.map((d) => ({
-                    value: d.id,
-                    label: `${d.source || "Dataset"} — ${d.id.slice(0, 16)}... (${d.total_bars ?? 0} bars)`,
-                  }))}
-                  placeholder="Select market dataset"
-                  hasSearch
-                />
-                <TextInput
-                  label="Security Symbol"
-                  value={symbol}
-                  onChange={(v) => setSymbol(typeof v === "string" ? v.toUpperCase() : "")}
-                />
-                <TextInput
-                  label="Start Date (YYYY-MM-DD)"
-                  value={startDate}
-                  onChange={(v) => setStartDate(typeof v === "string" ? v : "")}
-                />
-                <TextInput
-                  label="End Date (YYYY-MM-DD)"
-                  value={endDate}
-                  onChange={(v) => setEndDate(typeof v === "string" ? v : "")}
-                />
-              </HStack>
+                <HStack gap={3} align="end">
+                  <Selector
+                    label="Dataset Version"
+                    value={selectedDatasetId}
+                    onChange={handleDatasetChange}
+                    options={datasets.map((d) => ({
+                      value: d.id,
+                      label: `${d.source || "Dataset"} — ${d.id.slice(0, 16)}... (${d.total_bars ?? 0} bars)`,
+                    }))}
+                    placeholder="Select market dataset"
+                    hasSearch
+                  />
+                  <TextInput
+                    label="Universe (Comma-separated symbols)"
+                    value={universeInput}
+                    onChange={(v) => setUniverseInput(typeof v === "string" ? v : "")}
+                  />
+                  <TextInput
+                    label="Benchmark Symbol (Optional)"
+                    value={benchmarkInput}
+                    onChange={(v) => setBenchmarkInput(typeof v === "string" ? v : "")}
+                  />
+                  <TextInput
+                    label="Start Date (YYYY-MM-DD)"
+                    value={startDate}
+                    onChange={(v) => setStartDate(typeof v === "string" ? v : "")}
+                  />
+                  <TextInput
+                    label="End Date (YYYY-MM-DD)"
+                    value={endDate}
+                    onChange={(v) => setEndDate(typeof v === "string" ? v : "")}
+                  />
+                </HStack>
 
-              <HStack gap={3} align="end">
-                <TextInput
-                  label="Starting Cash ($ USD)"
-                  value={startingCash}
-                  onChange={(v) => setStartingCash(typeof v === "string" ? v : "")}
-                />
-                <TextInput
-                  label="Fast MA Period"
-                  value={fastPeriod}
-                  onChange={(v) => setFastPeriod(typeof v === "string" ? v : "")}
-                />
-                <TextInput
-                  label="Slow MA Period"
-                  value={slowPeriod}
-                  onChange={(v) => setSlowPeriod(typeof v === "string" ? v : "")}
-                />
-                <Selector
-                  label="Moving Average Type"
-                  value={maType}
-                  onChange={(v) => setMaType(v as "sma" | "ema")}
-                  options={[
-                    { value: "sma", label: "Simple Moving Average (SMA)" },
-                    { value: "ema", label: "Exponential Moving Average (EMA)" },
-                  ]}
-                />
-                <TextInput
-                  label="Commission (bps)"
-                  value={commissionBps}
-                  onChange={(v) => setCommissionBps(typeof v === "string" ? v : "")}
-                />
-                <TextInput
-                  label="Slippage (bps)"
-                  value={slippageBps}
-                  onChange={(v) => setSlippageBps(typeof v === "string" ? v : "")}
-                />
-              </HStack>
-            </VStack>
+                <HStack gap={3} align="end">
+                  <TextInput
+                    label="Starting Cash ($ USD)"
+                    value={startingCash}
+                    onChange={(v) => setStartingCash(typeof v === "string" ? v : "")}
+                  />
+                  <TextInput
+                    label="Fast MA Period"
+                    value={fastPeriod}
+                    onChange={(v) => setFastPeriod(typeof v === "string" ? v : "")}
+                  />
+                  <TextInput
+                    label="Slow MA Period"
+                    value={slowPeriod}
+                    onChange={(v) => setSlowPeriod(typeof v === "string" ? v : "")}
+                  />
+                  <Selector
+                    label="Moving Average Type"
+                    value={maType}
+                    onChange={(v) => setMaType(v as "sma" | "ema")}
+                    options={[
+                      { value: "sma", label: "Simple Moving Average (SMA)" },
+                      { value: "ema", label: "Exponential Moving Average (EMA)" },
+                    ]}
+                  />
+                  <TextInput
+                    label="Commission (bps)"
+                    value={commissionBps}
+                    onChange={(v) => setCommissionBps(typeof v === "string" ? v : "")}
+                  />
+                  <TextInput
+                    label="Slippage (bps)"
+                    value={slippageBps}
+                    onChange={(v) => setSlippageBps(typeof v === "string" ? v : "")}
+                  />
+                </HStack>
+              </VStack>
+            </Card>
 
             {/* Results Section */}
             {currentResult ? (
@@ -620,10 +669,11 @@ export function BacktestView({ project }: BacktestViewProps) {
                 {/* TAB: Overview */}
                 {activeTab === "overview" && (
                   <VStack gap={4}>
-                    {/* Time-series Equity & Drawdown Chart */}
+                    {/* Time-series Equity & Benchmark & Drawdown Chart */}
                     <EquityDrawdownChart
                       equityCurve={currentResult.equity_curve}
                       drawdownCurve={currentResult.drawdown_curve}
+                      benchmarkCurve={currentResult.benchmark_equity_curve}
                     />
 
                     <Heading level={3}>Execution Assumptions &amp; Strategy Specs</Heading>
@@ -637,12 +687,10 @@ export function BacktestView({ project }: BacktestViewProps) {
                             <Text weight="bold">{currentResult.strategy_revision}</Text>
                           </TableCell>
                           <TableCell>
-                            <Text type="supporting">Security Target</Text>
+                            <Text type="supporting">Universe</Text>
                           </TableCell>
                           <TableCell>
-                            <Text weight="bold">
-                              {currentResult.specification?.security_id}
-                            </Text>
+                            <Text weight="bold">{universeDisplay}</Text>
                           </TableCell>
                         </TableRow>
                         <TableRow>
@@ -651,8 +699,8 @@ export function BacktestView({ project }: BacktestViewProps) {
                           </TableCell>
                           <TableCell>
                             <Text>
-                              {currentResult.specification?.start_date} to{" "}
-                              {currentResult.specification?.end_date}
+                              {(currentResult.specification as any)?.start_date} to{" "}
+                              {(currentResult.specification as any)?.end_date}
                             </Text>
                           </TableCell>
                           <TableCell>
@@ -660,16 +708,18 @@ export function BacktestView({ project }: BacktestViewProps) {
                           </TableCell>
                           <TableCell>
                             <Text>
-                              {currencyFormat(currentResult.specification?.starting_cash)}
+                              {currencyFormat((currentResult.specification as any)?.starting_cash)}
                             </Text>
                           </TableCell>
                         </TableRow>
                         <TableRow>
                           <TableCell>
-                            <Text type="supporting">Execution Rule</Text>
+                            <Text type="supporting">Benchmark</Text>
                           </TableCell>
                           <TableCell>
-                            <Text>Next-Bar Open (Daily schedule, Point-in-Time)</Text>
+                            <Text weight="bold">
+                              {(currentResult.specification as any)?.benchmark_security_id || "None"}
+                            </Text>
                           </TableCell>
                           <TableCell>
                             <Text type="supporting">Commission &amp; Slippage</Text>
@@ -677,12 +727,12 @@ export function BacktestView({ project }: BacktestViewProps) {
                           <TableCell>
                             <Text>
                               {(
-                                (currentResult.specification?.execution?.commission_rate ?? 0) *
+                                ((currentResult.specification as any)?.execution?.commission_rate ?? 0) *
                                 10000
                               ).toFixed(1)}{" "}
                               bps comm. /{" "}
                               {(
-                                (currentResult.specification?.execution?.slippage_rate ?? 0) * 10000
+                                ((currentResult.specification as any)?.execution?.slippage_rate ?? 0) * 10000
                               ).toFixed(1)}{" "}
                               bps slip.
                             </Text>
@@ -690,45 +740,10 @@ export function BacktestView({ project }: BacktestViewProps) {
                         </TableRow>
                       </TableBody>
                     </Table>
-
-                    {/* Quick Equity Trajectory Table */}
-                    <Heading level={3}>Mark-to-Market Performance Snapshot</Heading>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHeaderCell>Session Date</TableHeaderCell>
-                          <TableHeaderCell>Target Weight</TableHeaderCell>
-                          <TableHeaderCell>Shares Held</TableHeaderCell>
-                          <TableHeaderCell>Close Price</TableHeaderCell>
-                          <TableHeaderCell>Cash Balance</TableHeaderCell>
-                          <TableHeaderCell>Position Value</TableHeaderCell>
-                          <TableHeaderCell>Portfolio Equity</TableHeaderCell>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {(currentResult.ledger ?? []).slice(-10).map((row, idx) => (
-                          <TableRow key={idx}>
-                            <TableCell>{row.session_date}</TableCell>
-                            <TableCell>
-                              {row.signal_weight !== null && row.signal_weight !== undefined
-                                ? percentage(row.signal_weight)
-                                : "—"}
-                            </TableCell>
-                            <TableCell>{decimalFormat(row.shares, 2)}</TableCell>
-                            <TableCell>{currencyFormat(row.close_price)}</TableCell>
-                            <TableCell>{currencyFormat(row.cash)}</TableCell>
-                            <TableCell>{currencyFormat(row.position_value)}</TableCell>
-                            <TableCell>
-                              <Text weight="bold">{currencyFormat(row.portfolio_value)}</Text>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
                   </VStack>
                 )}
 
-                {/* TAB: Closed Trades */}
+                {/* TAB: Trades */}
                 {activeTab === "trades" && (
                   <VStack gap={3}>
                     <Heading level={3}>Closed Round-Trip Trades</Heading>
@@ -743,16 +758,18 @@ export function BacktestView({ project }: BacktestViewProps) {
                             <TableHeaderCell>Entry Price</TableHeaderCell>
                             <TableHeaderCell>Exit Price</TableHeaderCell>
                             <TableHeaderCell>Quantity</TableHeaderCell>
-                            <TableHeaderCell>PnL ($)</TableHeaderCell>
+                            <TableHeaderCell>Total PnL</TableHeaderCell>
                             <TableHeaderCell>Return (%)</TableHeaderCell>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {currentResult.trades.map((tr) => (
                             <TableRow key={tr.trade_id}>
-                              <TableCell>{tr.trade_id}</TableCell>
                               <TableCell>
-                                <Text weight="bold">{tr.security_id}</Text>
+                                <Text weight="bold">{tr.trade_id}</Text>
+                              </TableCell>
+                              <TableCell>
+                                <Token label={tr.security_id} color="blue" />
                               </TableCell>
                               <TableCell>{tr.entry_date}</TableCell>
                               <TableCell>{tr.exit_date}</TableCell>
@@ -764,7 +781,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                                   weight="bold"
                                   style={{
                                     color:
-                                      (tr.pnl ?? 0) >= 0
+                                      tr.pnl >= 0
                                         ? "var(--color-text-success, #166534)"
                                         : "var(--color-text-danger, #991b1b)",
                                   }}
@@ -777,7 +794,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                                   weight="bold"
                                   style={{
                                     color:
-                                      (tr.return_pct ?? 0) >= 0
+                                      tr.return_pct >= 0
                                         ? "var(--color-text-success, #166534)"
                                         : "var(--color-text-danger, #991b1b)",
                                   }}
@@ -856,40 +873,43 @@ export function BacktestView({ project }: BacktestViewProps) {
                         <TableHeader>
                           <TableRow>
                             <TableHeaderCell>Session Date</TableHeaderCell>
-                            <TableHeaderCell>Target Weight</TableHeaderCell>
-                            <TableHeaderCell>Decision Time</TableHeaderCell>
-                            <TableHeaderCell>Shares Held</TableHeaderCell>
-                            <TableHeaderCell>Close Price</TableHeaderCell>
+                            <TableHeaderCell>Positions (Shares &amp; Value)</TableHeaderCell>
                             <TableHeaderCell>Cash Balance</TableHeaderCell>
-                            <TableHeaderCell>Position Value</TableHeaderCell>
+                            <TableHeaderCell>Total Position Value</TableHeaderCell>
                             <TableHeaderCell>Portfolio Value</TableHeaderCell>
+                            <TableHeaderCell>Gross Exposure</TableHeaderCell>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {currentResult.ledger.map((row, idx) => (
-                            <TableRow key={idx}>
-                              <TableCell>{row.session_date}</TableCell>
-                              <TableCell>
-                                {row.signal_weight !== null && row.signal_weight !== undefined
-                                  ? percentage(row.signal_weight)
-                                  : "—"}
-                              </TableCell>
-                              <TableCell>
-                                <Text type="supporting">
-                                  {row.signal_decision_time
-                                    ? new Date(row.signal_decision_time).toLocaleTimeString()
-                                    : "Close"}
-                                </Text>
-                              </TableCell>
-                              <TableCell>{decimalFormat(row.shares, 2)}</TableCell>
-                              <TableCell>{currencyFormat(row.close_price)}</TableCell>
-                              <TableCell>{currencyFormat(row.cash)}</TableCell>
-                              <TableCell>{currencyFormat(row.position_value)}</TableCell>
-                              <TableCell>
-                                <Text weight="bold">{currencyFormat(row.portfolio_value)}</Text>
-                              </TableCell>
-                            </TableRow>
-                          ))}
+                          {currentResult.ledger.map((row, idx) => {
+                            const posEntries = Object.entries(row.positions || {});
+                            return (
+                              <TableRow key={idx}>
+                                <TableCell>{row.session_date}</TableCell>
+                                <TableCell>
+                                  {posEntries.length > 0 ? (
+                                    <HStack gap={2} wrap>
+                                      {posEntries.map(([sym, pos]) => (
+                                        <Token
+                                          key={sym}
+                                          label={`${sym}: ${decimalFormat(pos.shares, 2)} sh ($${decimalFormat(pos.position_value, 0)})`}
+                                          color={pos.shares > 0 ? "blue" : "default"}
+                                        />
+                                      ))}
+                                    </HStack>
+                                  ) : (
+                                    <Text type="supporting">Flat</Text>
+                                  )}
+                                </TableCell>
+                                <TableCell>{currencyFormat(row.cash)}</TableCell>
+                                <TableCell>{currencyFormat(row.position_value)}</TableCell>
+                                <TableCell>
+                                  <Text weight="bold">{currencyFormat(row.portfolio_value)}</Text>
+                                </TableCell>
+                                <TableCell>{percentage(row.gross_exposure)}</TableCell>
+                              </TableRow>
+                            );
+                          })}
                         </TableBody>
                       </Table>
                     ) : (
@@ -922,12 +942,20 @@ export function BacktestView({ project }: BacktestViewProps) {
                         </TableRow>
                         <TableRow>
                           <TableCell>
+                            <Text type="supporting">Universe</Text>
+                          </TableCell>
+                          <TableCell>
+                            <Text weight="bold">{universeDisplay}</Text>
+                          </TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>
                             <Text type="supporting">Dataset Version IDs</Text>
                           </TableCell>
                           <TableCell>
                             <Text>
-                              {currentResult.manifest?.dataset_versions?.join(", ") ||
-                                currentResult.specification?.dataset_version_id ||
+                              {(currentResult.manifest as any)?.dataset_versions?.join(", ") ||
+                                (currentResult.specification as any)?.dataset_version_id ||
                                 "N/A"}
                             </Text>
                           </TableCell>
@@ -960,21 +988,26 @@ export function BacktestView({ project }: BacktestViewProps) {
                   </VStack>
                 )}
 
-                {/* TAB: Compare Runs (REP-001) */}
+                {/* TAB: Compare Runs */}
                 {activeTab === "compare" && (
                   <VStack gap={4}>
                     <HStack justify="between" align="center">
                       <Heading level={3}>Side-by-Side Run Comparison</Heading>
                       <HStack gap={2}>
                         {savedRuns.map((r) => {
-                          const isSelected = compareRunIds.includes(r.run_id);
+                          const rId = r.run_id || "";
+                          const isSelected = compareRunIds.includes(rId);
+                          const specObj = r.specification as any;
+                          const uDisplay = Array.isArray(specObj?.universe)
+                            ? specObj.universe.join(",")
+                            : specObj?.security_id || "Run";
                           return (
                             <Button
-                              key={r.run_id}
-                              label={`${r.run_id.slice(0, 8)} (${r.specification?.security_id})`}
+                              key={rId}
+                              label={`${rId.slice(0, 8)} (${uDisplay})`}
                               variant={isSelected ? "primary" : "secondary"}
                               size="sm"
-                              onClick={() => toggleCompareRun(r.run_id)}
+                              onClick={() => toggleCompareRun(rId)}
                             />
                           );
                         })}
@@ -989,8 +1022,11 @@ export function BacktestView({ project }: BacktestViewProps) {
                             {comparisonRuns.map((r) => (
                               <TableHeaderCell key={r.run_id}>
                                 <VStack gap={0}>
-                                  <Text weight="bold">{r.run_id.slice(0, 8)}</Text>
-                                  <Text type="supporting">{r.specification?.security_id}</Text>
+                                  <Text weight="bold">{r.run_id?.slice(0, 8)}</Text>
+                                  <Text type="supporting">
+                                    {(r.specification as any)?.universe?.join(", ") ||
+                                      (r.specification as any)?.security_id}
+                                  </Text>
                                 </VStack>
                               </TableHeaderCell>
                             ))}
@@ -1012,6 +1048,14 @@ export function BacktestView({ project }: BacktestViewProps) {
                                 >
                                   {percentage(r.metrics.total_return)}
                                 </Text>
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                          <TableRow>
+                            <TableCell><Text type="supporting">Benchmark Relative</Text></TableCell>
+                            {comparisonRuns.map((r) => (
+                              <TableCell key={r.run_id}>
+                                {percentage(r.metrics.benchmark_relative_return)}
                               </TableCell>
                             ))}
                           </TableRow>
@@ -1077,8 +1121,8 @@ export function BacktestView({ project }: BacktestViewProps) {
                             <TableCell><Text type="supporting">Fast / Slow MA</Text></TableCell>
                             {comparisonRuns.map((r) => (
                               <TableCell key={r.run_id}>
-                                {r.specification?.parameters?.fast_period ?? "—"} /{" "}
-                                {r.specification?.parameters?.slow_period ?? "—"}
+                                {(r.specification as any)?.parameters?.fast_period ?? "—"} /{" "}
+                                {(r.specification as any)?.parameters?.slow_period ?? "—"}
                               </TableCell>
                             ))}
                           </TableRow>
@@ -1087,7 +1131,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                             {comparisonRuns.map((r) => (
                               <TableCell key={r.run_id}>
                                 <Text type="supporting">
-                                  {r.specification?.start_date} to {r.specification?.end_date}
+                                  {(r.specification as any)?.start_date} to {(r.specification as any)?.end_date}
                                 </Text>
                               </TableCell>
                             ))}
@@ -1125,40 +1169,47 @@ export function BacktestView({ project }: BacktestViewProps) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {savedRuns.map((run) => (
-                    <TableRow
-                      key={run.run_id}
-                      onClick={() => setCurrentResult(run)}
-                      style={{
-                        cursor: "pointer",
-                        background:
-                          run.run_id === currentRunId
-                            ? "var(--color-bg-subtle, #f1f5f9)"
-                            : undefined,
-                      }}
-                    >
-                      <TableCell>
-                        <VStack gap={0}>
-                          <Text weight="bold">{run.run_id.slice(0, 8)}</Text>
-                          <Text type="supporting">{run.specification?.security_id}</Text>
-                        </VStack>
-                      </TableCell>
-                      <TableCell>
-                        <Text
-                          weight="bold"
-                          style={{
-                            color:
-                              (run.metrics.total_return ?? 0) >= 0
-                                ? "var(--color-text-success, #166534)"
-                                : "var(--color-text-danger, #991b1b)",
-                          }}
-                        >
-                          {percentage(run.metrics.total_return)}
-                        </Text>
-                      </TableCell>
-                      <TableCell>{decimalFormat(run.metrics.sharpe_ratio)}</TableCell>
-                    </TableRow>
-                  ))}
+                  {savedRuns.map((run) => {
+                    const rId = run.run_id || "";
+                    const specObj = run.specification as any;
+                    const uDisplay = Array.isArray(specObj?.universe)
+                      ? specObj.universe.join(", ")
+                      : specObj?.security_id;
+                    return (
+                      <TableRow
+                        key={rId}
+                        onClick={() => setCurrentResult(run)}
+                        style={{
+                          cursor: "pointer",
+                          background:
+                            rId === currentRunId
+                              ? "var(--color-bg-subtle, #f1f5f9)"
+                              : undefined,
+                        }}
+                      >
+                        <TableCell>
+                          <VStack gap={0}>
+                            <Text weight="bold">{rId.slice(0, 8)}</Text>
+                            <Text type="supporting">{uDisplay}</Text>
+                          </VStack>
+                        </TableCell>
+                        <TableCell>
+                          <Text
+                            weight="bold"
+                            style={{
+                              color:
+                                (run.metrics.total_return ?? 0) >= 0
+                                  ? "var(--color-text-success, #166534)"
+                                  : "var(--color-text-danger, #991b1b)",
+                            }}
+                          >
+                            {percentage(run.metrics.total_return)}
+                          </Text>
+                        </TableCell>
+                        <TableCell>{decimalFormat(run.metrics.sharpe_ratio)}</TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             ) : (
