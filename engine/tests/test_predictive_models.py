@@ -195,6 +195,14 @@ def test_run_records_chronological_periods_and_labelled_metrics() -> None:
         "initial_feature_and_preprocessing_fit_scope": "training_only",
         "future_labels_excluded_from_each_training_window": True,
         "validation_and_test_labels_excluded_from_initial_training": True,
+        "fold_training_eligibility": (
+            "feature_session_before_prediction_session_and_label_available_by_"
+            "prediction_session"
+        ),
+        "fold_feature_and_preprocessing_policy": (
+            "causal_features_from_session_history_and_learned_state_fit_on_"
+            "each_fold_training_window"
+        ),
     }
 
 
@@ -273,6 +281,7 @@ def test_expanding_and_rolling_modes_fit_each_fold_without_current_label() -> No
 
         assert result.evaluation.mode == mode
         assert len(result.fold_artifacts) > 1
+        assert len(result.evaluation.folds) == len(result.fold_artifacts) - 1
         labelled_predictions = [
             prediction
             for prediction in result.predictions
@@ -292,6 +301,107 @@ def test_expanding_and_rolling_modes_fit_each_fold_without_current_label() -> No
             else "rolling_window_before_target"
         )
         assert result.evaluation.splits[2].fit_scope == expected_scope
+        assert all(
+            fold.prediction_session_date == fold.prediction.session_date
+            and fold.training_end < fold.prediction_session_date
+            and fold.metrics["mae"] >= 0
+            and fold.metrics["rmse"] >= 0
+            and fold.artifact.feature_definition["uses_future_rows_for_feature"] is False
+            and fold.artifact.feature_definition["fit_scope"] == "training_only"
+            and fold.artifact.preprocessing["fit_scope"] == "training_only"
+            and fold.artifact.preprocessing["uses_validation_or_test"] is False
+            for fold in result.evaluation.folds
+        )
+
+
+@pytest.mark.parametrize("evaluation_mode", ["expanding", "rolling"])
+def test_later_walk_forward_observations_do_not_change_earlier_folds(
+    evaluation_mode: str,
+) -> None:
+    bars = _bars(
+        [
+            100.0,
+            102.0,
+            101.0,
+            105.0,
+            104.0,
+            108.0,
+            107.0,
+            111.0,
+            115.0,
+            113.0,
+            118.0,
+            120.0,
+            119.0,
+            123.0,
+            126.0,
+            128.0,
+            125.0,
+            130.0,
+        ]
+    )
+    parameters = {
+        "momentum_period": 2,
+        "training_window": 4,
+        "evaluation_mode": evaluation_mode,
+    }
+    baseline = run_predictive_model("momentum_return_regression", bars, parameters)
+    changed_from = baseline.evaluation.folds[2].target_date
+    assert changed_from is not None
+    changed_bars = [
+        replace(bar, close=900.0, open=900.0, high=900.0, low=900.0)
+        if bar.session_date >= changed_from
+        else bar
+        for bar in bars
+    ]
+
+    changed = run_predictive_model("momentum_return_regression", changed_bars, parameters)
+
+    for before, after in zip(
+        baseline.evaluation.folds[:2], changed.evaluation.folds[:2], strict=True
+    ):
+        assert after.artifact.to_json() == before.artifact.to_json()
+        assert after.prediction.predicted_value == pytest.approx(
+            before.prediction.predicted_value
+        )
+        assert after.metrics == before.metrics
+
+
+def test_walk_forward_eligibility_excludes_unavailable_horizon_labels() -> None:
+    bars = _bars(
+        [
+            100.0,
+            102.0,
+            101.0,
+            105.0,
+            104.0,
+            108.0,
+            107.0,
+            111.0,
+            115.0,
+            113.0,
+            118.0,
+            120.0,
+            119.0,
+            123.0,
+            126.0,
+        ]
+    )
+    result = run_predictive_model(
+        "momentum_return_regression",
+        bars,
+        {
+            "momentum_period": 2,
+            "training_window": 3,
+            "evaluation_mode": "rolling",
+        },
+    )
+
+    assert all(
+        fold.training_end < fold.prediction_session_date
+        and fold.training_end < (fold.target_date or "")
+        for fold in result.evaluation.folds
+    )
 
 
 def test_run_does_not_return_predictions_from_before_the_training_end() -> None:

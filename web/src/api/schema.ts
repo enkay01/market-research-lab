@@ -1753,6 +1753,35 @@ export interface components {
                 [key: string]: components["schemas"]["JsonValue-Output"];
             };
         };
+        /** PredictiveModelFoldResponse */
+        PredictiveModelFoldResponse: {
+            /** Fold Index */
+            fold_index: number;
+            /**
+             * Period
+             * @enum {string}
+             */
+            period: "validation" | "test";
+            /** Prediction Session Date */
+            prediction_session_date: string;
+            /** Target Date */
+            target_date: string | null;
+            /** Training Start */
+            training_start: string;
+            /** Training End */
+            training_end: string;
+            /** Training Observations */
+            training_observations: number;
+            /** Fit Scope */
+            fit_scope: string;
+            artifact: components["schemas"]["PredictiveModelArtifactResponse"];
+            /** Prediction */
+            prediction: components["schemas"]["PredictiveModelPredictionResponse"] | components["schemas"]["PredictiveModelForecastResponse"];
+            /** Metrics */
+            metrics: {
+                [key: string]: number;
+            };
+        };
         /** PredictiveModelForecastResponse */
         PredictiveModelForecastResponse: {
             /** Session Date */
@@ -1924,6 +1953,8 @@ export interface components {
             period_metrics?: components["schemas"]["PredictiveModelPeriodMetricsResponse"][];
             /** Fold Artifacts */
             fold_artifacts?: components["schemas"]["PredictiveModelArtifactResponse"][];
+            /** Folds */
+            folds?: components["schemas"]["PredictiveModelFoldResponse"][];
         };
         /** PredictiveModelSplitResponse */
         PredictiveModelSplitResponse: {

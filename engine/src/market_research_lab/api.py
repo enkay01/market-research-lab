@@ -61,6 +61,7 @@ from .predictive_models import (
     PredictiveModelCalculation,
     PredictiveModelCalculationError,
     PredictiveModelDataError,
+    PredictiveModelFold,
     PredictiveModelForecast,
     PredictiveModelMetadata,
     PredictiveModelNotFoundError,
@@ -677,6 +678,20 @@ class PredictiveModelForecastResponse(BaseModel):
     period: None = None
 
 
+class PredictiveModelFoldResponse(BaseModel):
+    fold_index: int
+    period: Literal["validation", "test"]
+    prediction_session_date: str
+    target_date: str | None
+    training_start: str
+    training_end: str
+    training_observations: int
+    fit_scope: str
+    artifact: PredictiveModelArtifactResponse
+    prediction: PredictiveModelPredictionResponse | PredictiveModelForecastResponse
+    metrics: dict[str, float]
+
+
 class PredictiveModelRunResponse(BaseModel):
     run_id: str | None = None
     model_revision: str | None = None
@@ -707,6 +722,7 @@ class PredictiveModelRunResponse(BaseModel):
     splits: list[PredictiveModelSplitResponse] = Field(default_factory=list)
     period_metrics: list[PredictiveModelPeriodMetricsResponse] = Field(default_factory=list)
     fold_artifacts: list[PredictiveModelArtifactResponse] = Field(default_factory=list)
+    folds: list[PredictiveModelFoldResponse] = Field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -1082,6 +1098,22 @@ def _predictive_prediction_response(
     )
 
 
+def _predictive_fold_response(fold: PredictiveModelFold) -> PredictiveModelFoldResponse:
+    return PredictiveModelFoldResponse(
+        fold_index=fold.fold_index,
+        period=fold.period,
+        prediction_session_date=fold.prediction_session_date,
+        target_date=fold.target_date,
+        training_start=fold.training_start,
+        training_end=fold.training_end,
+        training_observations=fold.training_observations,
+        fit_scope=fold.fit_scope,
+        artifact=_predictive_artifact_response(fold.artifact),
+        prediction=_predictive_prediction_response(fold.prediction),
+        metrics=fold.metrics,
+    )
+
+
 def _predictive_run_response(
     calculation: PredictiveModelCalculation,
     context: PredictiveModelResponseContext,
@@ -1139,6 +1171,7 @@ def _predictive_run_response(
             _predictive_artifact_response(fold_artifact)
             for fold_artifact in calculation.fold_artifacts
         ],
+        folds=[_predictive_fold_response(fold) for fold in calculation.evaluation.folds],
     )
 
 
@@ -2922,6 +2955,7 @@ def create_app(
                 fold_artifacts=[
                     fold_artifact.to_json() for fold_artifact in calculation.fold_artifacts
                 ],
+                folds=[fold.to_json() for fold in calculation.evaluation.folds],
             ),
         )
         return base_response.model_copy(update={"run_id": run_id})

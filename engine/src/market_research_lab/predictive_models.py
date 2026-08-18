@@ -39,6 +39,16 @@ EvaluationMode = Literal["holdout", "expanding", "rolling"]
 
 
 @dataclass(frozen=True)
+class PredictiveModelFoldTrainingPolicy:
+    """Typed options that define one fold's eligible training window."""
+
+    decision_session_date: str
+    initial_training_start: str
+    training_window: int
+    evaluation_mode: Literal["expanding", "rolling"]
+
+
+@dataclass(frozen=True)
 class PredictiveModelParameter:
     """Typed metadata for one user-configurable Predictive Model parameter."""
 
@@ -200,12 +210,46 @@ class PredictiveModelPeriodMetrics:
 
 
 @dataclass(frozen=True)
+class PredictiveModelFold:
+    """One walk-forward prediction and the artifact that produced it."""
+
+    fold_index: int
+    period: Literal["validation", "test"]
+    prediction_session_date: str
+    target_date: str | None
+    training_start: str
+    training_end: str
+    training_observations: int
+    fit_scope: str
+    artifact: FittedModelArtifact
+    prediction: PredictiveModelOutput
+    metrics: dict[str, float]
+
+    def to_json(self) -> dict[str, JsonValue]:
+        """Return fold provenance, prediction, and single-observation errors."""
+        return {
+            "fold_index": self.fold_index,
+            "period": self.period,
+            "prediction_session_date": self.prediction_session_date,
+            "target_date": self.target_date,
+            "training_start": self.training_start,
+            "training_end": self.training_end,
+            "training_observations": self.training_observations,
+            "fit_scope": self.fit_scope,
+            "artifact": self.artifact.to_json(),
+            "prediction": self.prediction.to_json(),
+            "metrics": self.metrics,
+        }
+
+
+@dataclass(frozen=True)
 class PredictiveModelEvaluation:
     """Chronological split and metric records for one model calculation."""
 
     mode: EvaluationMode
     splits: tuple[PredictiveModelSplit, ...]
     period_metrics: tuple[PredictiveModelPeriodMetrics, ...]
+    folds: tuple[PredictiveModelFold, ...] = ()
 
     def to_json(self) -> dict[str, JsonValue]:
         """Return the complete evaluation record for a Run manifest."""
@@ -213,10 +257,19 @@ class PredictiveModelEvaluation:
             "mode": self.mode,
             "splits": [split.to_json() for split in self.splits],
             "period_metrics": [metrics.to_json() for metrics in self.period_metrics],
+            "folds": [fold.to_json() for fold in self.folds],
             "leakage_policy": {
                 "initial_feature_and_preprocessing_fit_scope": "training_only",
                 "future_labels_excluded_from_each_training_window": True,
                 "validation_and_test_labels_excluded_from_initial_training": True,
+                "fold_training_eligibility": (
+                    "feature_session_before_prediction_session_and_label_available_by_"
+                    "prediction_session"
+                ),
+                "fold_feature_and_preprocessing_policy": (
+                    "causal_features_from_session_history_and_learned_state_fit_on_"
+                    "each_fold_training_window"
+                ),
             },
         }
 
@@ -546,7 +599,10 @@ PREDICTIVE_MODEL_REGISTRY: dict[str, PredictiveModelSpec] = {
                     name="training_window",
                     param_type="int",
                     default=252,
-                    description="Maximum number of latest labelled observations used for fitting.",
+                    description=(
+                        "Initial number of latest labelled observations used for fitting; "
+                        "rolling keeps this size and expanding grows from it."
+                    ),
                     min_value=2,
                     max_value=10_000,
                 ),
@@ -611,7 +667,7 @@ def fit_model(
     parameters: Mapping[str, JsonValue],
     seed: int | None = None,
 ) -> FittedModelArtifact:
-    """Fit a registered Predictive Model on an already-bounded training frame."""
+    """Fit on a bounded frame; learned feature or preprocessing state stays local."""
     if seed is not None and (isinstance(seed, bool) or seed < 0):
         raise PredictiveModelParameterError("seed must be a non-negative integer when supplied.")
     spec = get_predictive_model_spec(name)
@@ -734,6 +790,29 @@ def _chronological_split(
     )
 
 
+def _eligible_training_frame(
+    labelled_frame: pd.DataFrame,
+    policy: PredictiveModelFoldTrainingPolicy,
+) -> pd.DataFrame:
+    """Return labels known before a prediction session for one walk-forward fold."""
+    eligible = labelled_frame.loc[
+        (labelled_frame["session_date"] < policy.decision_session_date)
+        & (labelled_frame["target_date"] <= policy.decision_session_date)
+    ]
+    if policy.evaluation_mode == "expanding":
+        eligible = eligible.loc[
+            eligible["session_date"] >= policy.initial_training_start
+        ]
+    else:
+        eligible = eligible.tail(policy.training_window)
+    eligible = eligible.reset_index(drop=True)
+    if len(eligible) < 2:
+        raise PredictiveModelCalculationError(
+            "Each walk-forward fold requires at least two eligible training observations."
+        )
+    return eligible
+
+
 def _period_metrics(
     period: SplitName,
     predictions: Sequence[PredictiveModelOutput],
@@ -764,6 +843,15 @@ def _period_metrics(
             "r2": 1.0 - residual_sum / total_sum if total_sum > 1e-15 else 0.0,
         },
     )
+
+
+def _fold_metrics(prediction: PredictiveModelOutput) -> dict[str, float]:
+    """Return honest single-observation errors for one walk-forward fold."""
+    if not isinstance(prediction, PredictiveModelPrediction):
+        return {}
+    error = float(prediction.predicted_value) - float(prediction.actual_target)
+    absolute_error = abs(error)
+    return {"mae": absolute_error, "rmse": absolute_error}
 
 
 def _labelled_predictions(
@@ -820,10 +908,6 @@ def run_predictive_model(
         .sort_values("target_date")
         .reset_index(drop=True)
     )
-    target_positions = {
-        str(target_date): index
-        for index, target_date in enumerate(labelled_frame["target_date"].tolist())
-    }
     period_by_target: dict[str, SplitName] = {}
     for period_name in ("training", "validation", "test"):
         period_frame = split_frames[period_name]
@@ -832,28 +916,66 @@ def run_predictive_model(
 
     prediction_by_session: dict[str, PredictiveModelOutput] = {}
     fold_artifacts = [artifact]
+    fold_records: list[PredictiveModelFold] = []
     if evaluation_mode == "holdout":
         evaluated_predictions = predict(artifact, frame)
         prediction_by_session = {
             prediction.session_date: prediction for prediction in evaluated_predictions
         }
     else:
+        initial_training_start = artifact.training_start
+        fit_scope_by_period = {
+            split.period: split.fit_scope for split in chronological_split.periods
+        }
+        fold_index = 1
         for period_name in ("validation", "test"):
             period_frame = split_frames[period_name]
             for _, row in period_frame.iterrows():
-                target_date = str(row["target_date"])
-                target_position = target_positions[target_date]
-                fitting_frame = labelled_frame.iloc[:target_position]
-                if evaluation_mode == "rolling":
-                    fitting_frame = fitting_frame.tail(training_window)
+                prediction_session_date = str(row["session_date"])
+                fitting_frame = _eligible_training_frame(
+                    labelled_frame,
+                    PredictiveModelFoldTrainingPolicy(
+                        decision_session_date=prediction_session_date,
+                        initial_training_start=initial_training_start,
+                        training_window=training_window,
+                        evaluation_mode=evaluation_mode,
+                    ),
+                )
                 fold_artifact = fit_model(name, fitting_frame, resolved_parameters, seed)
                 fold_artifacts.append(fold_artifact)
                 fold_prediction = predict(fold_artifact, pd.DataFrame([row]))
                 if not fold_prediction:
                     raise PredictiveModelCalculationError(
-                        f"No prediction was produced for {period_name} target {target_date}."
+                        f"No prediction was produced for {period_name} session "
+                        f"{prediction_session_date}."
                     )
-                prediction_by_session[fold_prediction[0].session_date] = fold_prediction[0]
+                raw_prediction = fold_prediction[0]
+                prediction = (
+                    replace(raw_prediction, period=period_name)
+                    if isinstance(raw_prediction, PredictiveModelPrediction)
+                    else raw_prediction
+                )
+                prediction_by_session[prediction.session_date] = prediction
+                fold_records.append(
+                    PredictiveModelFold(
+                        fold_index=fold_index,
+                        period=period_name,
+                        prediction_session_date=prediction.session_date,
+                        target_date=(
+                            prediction.target_date
+                            if isinstance(prediction, PredictiveModelPrediction)
+                            else None
+                        ),
+                        training_start=fold_artifact.training_start,
+                        training_end=fold_artifact.training_end,
+                        training_observations=fold_artifact.training_observations,
+                        fit_scope=fit_scope_by_period[period_name],
+                        artifact=fold_artifact,
+                        prediction=prediction,
+                        metrics=_fold_metrics(prediction),
+                    )
+                )
+                fold_index += 1
 
     final_artifact = fold_artifacts[-1]
     predictions: list[PredictiveModelOutput] = []
@@ -868,7 +990,7 @@ def run_predictive_model(
                 continue
             prediction = final_prediction[0]
         if isinstance(prediction, PredictiveModelPrediction):
-            period = period_by_target.get(prediction.target_date)
+            period = prediction.period or period_by_target.get(prediction.target_date)
             predictions.append(replace(prediction, period=period))
         else:
             predictions.append(prediction)
@@ -900,6 +1022,7 @@ def run_predictive_model(
         mode=evaluation_mode,
         splits=chronological_split.periods,
         period_metrics=period_metrics,
+        folds=tuple(fold_records),
     )
     return PredictiveModelCalculation(
         metadata=spec.metadata,

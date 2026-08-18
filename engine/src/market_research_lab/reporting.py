@@ -407,6 +407,8 @@ def generate_predictive_model_html_report(
     splits = splits_raw if isinstance(splits_raw, list) else []
     metrics_raw = evaluation.get("period_metrics") or result_data.get("period_metrics")
     period_metrics = metrics_raw if isinstance(metrics_raw, list) else []
+    folds_raw = evaluation.get("folds") or result_data.get("folds")
+    folds = folds_raw if isinstance(folds_raw, list) else []
     parameters_raw = manifest_data.get("parameters")
     parameters = parameters_raw if isinstance(parameters_raw, dict) else {}
     preprocessing = (
@@ -470,9 +472,42 @@ def generate_predictive_model_html_report(
                 f"<td>{html.escape(str(split.get('fit_scope', '')))}</td>"
                 "</tr>"
             )
-    doc.extend(
-        ["    </tbody>", "  </table>", "  <h2>Period Metrics</h2>", "  <table>"]
-    )
+    doc.extend(["    </tbody>", "  </table>"])
+    if folds:
+        doc.extend(
+            [
+                "  <h2>Walk-forward Folds</h2>",
+                "  <table>",
+                "    <thead><tr><th>Fold</th><th>Period</th><th>Prediction Session</th>"
+                "<th>Target Date</th><th>Training Feature Dates</th>"
+                "<th>Training Observations</th><th>Fit Scope</th><th>MAE</th>"
+                "<th>RMSE</th></tr></thead>",
+                "    <tbody>",
+            ]
+        )
+        for fold in folds:
+            if not isinstance(fold, dict):
+                continue
+            fold_metrics = fold.get("metrics")
+            fold_metrics_dict = fold_metrics if isinstance(fold_metrics, dict) else {}
+            period = fold.get("period", "")
+            period_label = "out-of-sample" if period == "test" else period
+            doc.append(
+                "      <tr>"
+                f"<td>{html.escape(str(fold.get('fold_index', '')))}</td>"
+                f"<td>{html.escape(str(period_label))}</td>"
+                f"<td>{html.escape(str(fold.get('prediction_session_date', '')))}</td>"
+                f"<td>{html.escape(str(fold.get('target_date', '')))}</td>"
+                f"<td>{html.escape(str(fold.get('training_start', '')))} to "
+                f"{html.escape(str(fold.get('training_end', '')))}</td>"
+                f"<td>{html.escape(str(fold.get('training_observations', '')))}</td>"
+                f"<td>{html.escape(str(fold.get('fit_scope', '')))}</td>"
+                f"<td>{html.escape(str(fold_metrics_dict.get('mae', '')))}</td>"
+                f"<td>{html.escape(str(fold_metrics_dict.get('rmse', '')))}</td>"
+                "</tr>"
+            )
+        doc.extend(["    </tbody>", "  </table>"])
+    doc.extend(["  <h2>Period Metrics</h2>", "  <table>"])
     doc.append(
         "    <thead><tr><th>Period</th><th>Observations</th><th>Metric</th>"
         "<th>Value</th></tr></thead>"
@@ -558,6 +593,45 @@ def generate_predictive_model_csv(result_data: dict[str, JsonValue]) -> str:
                 [
                     period_label,
                     period_metric.get("observations", ""),
+                    metric_name,
+                    metric_value,
+                ]
+            )
+    writer.writerow([])
+    writer.writerow(
+        [
+            "Fold",
+            "Period",
+            "Prediction Session",
+            "Target Date",
+            "Training Start",
+            "Training End",
+            "Training Observations",
+            "Fit Scope",
+            "Metric",
+            "Value",
+        ]
+    )
+    folds_raw = result_data.get("folds")
+    folds = folds_raw if isinstance(folds_raw, list) else []
+    for fold in folds:
+        if not isinstance(fold, dict):
+            continue
+        metrics_raw = fold.get("metrics")
+        fold_metrics = metrics_raw if isinstance(metrics_raw, dict) else {}
+        for metric_name, metric_value in fold_metrics.items():
+            period = fold.get("period", "")
+            period_label = "out-of-sample" if period == "test" else period
+            writer.writerow(
+                [
+                    fold.get("fold_index", ""),
+                    period_label,
+                    fold.get("prediction_session_date", ""),
+                    fold.get("target_date", ""),
+                    fold.get("training_start", ""),
+                    fold.get("training_end", ""),
+                    fold.get("training_observations", ""),
+                    fold.get("fit_scope", ""),
                     metric_name,
                     metric_value,
                 ]
