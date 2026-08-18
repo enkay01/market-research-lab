@@ -266,6 +266,10 @@ class PredictiveModelEvaluation:
                     "feature_session_before_prediction_session_and_label_available_by_"
                     "prediction_session"
                 ),
+                "fold_feature_and_preprocessing_policy": (
+                    "causal_features_from_session_history_and_learned_state_fit_on_"
+                    "each_fold_training_window"
+                ),
             },
         }
 
@@ -663,7 +667,7 @@ def fit_model(
     parameters: Mapping[str, JsonValue],
     seed: int | None = None,
 ) -> FittedModelArtifact:
-    """Fit a registered Predictive Model on an already-bounded training frame."""
+    """Fit on a bounded frame; learned feature or preprocessing state stays local."""
     if seed is not None and (isinstance(seed, bool) or seed < 0):
         raise PredictiveModelParameterError("seed must be a non-negative integer when supplied.")
     spec = get_predictive_model_spec(name)

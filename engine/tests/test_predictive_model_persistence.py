@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from market_research_lab.projects import (
@@ -64,15 +65,20 @@ def test_predictive_model_run_persists_artifact_predictions_and_provenance(
     run_root = tmp_path / "projects" / project.id / "runs" / run_id
 
     assert (run_root / "status.json").read_text(encoding="utf-8").find('"completed"') >= 0
-    manifest = (run_root / "manifest.json").read_text(encoding="utf-8")
-    assert "predictive_model" in manifest
-    assert "momentum_return_regression:v1" in manifest
-    assert "dataset-v1" in manifest
-    assert "2024-01-03T00:00:00+00:00" in manifest
+    manifest = json.loads((run_root / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["kind"] == "predictive_model"
+    assert manifest["definition_revisions"] == ["momentum_return_regression:v1"]
+    assert manifest["dataset_versions"] == ["dataset-v1"]
+    assert manifest["completed_at"] == "2024-01-03T12:00:00+00:00"
+    assert "folds" not in manifest["evaluation"]
     assert (run_root / "artifacts" / "fitted_model.json").exists()
     assert (run_root / "artifacts" / "predictions.json").exists()
     assert (run_root / "artifacts" / "fold_artifacts.json").exists()
     assert (run_root / "artifacts" / "folds.json").exists()
+    predictive_model = json.loads(
+        (run_root / "artifacts" / "predictive_model.json").read_text(encoding="utf-8")
+    )
+    assert "folds" not in predictive_model
 
     loaded = store.get_predictive_model_result(project.id, run_id)
     assert loaded is not None

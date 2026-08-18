@@ -199,6 +199,10 @@ def test_run_records_chronological_periods_and_labelled_metrics() -> None:
             "feature_session_before_prediction_session_and_label_available_by_"
             "prediction_session"
         ),
+        "fold_feature_and_preprocessing_policy": (
+            "causal_features_from_session_history_and_learned_state_fit_on_"
+            "each_fold_training_window"
+        ),
     }
 
 
@@ -302,11 +306,18 @@ def test_expanding_and_rolling_modes_fit_each_fold_without_current_label() -> No
             and fold.training_end < fold.prediction_session_date
             and fold.metrics["mae"] >= 0
             and fold.metrics["rmse"] >= 0
+            and fold.artifact.feature_definition["uses_future_rows_for_feature"] is False
+            and fold.artifact.feature_definition["fit_scope"] == "training_only"
+            and fold.artifact.preprocessing["fit_scope"] == "training_only"
+            and fold.artifact.preprocessing["uses_validation_or_test"] is False
             for fold in result.evaluation.folds
         )
 
 
-def test_later_walk_forward_observations_do_not_change_earlier_folds() -> None:
+@pytest.mark.parametrize("evaluation_mode", ["expanding", "rolling"])
+def test_later_walk_forward_observations_do_not_change_earlier_folds(
+    evaluation_mode: str,
+) -> None:
     bars = _bars(
         [
             100.0,
@@ -332,10 +343,11 @@ def test_later_walk_forward_observations_do_not_change_earlier_folds() -> None:
     parameters = {
         "momentum_period": 2,
         "training_window": 4,
-        "evaluation_mode": "expanding",
+        "evaluation_mode": evaluation_mode,
     }
     baseline = run_predictive_model("momentum_return_regression", bars, parameters)
-    changed_from = baseline.evaluation.folds[2].prediction_session_date
+    changed_from = baseline.evaluation.folds[2].target_date
+    assert changed_from is not None
     changed_bars = [
         replace(bar, close=900.0, open=900.0, high=900.0, low=900.0)
         if bar.session_date >= changed_from
@@ -352,6 +364,7 @@ def test_later_walk_forward_observations_do_not_change_earlier_folds() -> None:
         assert after.prediction.predicted_value == pytest.approx(
             before.prediction.predicted_value
         )
+        assert after.metrics == before.metrics
 
 
 def test_walk_forward_eligibility_excludes_unavailable_horizon_labels() -> None:

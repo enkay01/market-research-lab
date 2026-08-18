@@ -229,8 +229,12 @@ def test_walk_forward_folds_round_trip_through_api_and_run_artifacts(
 
     run_root = tmp_path / "projects" / project_id / "runs" / saved_body["run_id"]
     assert (run_root / "artifacts" / "folds.json").exists()
-    manifest = (run_root / "manifest.json").read_text(encoding="utf-8")
-    assert '"folds"' in manifest
+    predictive_model = json.loads(
+        (run_root / "artifacts" / "predictive_model.json").read_text(encoding="utf-8")
+    )
+    assert "folds" not in predictive_model
+    manifest = json.loads((run_root / "manifest.json").read_text(encoding="utf-8"))
+    assert "folds" not in manifest["evaluation"]
 
     html_report = client.get(
         f"/api/projects/{project_id}/predictive-models/runs/{saved_body['run_id']}/export/html"
@@ -243,6 +247,11 @@ def test_walk_forward_folds_round_trip_through_api_and_run_artifacts(
     )
     assert csv_report.status_code == 200
     assert "Fold,Period,Prediction Session" in csv_report.text
+    json_report = client.get(
+        f"/api/projects/{project_id}/predictive-models/runs/{saved_body['run_id']}/export/json"
+    )
+    assert json_report.status_code == 200
+    assert len(json_report.json()["predictive_model"]["folds"]) == len(saved_body["folds"])
 
 
 def test_predictive_model_api_rejects_missing_dataset_with_stable_error(

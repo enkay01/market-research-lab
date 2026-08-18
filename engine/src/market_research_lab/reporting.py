@@ -620,10 +620,12 @@ def generate_predictive_model_csv(result_data: dict[str, JsonValue]) -> str:
         metrics_raw = fold.get("metrics")
         fold_metrics = metrics_raw if isinstance(metrics_raw, dict) else {}
         for metric_name, metric_value in fold_metrics.items():
+            period = fold.get("period", "")
+            period_label = "out-of-sample" if period == "test" else period
             writer.writerow(
                 [
                     fold.get("fold_index", ""),
-                    fold.get("period", ""),
+                    period_label,
                     fold.get("prediction_session_date", ""),
                     fold.get("target_date", ""),
                     fold.get("training_start", ""),
