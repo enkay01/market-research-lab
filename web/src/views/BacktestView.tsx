@@ -810,7 +810,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                             </Text>
                           </TableCell>
                           <TableCell>
-                            <Text type="supporting">Starting Capital</Text>
+                            <Text type="supporting">Starting Cash</Text>
                           </TableCell>
                           <TableCell>
                             <Text>

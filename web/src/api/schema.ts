@@ -1246,6 +1246,26 @@ export interface components {
             borrow_fee_rate: number;
             /** Unavailable Borrow */
             unavailable_borrow?: string[];
+            /**
+             * Max Leverage
+             * @default 1
+             */
+            max_leverage: number;
+            /**
+             * Margin Requirement
+             * @default 1
+             */
+            margin_requirement: number;
+            /**
+             * Maintenance Margin
+             * @default 0.25
+             */
+            maintenance_margin: number;
+            /**
+             * Leverage Mode
+             * @default reject
+             */
+            leverage_mode: string;
         };
         /** FCFFDCFInputResponse */
         FCFFDCFInputResponse: {

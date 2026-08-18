@@ -885,6 +885,10 @@ class ExecutionModelAssumptionsResponse(BaseModel):
     allow_shorting: bool = True
     borrow_fee_rate: float = 0.0
     unavailable_borrow: list[str] = Field(default_factory=list)
+    max_leverage: float = 1.0
+    margin_requirement: float = 1.0
+    maintenance_margin: float = 0.25
+    leverage_mode: str = "reject"
 
 
 class BacktestSpecificationResponse(BaseModel):

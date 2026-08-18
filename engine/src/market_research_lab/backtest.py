@@ -427,9 +427,12 @@ def _compute_metrics(calc_input: MetricsCalculationInput) -> BacktestMetrics:
     mean_equity = statistics.mean(equities) if equities else 0.0
     turnover = sum(abs(fill.notional) for fill in fills) / mean_equity if mean_equity > 0.0 else 0.0
 
-    last_row = ledger[-1] if ledger else None
-    gross_exp = last_row.gross_exposure if last_row else 0.0
-    net_exp = last_row.net_exposure if last_row else 0.0
+    gross_exp = (
+        sum(row.gross_exposure for row in ledger) / len(ledger) if ledger else 0.0
+    )
+    net_exp = (
+        sum(row.net_exposure for row in ledger) / len(ledger) if ledger else 0.0
+    )
 
     return BacktestMetrics(
         total_return=round(total_return, 6),
@@ -713,70 +716,74 @@ def run_backtest(
                 decision_time = target.decision_time if target else bar_sym.available_at
                 rationale = target.rationale if target else "Rebalance buy"
 
-                margin_req = specification.execution.margin_requirement
-                if margin_req < 1.0:
-                    avail_capacity = max(0.0, portfolio_val_at_open) / margin_req
-                    if avail_capacity <= EPS:
-                        rejections.append(
-                            ConstraintRejection(
-                                session_date=date_str,
-                                security_id=sym,
-                                rule="margin_limit",
-                                reason=(
-                                    f"Insufficient margin equity ({portfolio_val_at_open:.2f}) "
-                                    f"to execute buy for {sym}."
-                                ),
-                                requested_weight=target.weight if target else None,
-                            )
-                        )
-                        warnings.append(f"Insufficient margin to buy {sym} on {date_str}.")
-                        continue
-                    if desired_cost > avail_capacity:
-                        buy_qty = avail_capacity / cost_per_share
-                        rejections.append(
-                            ConstraintRejection(
-                                session_date=date_str,
-                                security_id=sym,
-                                rule="partial_fill_margin_limit",
-                                reason=(
-                                    f"Partial fill for {sym} ({buy_qty:.4f} of {delta:.4f} shares) "
-                                    "due to margin limit."
-                                ),
-                                requested_weight=target.weight if target else None,
-                            )
-                        )
-                    else:
-                        buy_qty = delta
-                else:
-                    if cash <= EPS:
-                        rejections.append(
-                            ConstraintRejection(
-                                session_date=date_str,
-                                security_id=sym,
-                                rule="cash_limit",
-                                reason=f"Insufficient cash ({cash:.2f}) to execute buy for {sym}.",
-                                requested_weight=target.weight if target else None,
-                            )
-                        )
-                        warnings.append(f"Insufficient cash to buy {sym} on {date_str}.")
-                        continue
+                cover_shares = min(delta, abs(curr_shares)) if curr_shares < -EPS else 0.0
+                new_long_delta = max(0.0, delta - cover_shares)
+                new_long_cost = new_long_delta * cost_per_share
 
-                    if desired_cost > cash:
-                        buy_qty = cash / cost_per_share
-                        rejections.append(
-                            ConstraintRejection(
-                                session_date=date_str,
-                                security_id=sym,
-                                rule="partial_fill_cash_limit",
-                                reason=(
-                                    f"Partial fill for {sym} ({buy_qty:.4f} of {delta:.4f} shares) "
-                                    "due to cash limit."
-                                ),
-                                requested_weight=target.weight if target else None,
+                margin_req = specification.execution.margin_requirement
+                allowed_long_shares = new_long_delta
+
+                if new_long_delta > EPS:
+                    if margin_req < 1.0:
+                        avail_capacity = max(0.0, portfolio_val_at_open) / margin_req
+                        if avail_capacity <= EPS:
+                            rejections.append(
+                                ConstraintRejection(
+                                    session_date=date_str,
+                                    security_id=sym,
+                                    rule="margin_limit",
+                                    reason=(
+                                        f"Insufficient margin equity ({portfolio_val_at_open:.2f}) "
+                                        f"to execute long buy for {sym}."
+                                    ),
+                                    requested_weight=target.weight if target else None,
+                                )
                             )
-                        )
+                            warnings.append(f"Insufficient margin to buy {sym} on {date_str}.")
+                            allowed_long_shares = 0.0
+                        elif new_long_cost > avail_capacity:
+                            allowed_long_shares = avail_capacity / cost_per_share
+                            rejections.append(
+                                ConstraintRejection(
+                                    session_date=date_str,
+                                    security_id=sym,
+                                    rule="partial_fill_margin_limit",
+                                    reason=(
+                                        f"Partial fill for {sym} ({cover_shares + allowed_long_shares:.4f} "
+                                        f"of {delta:.4f} shares) due to margin limit."
+                                    ),
+                                    requested_weight=target.weight if target else None,
+                                )
+                            )
                     else:
-                        buy_qty = delta
+                        if cash <= EPS:
+                            rejections.append(
+                                ConstraintRejection(
+                                    session_date=date_str,
+                                    security_id=sym,
+                                    rule="cash_limit",
+                                    reason=f"Insufficient cash ({cash:.2f}) to execute buy for {sym}.",
+                                    requested_weight=target.weight if target else None,
+                                )
+                            )
+                            warnings.append(f"Insufficient cash to buy {sym} on {date_str}.")
+                            allowed_long_shares = 0.0
+                        elif new_long_cost > cash:
+                            allowed_long_shares = cash / cost_per_share
+                            rejections.append(
+                                ConstraintRejection(
+                                    session_date=date_str,
+                                    security_id=sym,
+                                    rule="partial_fill_cash_limit",
+                                    reason=(
+                                        f"Partial fill for {sym} ({cover_shares + allowed_long_shares:.4f} "
+                                        f"of {delta:.4f} shares) due to cash limit."
+                                    ),
+                                    requested_weight=target.weight if target else None,
+                                )
+                            )
+
+                buy_qty = cover_shares + allowed_long_shares
 
                 if buy_qty <= EPS:
                     continue
@@ -864,7 +871,7 @@ def run_backtest(
         # STEP 2: Evaluate Strategy on today's close for each security
         # -------------------------------------------------------------
         candidate_targets: list[tuple[str, StrategyTarget, float, DailyBar]] = []
-        universe_k = len(universe)
+        universe_size = len(universe)
 
         for sym in universe:
             bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
@@ -883,7 +890,7 @@ def run_backtest(
 
             # In multi-security universe, normalize allocation by universe size
             for raw_t in evaluation.targets:
-                norm_weight = raw_t.weight / universe_k if universe_k > 0 else 0.0
+                norm_weight = raw_t.weight / universe_size if universe_size > 0 else 0.0
 
                 # Shorting & Borrow availability checks
                 if norm_weight < 0.0:
@@ -935,6 +942,7 @@ def run_backtest(
         if is_leverage_breached:
             if specification.execution.leverage_mode == "reject":
                 for sym, raw_t, norm_w, bar_sym in candidate_targets:
+                    prior_w = holding_target_weights.get(sym, 0.0)
                     if abs(norm_w) > EPS:
                         rejections.append(
                             ConstraintRejection(
@@ -952,12 +960,12 @@ def run_backtest(
                             f"Target for {sym} on {date_str} (weight {norm_w:.4f}) rejected: "
                             f"portfolio gross exposure ({total_target_gross:.2f}) exceeds max leverage {max_lev:.2f}."
                         )
-                    target = replace(raw_t, weight=0.0)
+                    target = replace(raw_t, weight=prior_w)
                     signals.append(target)
-                    today_signal_weights[sym] = 0.0
+                    today_signal_weights[sym] = prior_w
                     pending_targets[sym] = PendingTarget(
                         security_id=sym,
-                        weight=0.0,
+                        weight=prior_w,
                         decision_time=bar_sym.available_at,
                         rationale=target.rationale,
                     )

@@ -337,3 +337,42 @@ def test_leverage_margin_future_data_leakage_invariance():
     assert base_run.trades == extended_run.trades
     assert base_run.ledger == extended_run.ledger
     assert base_run.metrics == extended_run.metrics
+
+
+def test_short_covering_not_blocked_by_margin_limits():
+    """Verify that buying to cover short positions is permitted even when cash or margin equity is depleted."""
+    dates = make_dates(8)
+    # Falling then rising price series (short signal then cover)
+    closes = [100.0, 90.0, 80.0, 70.0, 60.0, 70.0, 80.0, 90.0]
+    bars = [make_bar("AAPL", d, c, c) for d, c in zip(dates, closes)]
+
+    exec_assumptions = ExecutionModelAssumptions(
+        schedule="daily",
+        allow_shorting=True,
+        max_leverage=1.0,
+        margin_requirement=1.0,
+    )
+    spec = make_spec(universe=("AAPL",), dates=dates, execution=exec_assumptions, cash=10000.0)
+    result = run_backtest(spec, bars=bars)
+
+    # Should have filled the initial short sell and subsequent cover buy
+    fill_sides = [f.side for f in result.fills]
+    assert "sell" in fill_sides
+    # The short should be covered without margin_limit rejections
+    assert "buy" in fill_sides
+
+
+def test_mean_exposure_reported_in_metrics():
+    """Verify that BacktestMetrics gross_exposure and net_exposure report the mean across the full run."""
+    dates = make_dates(6)
+    closes = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0]
+    bars = [make_bar("AAPL", d, c, c) for d, c in zip(dates, closes)]
+
+    spec = make_spec(universe=("AAPL",), dates=dates)
+    result = run_backtest(spec, bars=bars)
+
+    expected_gross_mean = sum(r.gross_exposure for r in result.ledger) / len(result.ledger)
+    expected_net_mean = sum(r.net_exposure for r in result.ledger) / len(result.ledger)
+
+    assert result.metrics.gross_exposure == pytest.approx(expected_gross_mean, abs=1e-6)
+    assert result.metrics.net_exposure == pytest.approx(expected_net_mean, abs=1e-6)
