@@ -36,6 +36,10 @@ class ExecutionModelAssumptions:
     borrow_fee_rate: float = 0.0  # annualized borrow fee rate on short market value
     unavailable_borrow: tuple[str, ...] = ()
     hard_to_borrow_rates: dict[str, float] = field(default_factory=dict)
+    max_leverage: float = 1.0  # maximum allowed gross portfolio exposure (e.g. 1.0 for 100%, 2.0 for 200%)
+    margin_requirement: float = 1.0  # initial margin requirement fraction (e.g. 1.0 for cash, 0.5 for 2:1 margin)
+    maintenance_margin: float = 0.25  # maintenance margin requirement fraction
+    leverage_mode: Literal["reject", "constrain"] = "reject"
 
 
 @dataclass(frozen=True)
@@ -248,6 +252,25 @@ def _validate_specification(specification: BacktestSpecification) -> tuple[str, 
     if not math.isfinite(borrow_fee) or borrow_fee < 0.0:
         raise BacktestParameterError(
             f"borrow_fee_rate must be finite and >= 0, got {borrow_fee}."
+        )
+    max_leverage = specification.execution.max_leverage
+    if not math.isfinite(max_leverage) or max_leverage <= 0.0:
+        raise BacktestParameterError(
+            f"max_leverage must be finite and > 0, got {max_leverage}."
+        )
+    margin_req = specification.execution.margin_requirement
+    if not math.isfinite(margin_req) or margin_req <= 0.0:
+        raise BacktestParameterError(
+            f"margin_requirement must be finite and > 0, got {margin_req}."
+        )
+    maint_margin = specification.execution.maintenance_margin
+    if not math.isfinite(maint_margin) or maint_margin < 0.0:
+        raise BacktestParameterError(
+            f"maintenance_margin must be finite and >= 0, got {maint_margin}."
+        )
+    if specification.execution.leverage_mode not in {"reject", "constrain"}:
+        raise BacktestParameterError(
+            f"leverage_mode must be 'reject' or 'constrain', got {specification.execution.leverage_mode!r}."
         )
     if specification.price_field not in {"close", "open", "high", "low"}:
         raise BacktestParameterError(
@@ -690,35 +713,70 @@ def run_backtest(
                 decision_time = target.decision_time if target else bar_sym.available_at
                 rationale = target.rationale if target else "Rebalance buy"
 
-                if cash <= EPS:
-                    rejections.append(
-                        ConstraintRejection(
-                            session_date=date_str,
-                            security_id=sym,
-                            rule="cash_limit",
-                            reason=f"Insufficient cash ({cash:.2f}) to execute buy for {sym}.",
-                            requested_weight=target.weight if target else None,
+                margin_req = specification.execution.margin_requirement
+                if margin_req < 1.0:
+                    avail_capacity = max(0.0, portfolio_val_at_open) / margin_req
+                    if avail_capacity <= EPS:
+                        rejections.append(
+                            ConstraintRejection(
+                                session_date=date_str,
+                                security_id=sym,
+                                rule="margin_limit",
+                                reason=(
+                                    f"Insufficient margin equity ({portfolio_val_at_open:.2f}) "
+                                    f"to execute buy for {sym}."
+                                ),
+                                requested_weight=target.weight if target else None,
+                            )
                         )
-                    )
-                    warnings.append(f"Insufficient cash to buy {sym} on {date_str}.")
-                    continue
-
-                if desired_cost > cash:
-                    buy_qty = cash / cost_per_share
-                    rejections.append(
-                        ConstraintRejection(
-                            session_date=date_str,
-                            security_id=sym,
-                            rule="partial_fill_cash_limit",
-                            reason=(
-                                f"Partial fill for {sym} ({buy_qty:.4f} of {delta:.4f} shares) "
-                                "due to cash limit."
-                            ),
-                            requested_weight=target.weight if target else None,
+                        warnings.append(f"Insufficient margin to buy {sym} on {date_str}.")
+                        continue
+                    if desired_cost > avail_capacity:
+                        buy_qty = avail_capacity / cost_per_share
+                        rejections.append(
+                            ConstraintRejection(
+                                session_date=date_str,
+                                security_id=sym,
+                                rule="partial_fill_margin_limit",
+                                reason=(
+                                    f"Partial fill for {sym} ({buy_qty:.4f} of {delta:.4f} shares) "
+                                    "due to margin limit."
+                                ),
+                                requested_weight=target.weight if target else None,
+                            )
                         )
-                    )
+                    else:
+                        buy_qty = delta
                 else:
-                    buy_qty = delta
+                    if cash <= EPS:
+                        rejections.append(
+                            ConstraintRejection(
+                                session_date=date_str,
+                                security_id=sym,
+                                rule="cash_limit",
+                                reason=f"Insufficient cash ({cash:.2f}) to execute buy for {sym}.",
+                                requested_weight=target.weight if target else None,
+                            )
+                        )
+                        warnings.append(f"Insufficient cash to buy {sym} on {date_str}.")
+                        continue
+
+                    if desired_cost > cash:
+                        buy_qty = cash / cost_per_share
+                        rejections.append(
+                            ConstraintRejection(
+                                session_date=date_str,
+                                security_id=sym,
+                                rule="partial_fill_cash_limit",
+                                reason=(
+                                    f"Partial fill for {sym} ({buy_qty:.4f} of {delta:.4f} shares) "
+                                    "due to cash limit."
+                                ),
+                                requested_weight=target.weight if target else None,
+                            )
+                        )
+                    else:
+                        buy_qty = delta
 
                 if buy_qty <= EPS:
                     continue
@@ -727,7 +785,10 @@ def run_backtest(
                 commission = notional * specification.execution.commission_rate
                 slippage_cost = buy_qty * open_p * slippage
 
-                cash = max(0.0, cash - notional - commission)
+                if margin_req >= 1.0:
+                    cash = max(0.0, cash - notional - commission)
+                else:
+                    cash = cash - notional - commission
                 new_shares = curr_shares + buy_qty
                 positions[sym] = new_shares
 
@@ -802,8 +863,7 @@ def run_backtest(
         # -------------------------------------------------------------
         # STEP 2: Evaluate Strategy on today's close for each security
         # -------------------------------------------------------------
-        today_signal_weights: dict[str, float] = {}
-        primary_target: StrategyTarget | None = None
+        candidate_targets: list[tuple[str, StrategyTarget, float, DailyBar]] = []
         universe_k = len(universe)
 
         for sym in universe:
@@ -837,7 +897,7 @@ def run_backtest(
                                     f"Negative target weight ({norm_weight}) rejected: "
                                     "short positions are disabled in execution assumptions."
                                 ),
-                                requested_weight=norm_weight,
+                                requested_weight=round(norm_weight, 6),
                             )
                         )
                         warnings.append(
@@ -854,7 +914,7 @@ def run_backtest(
                                     f"Borrow unavailable for '{sym}' "
                                     "(hard-to-borrow constraint)."
                                 ),
-                                requested_weight=norm_weight,
+                                requested_weight=round(norm_weight, 6),
                             )
                         )
                         warnings.append(
@@ -862,7 +922,80 @@ def run_backtest(
                         )
                         norm_weight = 0.0
 
-                target = replace(raw_t, weight=round(norm_weight, 6))
+                candidate_targets.append((sym, raw_t, norm_weight, bar_sym))
+
+        # Leverage limit evaluation across portfolio target gross exposure
+        total_target_gross = sum(abs(norm_w) for _, _, norm_w, _ in candidate_targets)
+        max_lev = specification.execution.max_leverage
+        is_leverage_breached = total_target_gross > max_lev + EPS
+
+        today_signal_weights: dict[str, float] = {}
+        primary_target: StrategyTarget | None = None
+
+        if is_leverage_breached:
+            if specification.execution.leverage_mode == "reject":
+                for sym, raw_t, norm_w, bar_sym in candidate_targets:
+                    if abs(norm_w) > EPS:
+                        rejections.append(
+                            ConstraintRejection(
+                                session_date=date_str,
+                                security_id=sym,
+                                rule="leverage_limit",
+                                reason=(
+                                    f"Target gross exposure ({total_target_gross:.2f}) exceeds "
+                                    f"maximum leverage limit of {max_lev:.2f}."
+                                ),
+                                requested_weight=round(norm_w, 6),
+                            )
+                        )
+                        warnings.append(
+                            f"Target for {sym} on {date_str} (weight {norm_w:.4f}) rejected: "
+                            f"portfolio gross exposure ({total_target_gross:.2f}) exceeds max leverage {max_lev:.2f}."
+                        )
+                    target = replace(raw_t, weight=0.0)
+                    signals.append(target)
+                    today_signal_weights[sym] = 0.0
+                    pending_targets[sym] = PendingTarget(
+                        security_id=sym,
+                        weight=0.0,
+                        decision_time=bar_sym.available_at,
+                        rationale=target.rationale,
+                    )
+                    if sym == primary_symbol:
+                        primary_target = target
+            else:
+                scale_factor = max_lev / total_target_gross if total_target_gross > 0 else 1.0
+                for sym, raw_t, norm_w, bar_sym in candidate_targets:
+                    if abs(norm_w) > EPS:
+                        scaled_w = round(norm_w * scale_factor, 6)
+                        rejections.append(
+                            ConstraintRejection(
+                                session_date=date_str,
+                                security_id=sym,
+                                rule="leverage_constrained",
+                                reason=(
+                                    f"Target weight {norm_w:.4f} scaled to {scaled_w:.4f} "
+                                    f"(scale factor {scale_factor:.4f}) to satisfy maximum leverage limit of {max_lev:.2f}."
+                                ),
+                                requested_weight=round(norm_w, 6),
+                            )
+                        )
+                    else:
+                        scaled_w = 0.0
+                    target = replace(raw_t, weight=scaled_w)
+                    signals.append(target)
+                    today_signal_weights[sym] = scaled_w
+                    pending_targets[sym] = PendingTarget(
+                        security_id=sym,
+                        weight=scaled_w,
+                        decision_time=bar_sym.available_at,
+                        rationale=target.rationale,
+                    )
+                    if sym == primary_symbol:
+                        primary_target = target
+        else:
+            for sym, raw_t, norm_w, bar_sym in candidate_targets:
+                target = replace(raw_t, weight=round(norm_w, 6))
                 signals.append(target)
                 today_signal_weights[sym] = target.weight
                 pending_targets[sym] = PendingTarget(
@@ -928,6 +1061,30 @@ def run_backtest(
 
         gross_exp = (gross_pos_val / portfolio_val) if portfolio_val > 0.0 else 0.0
         net_exp = (total_pos_val / portfolio_val) if portfolio_val > 0.0 else 0.0
+
+        # Maintenance margin threshold check at session close
+        if gross_pos_val > EPS and portfolio_val > 0:
+            maint_req = gross_pos_val * specification.execution.maintenance_margin
+            if portfolio_val < maint_req:
+                maint_warning = (
+                    f"Margin call on {date_str}: Portfolio value (${portfolio_val:,.2f}) fell "
+                    f"below maintenance margin requirement (${maint_req:,.2f}, "
+                    f"{specification.execution.maintenance_margin * 100:.1f}% of gross position value ${gross_pos_val:,.2f})."
+                )
+                warnings.append(maint_warning)
+                for sym in universe:
+                    if abs(positions.get(sym, 0.0)) > EPS:
+                        rejections.append(
+                            ConstraintRejection(
+                                session_date=date_str,
+                                security_id=sym,
+                                rule="maintenance_margin_call",
+                                reason=maint_warning,
+                                requested_weight=position_snapshots.get(
+                                    sym, PositionSnapshot(0.0, 0.0, 0.0, 0.0)
+                                ).weight,
+                            )
+                        )
 
         ledger.append(
             LedgerRow(
@@ -1022,6 +1179,10 @@ def run_backtest(
             "allow_shorting": specification.execution.allow_shorting,
             "borrow_fee_rate": specification.execution.borrow_fee_rate,
             "unavailable_borrow": list(specification.execution.unavailable_borrow),
+            "max_leverage": specification.execution.max_leverage,
+            "margin_requirement": specification.execution.margin_requirement,
+            "maintenance_margin": specification.execution.maintenance_margin,
+            "leverage_mode": specification.execution.leverage_mode,
         },
         "signal_count": len(signals),
         "fill_count": len(fills),

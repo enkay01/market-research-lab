@@ -223,7 +223,7 @@ function EquityDrawdownChart({
 
 export function BacktestView({ project }: BacktestViewProps) {
   const [activeTab, setActiveTab] = useState<
-    "overview" | "trades" | "fills" | "ledger" | "manifest" | "compare"
+    "overview" | "trades" | "fills" | "ledger" | "rejections" | "manifest" | "compare"
   >("overview");
 
   // Datasets & Securities
@@ -247,6 +247,10 @@ export function BacktestView({ project }: BacktestViewProps) {
   const [allowShorting, setAllowShorting] = useState<boolean>(true);
   const [borrowFeeBps, setBorrowFeeBps] = useState<string>("0.0");
   const [unavailableBorrowInput, setUnavailableBorrowInput] = useState<string>("");
+  const [maxLeverage, setMaxLeverage] = useState<string>("1.0");
+  const [marginRequirement, setMarginRequirement] = useState<string>("100.0");
+  const [maintenanceMargin, setMaintenanceMargin] = useState<string>("25.0");
+  const [leverageMode, setLeverageMode] = useState<"reject" | "constrain">("reject");
 
   // Execution & Result state
   const [isRunning, setIsRunning] = useState(false);
@@ -387,6 +391,10 @@ export function BacktestView({ project }: BacktestViewProps) {
           allow_shorting: allowShorting,
           borrow_fee_rate: (parseFloat(borrowFeeBps) || 0) / 10000,
           unavailable_borrow: unavailableList,
+          max_leverage: parseFloat(maxLeverage) || 1.0,
+          margin_requirement: (parseFloat(marginRequirement) || 100.0) / 100.0,
+          maintenance_margin: (parseFloat(maintenanceMargin) || 25.0) / 100.0,
+          leverage_mode: leverageMode,
         },
       });
       setCurrentResult(res);
@@ -511,6 +519,12 @@ export function BacktestView({ project }: BacktestViewProps) {
             variant={activeTab === "ledger" ? "primary" : "secondary"}
             size="sm"
             onClick={() => setActiveTab("ledger")}
+          />
+          <Button
+            label={`Rejections (${currentResult?.rejections?.length ?? 0})`}
+            variant={activeTab === "rejections" ? "primary" : "secondary"}
+            size="sm"
+            onClick={() => setActiveTab("rejections")}
           />
           <Button
             label="Manifest"
@@ -642,6 +656,30 @@ export function BacktestView({ project }: BacktestViewProps) {
                     value={unavailableBorrowInput}
                     onChange={(v) => setUnavailableBorrowInput(typeof v === "string" ? v : "")}
                   />
+                  <TextInput
+                    label="Max Leverage Limit (x)"
+                    value={maxLeverage}
+                    onChange={(v) => setMaxLeverage(typeof v === "string" ? v : "")}
+                  />
+                  <Selector
+                    label="Leverage Breach Mode"
+                    value={leverageMode}
+                    onChange={(v) => setLeverageMode(v as "reject" | "constrain")}
+                    options={[
+                      { value: "reject", label: "Reject Orders" },
+                      { value: "constrain", label: "Constrain / Scale" },
+                    ]}
+                  />
+                  <TextInput
+                    label="Margin Requirement (%)"
+                    value={marginRequirement}
+                    onChange={(v) => setMarginRequirement(typeof v === "string" ? v : "")}
+                  />
+                  <TextInput
+                    label="Maintenance Margin (%)"
+                    value={maintenanceMargin}
+                    onChange={(v) => setMaintenanceMargin(typeof v === "string" ? v : "")}
+                  />
                 </HStack>
               </VStack>
             </Card>
@@ -704,6 +742,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                         | "trades"
                         | "fills"
                         | "ledger"
+                        | "rejections"
                         | "manifest"
                         | "compare",
                     )
@@ -721,6 +760,10 @@ export function BacktestView({ project }: BacktestViewProps) {
                   <SegmentedControlItem
                     value="ledger"
                     label={`Daily Ledger (${currentResult.ledger?.length ?? 0})`}
+                  />
+                  <SegmentedControlItem
+                    value="rejections"
+                    label={`Rejections (${currentResult.rejections?.length ?? 0})`}
                   />
                   <SegmentedControlItem value="manifest" label="Manifest & Integrity" />
                   <SegmentedControlItem
@@ -981,6 +1024,60 @@ export function BacktestView({ project }: BacktestViewProps) {
                       </Table>
                     ) : (
                       <Text type="supporting">Ledger is empty.</Text>
+                    )}
+                  </VStack>
+                )}
+
+                {/* TAB: Rejections */}
+                {activeTab === "rejections" && (
+                  <VStack gap={3}>
+                    <Heading level={3}>Constraint Rejections &amp; Margin Limits</Heading>
+                    {currentResult.rejections && currentResult.rejections.length > 0 ? (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHeaderCell>Session Date</TableHeaderCell>
+                            <TableHeaderCell>Security</TableHeaderCell>
+                            <TableHeaderCell>Rule</TableHeaderCell>
+                            <TableHeaderCell>Requested Weight</TableHeaderCell>
+                            <TableHeaderCell>Reason</TableHeaderCell>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {currentResult.rejections.map((rej, idx) => (
+                            <TableRow key={idx}>
+                              <TableCell>{rej.session_date}</TableCell>
+                              <TableCell>
+                                <Token label={rej.security_id} color="blue" />
+                              </TableCell>
+                              <TableCell>
+                                <Token
+                                  label={rej.rule}
+                                  color={
+                                    rej.rule.includes("maintenance") || rej.rule.includes("margin")
+                                      ? "purple"
+                                      : rej.rule.includes("constrained")
+                                      ? "green"
+                                      : "blue"
+                                  }
+                                />
+                              </TableCell>
+                              <TableCell>
+                                {rej.requested_weight !== null && rej.requested_weight !== undefined
+                                  ? `${(rej.requested_weight * 100).toFixed(1)}%`
+                                  : "—"}
+                              </TableCell>
+                              <TableCell>
+                                <Text>{rej.reason}</Text>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    ) : (
+                      <Text type="supporting">
+                        No constraint rejections or margin breaches occurred during this Backtest run.
+                      </Text>
                     )}
                   </VStack>
                 )}

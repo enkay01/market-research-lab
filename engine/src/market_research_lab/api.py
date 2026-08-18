@@ -781,6 +781,10 @@ class ExecutionModelAssumptionsRequest(BaseModel):
     allow_shorting: bool = True
     borrow_fee_rate: float = Field(default=0.0, ge=0)
     unavailable_borrow: list[str] = Field(default_factory=list)
+    max_leverage: float = Field(default=1.0, gt=0)
+    margin_requirement: float = Field(default=1.0, gt=0)
+    maintenance_margin: float = Field(default=0.25, ge=0)
+    leverage_mode: Literal["reject", "constrain"] = "reject"
 
 
 class BacktestRunRequest(BaseModel):
@@ -2379,6 +2383,10 @@ def create_app(
                     allow_shorting=request.execution.allow_shorting,
                     borrow_fee_rate=request.execution.borrow_fee_rate,
                     unavailable_borrow=tuple(request.execution.unavailable_borrow),
+                    max_leverage=request.execution.max_leverage,
+                    margin_requirement=request.execution.margin_requirement,
+                    maintenance_margin=request.execution.maintenance_margin,
+                    leverage_mode=request.execution.leverage_mode,
                 ),
                 benchmark_security_id=bench_sec.security_id if bench_sec else None,
             )
