@@ -12,7 +12,6 @@ async function run() {
   const page = await context.newPage();
 
   page.on("console", (msg) => console.log("Browser console:", msg.text()));
-  page.on("pageerror", (err) => console.error("Browser page error:", err));
 
   console.log("2. Navigating to http://127.0.0.1:5173 ...");
   await page.goto("http://127.0.0.1:5173", { waitUntil: "networkidle" });
@@ -116,17 +115,20 @@ async function run() {
   await runBacktest();
 
   const shot1 = path.join(SCREENSHOTS_DIR, "01_leverage_reject_overview.png");
-  await page.screenshot({ path: shot1, fullPage: true });
+  await page.screenshot({ path: shot1 });
   console.log(`Saved screenshot: ${shot1}`);
 
-  // Click Rejections Tab
+  // Switch to Rejections Tab and scroll table into view
   console.log("Switching to Rejections Tab...");
   const rejectionsTab = page.locator("button").filter({ hasText: /Rejections/i }).first();
   if (await rejectionsTab.isVisible()) {
     await rejectionsTab.click();
     await page.waitForTimeout(1000);
+    const rejTable = page.locator("table").first();
+    await rejTable.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(500);
     const shot2 = path.join(SCREENSHOTS_DIR, "02_rejections_tab_table.png");
-    await page.screenshot({ path: shot2, fullPage: true });
+    await page.screenshot({ path: shot2 });
     console.log(`Saved screenshot: ${shot2}`);
   }
 
@@ -149,14 +151,17 @@ async function run() {
   await runBacktest();
 
   const shot3 = path.join(SCREENSHOTS_DIR, "03_leverage_constrain_overview.png");
-  await page.screenshot({ path: shot3, fullPage: true });
+  await page.screenshot({ path: shot3 });
   console.log(`Saved screenshot: ${shot3}`);
 
   if (await rejectionsTab.isVisible()) {
     await rejectionsTab.click();
     await page.waitForTimeout(1000);
+    const rejTable = page.locator("table").first();
+    await rejTable.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(500);
     const shot3b = path.join(SCREENSHOTS_DIR, "03b_rejections_tab_scaling.png");
-    await page.screenshot({ path: shot3b, fullPage: true });
+    await page.screenshot({ path: shot3b });
     console.log(`Saved screenshot: ${shot3b}`);
   }
 
@@ -177,7 +182,7 @@ async function run() {
   await runBacktest();
 
   const shot4 = path.join(SCREENSHOTS_DIR, "04_leveraged_2x_portfolio.png");
-  await page.screenshot({ path: shot4, fullPage: true });
+  await page.screenshot({ path: shot4 });
   console.log(`Saved screenshot: ${shot4}`);
 
   // Inspect Daily Ledger
@@ -186,8 +191,11 @@ async function run() {
   if (await ledgerTab.isVisible()) {
     await ledgerTab.click();
     await page.waitForTimeout(1000);
+    const ledgerTable = page.locator("table").first();
+    await ledgerTable.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(500);
     const shot5 = path.join(SCREENSHOTS_DIR, "05_daily_ledger_exposure.png");
-    await page.screenshot({ path: shot5, fullPage: true });
+    await page.screenshot({ path: shot5 });
     console.log(`Saved screenshot: ${shot5}`);
   }
 
