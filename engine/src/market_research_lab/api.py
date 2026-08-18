@@ -3169,8 +3169,12 @@ def create_app(
         model_run_id = request.parameters.get("predictive_model_run_id")
         if model_run_id and isinstance(model_run_id, str):
             model_record = store.get_predictive_model_result(str(project_id), model_run_id)
-            if model_record:
-                validate_model_eligibility_for_strategy(model_record)
+            if model_record is None:
+                raise StrategyEvaluationError(
+                    "Predictive Model Run not found. A saved, benchmark-verified Run "
+                    "is required before a Strategy can use model output (MOD-009)."
+                )
+            validate_model_eligibility_for_strategy(model_record)
         if "predictive_model_evaluation" in request.parameters and isinstance(
             request.parameters["predictive_model_evaluation"], dict
         ):

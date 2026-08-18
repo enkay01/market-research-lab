@@ -954,9 +954,12 @@ def _evaluate_period_metrics(
     benchmark_predictions: Sequence[float],
 ) -> PredictiveModelPeriodMetrics:
     """Calculate labelled model and naive benchmark metrics for one chronological period."""
-    sample_scope: SampleScope = (
-        "in_sample" if period == "training" else "validation" if period == "validation" else "out_of_sample"
-    )
+    if period == "training":
+        sample_scope: SampleScope = "in_sample"
+    elif period == "validation":
+        sample_scope = "validation"
+    else:
+        sample_scope = "out_of_sample"
     labelled = [
         prediction
         for prediction in predictions

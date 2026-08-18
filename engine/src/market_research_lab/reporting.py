@@ -419,7 +419,7 @@ def generate_predictive_model_html_report(
     evaluation_mode = html.escape(
         str(evaluation.get("mode") or result_data.get("evaluation_mode") or "holdout")
     )
-    warnings_raw = result_data.get("warnings")
+    warnings_raw = evaluation.get("warnings") or result_data.get("warnings")
     warnings = warnings_raw if isinstance(warnings_raw, list) else []
 
     benchmark_raw = (
@@ -439,6 +439,20 @@ def generate_predictive_model_html_report(
     limitations = limitations_raw if isinstance(limitations_raw, list) else []
     unsupported_raw = evaluation.get("unsupported_claims") or result_data.get("unsupported_claims")
     unsupported_claims = unsupported_raw if isinstance(unsupported_raw, list) else []
+    strategy_eligible = evaluation.get(
+        "is_eligible_for_strategy", result_data.get("is_eligible_for_strategy", False)
+    )
+    eligibility_reason = html.escape(
+        str(
+            evaluation.get(
+                "eligibility_reason",
+                result_data.get(
+                    "eligibility_reason",
+                    "Predictive Model is not eligible until benchmark comparison is complete.",
+                ),
+            )
+        )
+    )
 
     doc = [
         "<!DOCTYPE html>",
@@ -470,12 +484,14 @@ def generate_predictive_model_html_report(
         f'{html.escape(", ".join(str(dataset) for dataset in datasets))}<br>'
         f'<strong>Evaluation Mode:</strong> {evaluation_mode}<br>'
         f'<strong>Naive Benchmark:</strong> {bench_name}<br>'
+        f'<strong>Strategy Eligibility:</strong> {"Eligible" if strategy_eligible is True else "Blocked"}<br>'
         '<strong>Metric Scope:</strong> In-sample training; held-out validation and '
         'out-of-sample test</div>',
         '  <p class="note">The initial fit uses training observations only. Each later '
         'fold uses only data available before its decision session.</p>',
         f'  <div class="benchmark-box"><strong>Naive Benchmark Comparison:</strong> {bench_name}'
         f'<br><small>{bench_desc}</small></div>',
+        f'  <p class="note"><strong>Strategy eligibility:</strong> {html.escape("Eligible" if strategy_eligible is True else "Blocked")}. {eligibility_reason}</p>',
         "  <h2>Chronological Periods</h2>",
         "  <table>",
         "    <thead><tr><th>Period</th><th>Target Dates</th><th>Feature Dates</th>"

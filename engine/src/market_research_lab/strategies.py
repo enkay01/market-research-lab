@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -274,95 +275,42 @@ def evaluate_long_short_moving_average(
     )
 
 
-class PredictiveReturnThresholdParams(BaseModel):
-    """Validated parameters for the Predictive Return Threshold Strategy."""
+def validate_model_eligibility_for_strategy(
+    model_data: Mapping[str, JsonValue],
+) -> None:
+    """Enforce MOD-009 before a Predictive Model can feed a Strategy.
 
-    model_revision: str = Field(default="")
-    threshold: float = Field(default=0.0, ge=-0.5, le=0.5)
-    predicted_return: float = Field(default=0.001)
-    benchmark_comparison_completed: bool = Field(default=True)
+    The check accepts either a saved model result or its evaluation object. It
+    requires the completed comparison and its out-of-sample provenance. A
+    caller-supplied boolean is not sufficient.
+    """
+    result = model_data.get("result")
+    source = result if isinstance(result, dict) else model_data
+    evaluation_value = source.get("evaluation")
+    evaluation = evaluation_value if isinstance(evaluation_value, dict) else source
 
-
-def validate_model_eligibility_for_strategy(model_data: dict[str, JsonValue]) -> None:
-    """Enforce MOD-009: Predictive Models cannot feed Strategies without benchmark comparison."""
-    evaluation = model_data.get("evaluation")
-    if isinstance(evaluation, dict):
-        benchmark = evaluation.get("benchmark")
-        if not benchmark or not isinstance(benchmark, dict) or not benchmark.get("completed"):
-            raise StrategyEvaluationError(
-                "Predictive Model cannot feed an enabled Strategy until its naive "
-                "benchmark comparison is complete (MOD-009)."
-            )
-        if evaluation.get("is_eligible_for_strategy") is False:
-            raise StrategyEvaluationError(
-                "Predictive Model is not eligible to feed a Strategy: "
-                f"{evaluation.get('eligibility_reason', 'benchmark comparison failed')}"
-            )
-        return
-
-    # Check root-level benchmark_comparison or evaluation flags
-    benchmark = model_data.get("benchmark_comparison") or model_data.get("benchmark")
-    if not benchmark or not isinstance(benchmark, dict) or not benchmark.get("completed"):
+    benchmark = evaluation.get("benchmark")
+    comparison = benchmark.get("out_of_sample_comparison") if isinstance(benchmark, dict) else None
+    if (
+        not isinstance(benchmark, dict)
+        or benchmark.get("completed") is not True
+        or not isinstance(comparison, dict)
+        or comparison.get("comparison_complete") is not True
+        or comparison.get("same_eligible_periods") is not True
+    ):
         raise StrategyEvaluationError(
             "Predictive Model cannot feed an enabled Strategy until its naive "
-            "benchmark comparison is complete (MOD-009)."
+            "out-of-sample benchmark comparison is complete (MOD-009)."
         )
 
-
-def evaluate_predictive_return_threshold(
-    market_view: MarketView,
-    parameters: dict[str, JsonValue],
-    *,
-    decision_time: str,
-) -> StrategyEvaluation:
-    """Evaluate a Predictive Model-driven Strategy enforcing the MOD-009 guardrail."""
-    try:
-        config = PredictiveReturnThresholdParams.model_validate(parameters)
-    except Exception as error:
-        raise StrategyParameterValidationError(str(error)) from error
-
-    if not config.benchmark_comparison_completed:
+    if evaluation.get("is_eligible_for_strategy") is not True:
+        reason = evaluation.get(
+            "eligibility_reason", "benchmark comparison eligibility is not verified"
+        )
         raise StrategyEvaluationError(
-            "Predictive Model cannot feed an enabled Strategy until its naive "
-            "benchmark comparison is complete (MOD-009)."
+            "Predictive Model is not eligible to feed a Strategy: "
+            f"{reason} (MOD-009)."
         )
-
-    weight = 1.0 if config.predicted_return >= config.threshold else 0.0
-    if weight > 0:
-        rationale = (
-            f"Predicted return ({config.predicted_return:+.4f}) >= threshold "
-            f"({config.threshold:+.4f}); target a long position at 100% allocation. "
-            "Out-of-sample naive benchmark comparison verified."
-        )
-    else:
-        rationale = (
-            f"Predicted return ({config.predicted_return:+.4f}) < threshold "
-            f"({config.threshold:+.4f}); target a flat position with 0% allocation."
-        )
-
-    latest_date = market_view.session_dates[-1] if market_view.session_dates else None
-
-    return StrategyEvaluation(
-        strategy_name="predictive_return_threshold",
-        parameters={
-            "model_revision": config.model_revision,
-            "threshold": config.threshold,
-            "predicted_return": config.predicted_return,
-            "benchmark_comparison_completed": config.benchmark_comparison_completed,
-        },
-        decision_time=decision_time,
-        targets=(
-            StrategyTarget(
-                security_id=market_view.security_id,
-                weight=weight,
-                decision_time=decision_time,
-                rationale=rationale,
-                indicator_state="model_forecast",
-            ),
-        ),
-        indicator_name="predictive_model",
-        latest_session_date=latest_date,
-    )
 
 
 STRATEGY_REGISTRY: dict[str, StrategyMetadata] = {
@@ -434,40 +382,6 @@ STRATEGY_REGISTRY: dict[str, StrategyMetadata] = {
         ],
         outputs=["weight", "rationale", "indicator_state"],
     ),
-    "predictive_return_threshold": StrategyMetadata(
-        name="predictive_return_threshold",
-        display_name="Predictive Return Threshold",
-        description=(
-            "Long (+100%) when predicted next-session return exceeds a threshold, "
-            "flat (0%) otherwise. Requires a Predictive Model Run with completed "
-            "naive benchmark comparison (MOD-009)."
-        ),
-        parameters=[
-            StrategyParameter(
-                name="threshold",
-                param_type="float",
-                default=0.0,
-                description="Minimum predicted return to trigger a long position",
-                min_value=-0.5,
-                max_value=0.5,
-            ),
-            StrategyParameter(
-                name="predicted_return",
-                param_type="float",
-                default=0.001,
-                description="Latest predicted next-session return from the Predictive Model",
-                min_value=-1.0,
-                max_value=1.0,
-            ),
-            StrategyParameter(
-                name="benchmark_comparison_completed",
-                param_type="bool",
-                default=True,
-                description="Whether the Predictive Model has completed naive benchmark comparison",
-            ),
-        ],
-        outputs=["weight", "rationale", "indicator_state"],
-    ),
 }
 
 
@@ -500,11 +414,6 @@ def evaluate_strategy(
         return evaluate_long_short_moving_average(
             market_view, parameters, decision_time=decision_time
         )
-    if name == "predictive_return_threshold":
-        return evaluate_predictive_return_threshold(
-            market_view, parameters, decision_time=decision_time
-        )
-
     raise StrategyEvaluationError(
         f"Unknown Strategy '{name}'. Available: {list(STRATEGY_REGISTRY.keys())}"
     )
