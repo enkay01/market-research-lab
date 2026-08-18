@@ -1060,6 +1060,36 @@ def test_strategy_endpoints_and_definition_lifecycle(tmp_path):
     assert any(path.is_file() for path in revision_files)
 
 
+def test_strategy_model_feed_requires_a_completed_benchmark_comparison(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Model gate"}).json()
+    request = {
+        "name": "long_flat_moving_average",
+        "dataset_version_id": "dataset-not-used-before-model-gate",
+        "symbol": "AAPL",
+        "parameters": {"predictive_model_run_id": "missing-run"},
+    }
+
+    missing_run = client.post(
+        f"/api/projects/{project['id']}/strategies/evaluate", json=request
+    )
+
+    assert missing_run.status_code == 400
+    assert missing_run.json()["code"] == "strategy_evaluation_error"
+    assert "MOD-009" in missing_run.json()["message"]
+
+    request["parameters"] = {
+        "predictive_model_evaluation": {"evaluation": {"mode": "holdout"}}
+    }
+    incomplete_run = client.post(
+        f"/api/projects/{project['id']}/strategies/evaluate", json=request
+    )
+
+    assert incomplete_run.status_code == 400
+    assert incomplete_run.json()["code"] == "strategy_evaluation_error"
+    assert "benchmark comparison" in incomplete_run.json()["message"]
+
+
 def test_strategy_only_uses_observations_eligible_at_decision_time(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
 

@@ -81,17 +81,6 @@ async function run() {
   const importBtn = page.getByRole("button", { name: "Import File" }).first();
   if (await importBtn.isVisible()) {
     const sampleCsv = path.join(process.cwd(), "sample_market_data.csv");
-    let csvData = "symbol,name,exchange,currency,date,open,high,low,close,volume,available_at\n";
-    let base = 100.0;
-    for (let d = 1; d <= 40; d++) {
-      const monthStr = d <= 31 ? "01" : "02";
-      const fullDate = `2024-${monthStr}-${String(d <= 31 ? d : d - 31).padStart(2, "0")}`;
-      const availStr = `${fullDate}T21:00:00Z`;
-      base += (d % 2 === 0 ? 1.5 : -0.8);
-      csvData += `AAPL,Apple Inc,NASDAQ,USD,${fullDate},${base.toFixed(2)},${(base + 2).toFixed(2)},${(base - 1).toFixed(2)},${(base + 0.5).toFixed(2)},5000000,${availStr}\n`;
-    }
-    fs.writeFileSync(sampleCsv, csvData);
-
     await importBtn.click();
     await page.waitForTimeout(500);
     await page.locator("input[type='file']").setInputFiles(sampleCsv);
@@ -119,35 +108,10 @@ async function run() {
   await page.screenshot({ path: shot1, fullPage: true });
   console.log(`Saved screenshot: ${shot1}`);
 
-  // Switch to Strategies Tab
-  console.log("8. Navigating to Strategies tab to verify MOD-009 strategy evaluation...");
-  const strategiesTab = page.locator("button").filter({ hasText: /Strategies/i }).first();
-  if (await strategiesTab.isVisible()) {
-    await strategiesTab.click();
-    await page.waitForTimeout(1000);
+  const benchmarkCard = page.getByText("Naive Benchmark Comparison").first();
+  if (!(await benchmarkCard.isVisible())) {
+    throw new Error("Naive benchmark comparison was not shown after the Predictive Model Run.");
   }
-
-  // Select Predictive Return Threshold Strategy
-  const stratSelector = page.getByRole("combobox", { name: "Strategy" });
-  if (await stratSelector.isVisible()) {
-    await stratSelector.click();
-    await page.waitForTimeout(300);
-    const predStratOpt = page.getByRole("option", { name: /Predictive Return Threshold/i });
-    if (await predStratOpt.isVisible()) {
-      await predStratOpt.click();
-      await page.waitForTimeout(500);
-    }
-  }
-
-  const evalStratBtn = page.getByRole("button", { name: "Evaluate Strategy" }).first();
-  if (await evalStratBtn.isVisible()) {
-    await evalStratBtn.click();
-    await page.waitForTimeout(2000);
-  }
-
-  const shot2 = path.join(SCREENSHOTS_DIR, "02_predictive_strategy_evaluation.png");
-  await page.screenshot({ path: shot2, fullPage: true });
-  console.log(`Saved screenshot: ${shot2}`);
 
   console.log("E2E browser verification completed successfully!");
   await browser.close();
