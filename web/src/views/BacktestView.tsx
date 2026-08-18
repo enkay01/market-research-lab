@@ -545,7 +545,7 @@ export function BacktestView({ project }: BacktestViewProps) {
         ) : (
           <VStack gap={4}>
             {message && (
-              <Banner variant={bannerType === "warning" ? "warning" : "neutral"}>
+              <Banner status={bannerType === "warning" ? "warning" : "info"}>
                 <Text>{message}</Text>
               </Banner>
             )}
@@ -602,7 +602,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                   />
                 </HStack>
 
-                <HStack gap={3} align="end">
+                <HStack gap={3} align="end" wrap>
                   <TextInput
                     label="Starting Cash ($)"
                     value={startingCash}
@@ -656,6 +656,9 @@ export function BacktestView({ project }: BacktestViewProps) {
                     value={unavailableBorrowInput}
                     onChange={(v) => setUnavailableBorrowInput(typeof v === "string" ? v : "")}
                   />
+                </HStack>
+
+                <HStack gap={3} align="end" wrap>
                   <TextInput
                     label="Max Leverage Limit (x)"
                     value={maxLeverage}
