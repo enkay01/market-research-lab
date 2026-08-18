@@ -36,6 +36,95 @@ class PredictiveModelCalculationError(PredictiveModelError):
 
 SplitName = Literal["training", "validation", "test"]
 EvaluationMode = Literal["holdout", "expanding", "rolling"]
+NaiveBenchmarkName = Literal["zero_return", "historical_mean", "persistence"]
+SampleScope = Literal["in_sample", "validation", "out_of_sample"]
+
+
+NaiveBenchmarkPredictor = Callable[
+    [str, Sequence[float], Mapping[str, float]], float
+]
+
+
+@dataclass(frozen=True)
+class _NaiveBenchmarkSpec:
+    """One explicit, deterministic naive forecast rule."""
+
+    name: NaiveBenchmarkName
+    display_name: str
+    description: str
+    predict: NaiveBenchmarkPredictor
+
+
+def _zero_return_prediction(
+    _: str, __: Sequence[float], ___: Mapping[str, float]
+) -> float:
+    return 0.0
+
+
+def _historical_mean_prediction(
+    _: str, training_targets: Sequence[float], __: Mapping[str, float]
+) -> float:
+    return sum(training_targets) / len(training_targets) if training_targets else 0.0
+
+
+def _persistence_prediction(
+    session_date: str, _: Sequence[float], prior_returns: Mapping[str, float]
+) -> float:
+    return float(prior_returns.get(session_date, 0.0))
+
+
+_NAIVE_BENCHMARKS: dict[NaiveBenchmarkName, _NaiveBenchmarkSpec] = {
+    "zero_return": _NaiveBenchmarkSpec(
+        name="zero_return",
+        display_name="Zero Return Benchmark",
+        description=(
+            "Unconditional zero-return forecast corresponding to the efficient "
+            "market hypothesis baseline."
+        ),
+        predict=_zero_return_prediction,
+    ),
+    "historical_mean": _NaiveBenchmarkSpec(
+        name="historical_mean",
+        display_name="Historical Mean Benchmark",
+        description=(
+            "Constant forecast equal to the historical sample mean return over "
+            "the eligible training window."
+        ),
+        predict=_historical_mean_prediction,
+    ),
+    "persistence": _NaiveBenchmarkSpec(
+        name="persistence",
+        display_name="Persistence Benchmark",
+        description=(
+            "Naive random-walk forecast using the most recent observed session "
+            "return available at the prediction session."
+        ),
+        predict=_persistence_prediction,
+    ),
+}
+
+
+@dataclass(frozen=True)
+class NaiveBenchmarkEvaluation:
+    """Explicit naive benchmark definition and comparable evaluation records."""
+
+    name: NaiveBenchmarkName
+    display_name: str
+    description: str
+    period_metrics: dict[str, dict[str, float]]
+    out_of_sample_comparison: dict[str, JsonValue]
+    completed: bool = True
+
+    def to_json(self) -> dict[str, JsonValue]:
+        """Return the complete benchmark comparison as a JSON-compatible object."""
+        return {
+            "name": self.name,
+            "display_name": self.display_name,
+            "description": self.description,
+            "period_metrics": self.period_metrics,
+            "out_of_sample_comparison": self.out_of_sample_comparison,
+            "completed": self.completed,
+        }
 
 
 @dataclass(frozen=True)
@@ -199,6 +288,9 @@ class PredictiveModelPeriodMetrics:
     period: SplitName
     observations: int
     metrics: dict[str, float]
+    benchmark_metrics: dict[str, float] = field(default_factory=dict)
+    comparison: dict[str, JsonValue] = field(default_factory=dict)
+    sample_scope: SampleScope = "in_sample"
 
     def to_json(self) -> dict[str, JsonValue]:
         """Return period-labelled metrics for artifacts and interface responses."""
@@ -206,6 +298,9 @@ class PredictiveModelPeriodMetrics:
             "period": self.period,
             "observations": self.observations,
             "metrics": self.metrics,
+            "benchmark_metrics": self.benchmark_metrics,
+            "comparison": self.comparison,
+            "sample_scope": self.sample_scope,
         }
 
 
@@ -250,6 +345,30 @@ class PredictiveModelEvaluation:
     splits: tuple[PredictiveModelSplit, ...]
     period_metrics: tuple[PredictiveModelPeriodMetrics, ...]
     folds: tuple[PredictiveModelFold, ...] = ()
+    benchmark: NaiveBenchmarkEvaluation | None = None
+    assumptions: tuple[str, ...] = (
+        "Linear relationship between trailing momentum and next session return",
+        "Feature values computed solely from session observations available at decision time",
+        "Target represents next session simple return without trading friction or market impact",
+        "Strict chronological ordering without future data leakage in training or validation",
+    )
+    warnings: tuple[str, ...] = (
+        "Past predictive relationship may not persist in changing market regimes",
+        "Single-feature momentum regression does not account for volatility clustering",
+    )
+    limitations: tuple[str, ...] = (
+        "Model emits forecast return values only and does not decide portfolio weights or execution orders",
+        "Evaluation assumes execution at exact close price without slippage or transaction fees",
+    )
+    unsupported_claims: tuple[str, ...] = (
+        "Model does not guarantee trading profitability or positive risk-adjusted alpha",
+        "Model is not an autonomous trading agent or order router",
+    )
+    is_eligible_for_strategy: bool = False
+    eligibility_reason: str = (
+        "Predictive Model is not eligible for a Strategy until the naive benchmark "
+        "comparison is complete."
+    )
 
     def to_json(self) -> dict[str, JsonValue]:
         """Return the complete evaluation record for a Run manifest."""
@@ -258,6 +377,13 @@ class PredictiveModelEvaluation:
             "splits": [split.to_json() for split in self.splits],
             "period_metrics": [metrics.to_json() for metrics in self.period_metrics],
             "folds": [fold.to_json() for fold in self.folds],
+            "benchmark": self.benchmark.to_json() if self.benchmark else None,
+            "assumptions": list(self.assumptions),
+            "warnings": list(self.warnings),
+            "limitations": list(self.limitations),
+            "unsupported_claims": list(self.unsupported_claims),
+            "is_eligible_for_strategy": self.is_eligible_for_strategy,
+            "eligibility_reason": self.eligibility_reason,
             "leakage_policy": {
                 "initial_feature_and_preprocessing_fit_scope": "training_only",
                 "future_labels_excluded_from_each_training_window": True,
@@ -350,6 +476,7 @@ class MomentumRegressionParameters(BaseModel):
     validation_fraction: float = Field(default=0.2, gt=0.0, lt=1.0)
     test_fraction: float = Field(default=0.2, gt=0.0, lt=1.0)
     evaluation_mode: EvaluationMode = "holdout"
+    naive_benchmark: NaiveBenchmarkName = "zero_return"
 
     @model_validator(mode="after")
     def leaves_training_observations(self) -> "MomentumRegressionParameters":
@@ -427,6 +554,7 @@ def _resolve_parameters(
         "validation_fraction": config.validation_fraction,
         "test_fraction": config.test_fraction,
         "evaluation_mode": config.evaluation_mode,
+        "naive_benchmark": config.naive_benchmark,
     }
 
 
@@ -631,6 +759,13 @@ PREDICTIVE_MODEL_REGISTRY: dict[str, PredictiveModelSpec] = {
                     description="Chronological evaluation mode for validation and test folds.",
                     options=("holdout", "expanding", "rolling"),
                 ),
+                PredictiveModelParameter(
+                    name="naive_benchmark",
+                    param_type="str",
+                    default="zero_return",
+                    description="Explicit naive benchmark for out-of-sample comparison.",
+                    options=("zero_return", "historical_mean", "persistence"),
+                ),
             ),
             output_meaning=(
                 "Predicted next session simple return, expressed as a decimal fraction, "
@@ -813,35 +948,82 @@ def _eligible_training_frame(
     return eligible
 
 
-def _period_metrics(
+def _evaluate_period_metrics(
     period: SplitName,
     predictions: Sequence[PredictiveModelOutput],
+    benchmark_predictions: Sequence[float],
 ) -> PredictiveModelPeriodMetrics:
-    """Calculate labelled metrics for one period without touching other periods."""
+    """Calculate labelled model and naive benchmark metrics for one chronological period."""
+    sample_scope: SampleScope = (
+        "in_sample" if period == "training" else "validation" if period == "validation" else "out_of_sample"
+    )
     labelled = [
         prediction
         for prediction in predictions
         if isinstance(prediction, PredictiveModelPrediction)
     ]
+    if len(benchmark_predictions) != len(labelled):
+        raise PredictiveModelCalculationError(
+            f"The naive benchmark produced {len(benchmark_predictions)} observations "
+            f"for {len(labelled)} labelled {period} predictions."
+        )
     if not labelled:
-        return PredictiveModelPeriodMetrics(period=period, observations=0, metrics={})
+        return PredictiveModelPeriodMetrics(
+            period=period,
+            observations=0,
+            metrics={},
+            benchmark_metrics={},
+            comparison={},
+            sample_scope=sample_scope,
+        )
 
     actuals = [float(prediction.actual_target) for prediction in labelled]
-    errors = [
-        float(prediction.predicted_value) - actual
-        for prediction, actual in zip(labelled, actuals, strict=True)
-    ]
+    model_preds = [float(prediction.predicted_value) for prediction in labelled]
+    bench_preds = [float(b) for b in benchmark_predictions]
+
+    model_errors = [m - a for m, a in zip(model_preds, actuals, strict=True)]
+    bench_errors = [b - a for b, a in zip(bench_preds, actuals, strict=True)]
+
     actual_mean = sum(actuals) / len(actuals)
-    residual_sum = sum(error * error for error in errors)
-    total_sum = sum((actual - actual_mean) ** 2 for actual in actuals)
+    total_sum = sum((a - actual_mean) ** 2 for a in actuals)
+
+    model_residual_sum = sum(e * e for e in model_errors)
+    model_mae = sum(abs(e) for e in model_errors) / len(model_errors)
+    model_rmse = math.sqrt(model_residual_sum / len(model_errors))
+    model_r2 = 1.0 - model_residual_sum / total_sum if total_sum > 1e-15 else 0.0
+
+    bench_residual_sum = sum(e * e for e in bench_errors)
+    bench_mae = sum(abs(e) for e in bench_errors) / len(bench_errors)
+    bench_rmse = math.sqrt(bench_residual_sum / len(bench_errors))
+    bench_r2 = 1.0 - bench_residual_sum / total_sum if total_sum > 1e-15 else 0.0
+
+    rmse_ratio = model_rmse / bench_rmse if bench_rmse > 1e-15 else 1.0
+    mae_ratio = model_mae / bench_mae if bench_mae > 1e-15 else 1.0
+    rmse_improvement = 1.0 - rmse_ratio if bench_rmse > 1e-15 else 0.0
+    mae_improvement = 1.0 - mae_ratio if bench_mae > 1e-15 else 0.0
+    outperforms_benchmark = bool(model_rmse < bench_rmse)
+
     return PredictiveModelPeriodMetrics(
         period=period,
         observations=len(labelled),
         metrics={
-            "mae": sum(abs(error) for error in errors) / len(errors),
-            "rmse": math.sqrt(residual_sum / len(errors)),
-            "r2": 1.0 - residual_sum / total_sum if total_sum > 1e-15 else 0.0,
+            "mae": model_mae,
+            "rmse": model_rmse,
+            "r2": model_r2,
         },
+        benchmark_metrics={
+            "mae": bench_mae,
+            "rmse": bench_rmse,
+            "r2": bench_r2,
+        },
+        comparison={
+            "rmse_ratio": rmse_ratio,
+            "mae_ratio": mae_ratio,
+            "rmse_improvement": rmse_improvement,
+            "mae_improvement": mae_improvement,
+            "outperforms_benchmark": outperforms_benchmark,
+        },
+        sample_scope=sample_scope,
     )
 
 
@@ -885,6 +1067,14 @@ def run_predictive_model(
             "evaluation_mode must be one of: holdout, expanding, rolling."
         )
     evaluation_mode: EvaluationMode = raw_evaluation_mode
+    raw_benchmark_name = str(resolved_parameters.get("naive_benchmark", "zero_return"))
+    if raw_benchmark_name not in _NAIVE_BENCHMARKS:
+        raise PredictiveModelParameterError(
+            "naive_benchmark must be one of: zero_return, historical_mean, persistence."
+        )
+    naive_benchmark_name = raw_benchmark_name
+    benchmark_spec = _NAIVE_BENCHMARKS[naive_benchmark_name]
+
     frame = build_supervised_frame(
         bars,
         momentum_period=momentum_period,
@@ -900,6 +1090,15 @@ def run_predictive_model(
         ),
     )
 
+    # Build prior realized return lookup for persistence benchmark
+    sorted_bars = sorted(bars, key=lambda b: b.session_date)
+    prior_returns: dict[str, float] = {}
+    for i, bar in enumerate(sorted_bars):
+        if i > 0 and sorted_bars[i - 1].close > 0:
+            prior_returns[bar.session_date] = (bar.close / sorted_bars[i - 1].close) - 1.0
+        else:
+            prior_returns[bar.session_date] = 0.0
+
     split_frames = chronological_split.frames
     training_frame = split_frames["training"]
     artifact = fit_model(name, training_frame, resolved_parameters, seed)
@@ -914,14 +1113,29 @@ def run_predictive_model(
         for target_date in period_frame["target_date"].tolist():
             period_by_target[str(target_date)] = period_name
 
+    training_targets = [float(t) for t in training_frame["next_session_return"].tolist()]
+
     prediction_by_session: dict[str, PredictiveModelOutput] = {}
     fold_artifacts = [artifact]
     fold_records: list[PredictiveModelFold] = []
+    validation_bench_preds: list[float] = []
+    test_bench_preds: list[float] = []
+
     if evaluation_mode == "holdout":
         evaluated_predictions = predict(artifact, frame)
         prediction_by_session = {
             prediction.session_date: prediction for prediction in evaluated_predictions
         }
+        for period_name, bench_list in (
+            ("validation", validation_bench_preds),
+            ("test", test_bench_preds),
+        ):
+            period_frame = split_frames[period_name]
+            for _, row in period_frame.iterrows():
+                session_date = str(row["session_date"])
+                bench_list.append(
+                    benchmark_spec.predict(session_date, training_targets, prior_returns)
+                )
     else:
         initial_training_start = artifact.training_start
         fit_scope_by_period = {
@@ -930,6 +1144,9 @@ def run_predictive_model(
         fold_index = 1
         for period_name in ("validation", "test"):
             period_frame = split_frames[period_name]
+            target_bench_list = (
+                validation_bench_preds if period_name == "validation" else test_bench_preds
+            )
             for _, row in period_frame.iterrows():
                 prediction_session_date = str(row["session_date"])
                 fitting_frame = _eligible_training_frame(
@@ -956,6 +1173,18 @@ def run_predictive_model(
                     else raw_prediction
                 )
                 prediction_by_session[prediction.session_date] = prediction
+
+                fold_targets = [
+                    float(t) for t in fitting_frame["next_session_return"].tolist()
+                ]
+                target_bench_list.append(
+                    benchmark_spec.predict(
+                        prediction_session_date,
+                        fold_targets,
+                        prior_returns,
+                    )
+                )
+
                 fold_records.append(
                     PredictiveModelFold(
                         fold_index=fold_index,
@@ -995,21 +1224,76 @@ def run_predictive_model(
         else:
             predictions.append(prediction)
 
-    training_metrics = {
-        "r2": float(artifact.training_metrics["in_sample_r2"]),
-        "rmse": float(artifact.training_metrics["in_sample_rmse"]),
-        "naive_rmse": float(artifact.training_metrics["naive_benchmark_rmse"]),
-    }
-    period_metrics = (
-        PredictiveModelPeriodMetrics(
-            period="training",
-            observations=len(training_frame),
-            metrics=training_metrics,
-        ),
-        _period_metrics("validation", _labelled_predictions(predictions, "validation")),
-        _period_metrics("test", _labelled_predictions(predictions, "test")),
+    # Training benchmark predictions
+    training_bench_preds: list[float] = []
+    for _, row in training_frame.iterrows():
+        session_date = str(row["session_date"])
+        training_bench_preds.append(
+            benchmark_spec.predict(session_date, training_targets, prior_returns)
+        )
+
+    training_model_predictions = [
+        replace(p, period="training")
+        for p in predict(artifact, training_frame)
+        if isinstance(p, PredictiveModelPrediction)
+    ]
+    training_period_metric = _evaluate_period_metrics(
+        "training", training_model_predictions, training_bench_preds
     )
-    metrics = {
+    validation_period_metric = _evaluate_period_metrics(
+        "validation",
+        _labelled_predictions(predictions, "validation"),
+        validation_bench_preds,
+    )
+    test_period_metric = _evaluate_period_metrics(
+        "test",
+        _labelled_predictions(predictions, "test"),
+        test_bench_preds,
+    )
+
+    period_metrics = (
+        training_period_metric,
+        validation_period_metric,
+        test_period_metric,
+    )
+
+    out_of_sample_comparison: dict[str, JsonValue] = {
+        "benchmark_name": naive_benchmark_name,
+        "period": "test",
+        "sample_scope": "out_of_sample",
+        "observations": test_period_metric.observations,
+        "same_eligible_periods": True,
+        "model_rmse": test_period_metric.metrics.get("rmse", 0.0),
+        "benchmark_rmse": test_period_metric.benchmark_metrics.get("rmse", 0.0),
+        "rmse_improvement": test_period_metric.comparison.get("rmse_improvement", 0.0),
+        "model_mae": test_period_metric.metrics.get("mae", 0.0),
+        "benchmark_mae": test_period_metric.benchmark_metrics.get("mae", 0.0),
+        "mae_improvement": test_period_metric.comparison.get("mae_improvement", 0.0),
+        "model_r2": test_period_metric.metrics.get("r2", 0.0),
+        "benchmark_r2": test_period_metric.benchmark_metrics.get("r2", 0.0),
+        "outperforms_benchmark": test_period_metric.comparison.get(
+            "outperforms_benchmark", False
+        ),
+        "status": "evaluated",
+        "comparison_complete": True,
+    }
+
+    if test_period_metric.observations == 0:
+        raise PredictiveModelCalculationError(
+            "The out-of-sample test period has no labelled observations for benchmark "
+            "comparison."
+        )
+
+    benchmark_eval = NaiveBenchmarkEvaluation(
+        name=naive_benchmark_name,
+        display_name=benchmark_spec.display_name,
+        description=benchmark_spec.description,
+        period_metrics={pm.period: pm.benchmark_metrics for pm in period_metrics},
+        out_of_sample_comparison=out_of_sample_comparison,
+        completed=True,
+    )
+
+    metrics: dict[str, float] = {
         metric_name: float(metric_value)
         for metric_name, metric_value in artifact.training_metrics.items()
         if isinstance(metric_value, (int, float))
@@ -1017,12 +1301,31 @@ def run_predictive_model(
     for period_metric in period_metrics:
         for metric_name, metric_value in period_metric.metrics.items():
             metrics[f"{period_metric.period}_{metric_name}"] = float(metric_value)
+        for metric_name, metric_value in period_metric.benchmark_metrics.items():
+            metrics[f"{period_metric.period}_benchmark_{metric_name}"] = float(metric_value)
+        for metric_name, metric_value in period_metric.comparison.items():
+            if isinstance(metric_value, (int, float)):
+                metrics[f"{period_metric.period}_{metric_name}"] = float(metric_value)
+
+    is_eligible = bool(
+        benchmark_eval.completed
+        and test_period_metric.observations > 0
+        and "rmse_improvement" in out_of_sample_comparison
+    )
+    eligibility_reason = (
+        "Naive benchmark comparison is complete on the labelled out-of-sample test period."
+        if is_eligible
+        else "Naive benchmark comparison is incomplete or missing labelled out-of-sample data."
+    )
 
     evaluation = PredictiveModelEvaluation(
         mode=evaluation_mode,
         splits=chronological_split.periods,
         period_metrics=period_metrics,
         folds=tuple(fold_records),
+        benchmark=benchmark_eval,
+        is_eligible_for_strategy=is_eligible,
+        eligibility_reason=eligibility_reason,
     )
     return PredictiveModelCalculation(
         metadata=spec.metadata,

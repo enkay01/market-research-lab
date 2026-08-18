@@ -1703,6 +1703,30 @@ export interface components {
              */
             borrow_fees: number;
         };
+        /** NaiveBenchmarkEvaluationResponse */
+        NaiveBenchmarkEvaluationResponse: {
+            /** Name */
+            name: string;
+            /** Display Name */
+            display_name: string;
+            /** Description */
+            description: string;
+            /** Period Metrics */
+            period_metrics: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+            /** Out Of Sample Comparison */
+            out_of_sample_comparison: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /**
+             * Completed
+             * @default true
+             */
+            completed: boolean;
+        };
         /** PositionSnapshotResponse */
         PositionSnapshotResponse: {
             /** Shares */
@@ -1849,6 +1873,20 @@ export interface components {
             metrics: {
                 [key: string]: number;
             };
+            /** Benchmark Metrics */
+            benchmark_metrics?: {
+                [key: string]: number;
+            };
+            /** Comparison */
+            comparison?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /**
+             * Sample Scope
+             * @default in_sample
+             * @enum {string}
+             */
+            sample_scope: "in_sample" | "validation" | "out_of_sample";
         };
         /** PredictiveModelPredictionResponse */
         PredictiveModelPredictionResponse: {
@@ -1955,6 +1993,25 @@ export interface components {
             fold_artifacts?: components["schemas"]["PredictiveModelArtifactResponse"][];
             /** Folds */
             folds?: components["schemas"]["PredictiveModelFoldResponse"][];
+            benchmark?: components["schemas"]["NaiveBenchmarkEvaluationResponse"] | null;
+            /** Assumptions */
+            assumptions?: string[];
+            /** Warnings */
+            warnings?: string[];
+            /** Limitations */
+            limitations?: string[];
+            /** Unsupported Claims */
+            unsupported_claims?: string[];
+            /**
+             * Is Eligible For Strategy
+             * @default false
+             */
+            is_eligible_for_strategy: boolean;
+            /**
+             * Eligibility Reason
+             * @default Predictive Model is not eligible for a Strategy until the naive benchmark comparison is complete.
+             */
+            eligibility_reason: string;
         };
         /** PredictiveModelSplitResponse */
         PredictiveModelSplitResponse: {

@@ -148,3 +148,72 @@ def test_evaluate_strategy_unknown_name_raises():
             {},
             decision_time="2024-01-05T21:00:00Z",
         )
+
+
+def test_predictive_return_threshold_evaluates_long_and_flat():
+    view = _view([100.0, 101.0, 102.0])
+    bullish_result = evaluate_strategy(
+        "predictive_return_threshold",
+        view,
+        {
+            "threshold": 0.005,
+            "predicted_return": 0.012,
+            "benchmark_comparison_completed": True,
+        },
+        decision_time="2024-01-04T21:00:00Z",
+    )
+    assert len(bullish_result.targets) == 1
+    assert bullish_result.targets[0].weight == 1.0
+    assert "long" in bullish_result.targets[0].rationale
+
+    flat_result = evaluate_strategy(
+        "predictive_return_threshold",
+        view,
+        {
+            "threshold": 0.005,
+            "predicted_return": 0.002,
+            "benchmark_comparison_completed": True,
+        },
+        decision_time="2024-01-04T21:00:00Z",
+    )
+    assert len(flat_result.targets) == 1
+    assert flat_result.targets[0].weight == 0.0
+    assert "flat" in flat_result.targets[0].rationale
+
+
+def test_predictive_model_cannot_feed_strategy_without_completed_benchmark_mod009():
+    from market_research_lab.strategies import validate_model_eligibility_for_strategy
+
+    view = _view([100.0, 101.0, 102.0])
+    with pytest.raises(
+        StrategyEvaluationError, match="cannot feed an enabled Strategy until its naive benchmark"
+    ):
+        evaluate_strategy(
+            "predictive_return_threshold",
+            view,
+            {
+                "threshold": 0.0,
+                "predicted_return": 0.05,
+                "benchmark_comparison_completed": False,
+            },
+            decision_time="2024-01-04T21:00:00Z",
+        )
+
+    # validate_model_eligibility_for_strategy rejects models with missing benchmark
+    with pytest.raises(StrategyEvaluationError, match="MOD-009"):
+        validate_model_eligibility_for_strategy({"evaluation": {"mode": "holdout"}})
+
+    with pytest.raises(StrategyEvaluationError, match="MOD-009"):
+        validate_model_eligibility_for_strategy(
+            {"evaluation": {"benchmark": {"completed": False}}}
+        )
+
+    # Valid completed benchmark passes without error
+    validate_model_eligibility_for_strategy(
+        {
+            "evaluation": {
+                "benchmark": {"name": "zero_return", "completed": True},
+                "is_eligible_for_strategy": True,
+            }
+        }
+    )

@@ -422,12 +422,30 @@ def generate_predictive_model_html_report(
     warnings_raw = result_data.get("warnings")
     warnings = warnings_raw if isinstance(warnings_raw, list) else []
 
+    benchmark_raw = (
+        evaluation.get("benchmark")
+        or result_data.get("benchmark")
+        or result_data.get("benchmark_comparison")
+    )
+    benchmark = benchmark_raw if isinstance(benchmark_raw, dict) else {}
+    bench_name = html.escape(
+        str(benchmark.get("display_name") or benchmark.get("name") or "Zero Return Benchmark")
+    )
+    bench_desc = html.escape(str(benchmark.get("description") or ""))
+
+    assumptions_raw = evaluation.get("assumptions") or result_data.get("assumptions")
+    assumptions = assumptions_raw if isinstance(assumptions_raw, list) else []
+    limitations_raw = evaluation.get("limitations") or result_data.get("limitations")
+    limitations = limitations_raw if isinstance(limitations_raw, list) else []
+    unsupported_raw = evaluation.get("unsupported_claims") or result_data.get("unsupported_claims")
+    unsupported_claims = unsupported_raw if isinstance(unsupported_raw, list) else []
+
     doc = [
         "<!DOCTYPE html>",
         '<html lang="en">',
         "<head>",
         '  <meta charset="utf-8">',
-        f"  <title>{model_name} — Chronological Evaluation</title>",
+        f"  <title>{model_name} — Chronological Evaluation & Benchmark Comparison</title>",
         "  <style>",
         "    body { font-family: sans-serif; line-height: 1.5; color: #1e293b; "
         "max-width: 960px; margin: 40px auto; padding: 0 20px; }",
@@ -438,6 +456,10 @@ def generate_predictive_model_html_report(
         "    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e2e8f0; }",
         "    th { background: #f8fafc; }",
         "    .note { background: #eff6ff; border-left: 4px solid #2563eb; padding: 12px 16px; }",
+        "    .benchmark-box { background: #f0fdf4; border: 1px solid #bbf7d0; "
+        "border-radius: 8px; padding: 16px; margin: 16px 0; }",
+        "    .warning-box { background: #fffbeb; border: 1px solid #fef3c7; "
+        "border-radius: 8px; padding: 16px; margin: 16px 0; }",
         "  </style>",
         "</head>",
         "<body>",
@@ -447,10 +469,13 @@ def generate_predictive_model_html_report(
         f'<strong>Dataset Versions:</strong> '
         f'{html.escape(", ".join(str(dataset) for dataset in datasets))}<br>'
         f'<strong>Evaluation Mode:</strong> {evaluation_mode}<br>'
+        f'<strong>Naive Benchmark:</strong> {bench_name}<br>'
         '<strong>Metric Scope:</strong> In-sample training; held-out validation and '
-        'out-of-sample</div>',
+        'out-of-sample test</div>',
         '  <p class="note">The initial fit uses training observations only. Each later '
-        'fold uses only data available before its target date.</p>',
+        'fold uses only data available before its decision session.</p>',
+        f'  <div class="benchmark-box"><strong>Naive Benchmark Comparison:</strong> {bench_name}'
+        f'<br><small>{bench_desc}</small></div>',
         "  <h2>Chronological Periods</h2>",
         "  <table>",
         "    <thead><tr><th>Period</th><th>Target Dates</th><th>Feature Dates</th>"
@@ -507,27 +532,43 @@ def generate_predictive_model_html_report(
                 "</tr>"
             )
         doc.extend(["    </tbody>", "  </table>"])
-    doc.extend(["  <h2>Period Metrics</h2>", "  <table>"])
-    doc.append(
-        "    <thead><tr><th>Period</th><th>Observations</th><th>Metric</th>"
-        "<th>Value</th></tr></thead>"
+    doc.extend(
+        [
+            "  <h2>Model vs Naive Benchmark Performance</h2>",
+            "  <table>",
+            "    <thead><tr><th>Period</th><th>Observations</th><th>Metric</th>"
+            "<th>Model Value</th><th>Benchmark Value</th><th>Improvement</th></tr></thead>",
+            "    <tbody>",
+        ]
     )
-    doc.append("    <tbody>")
     for period_metric in period_metrics:
         if not isinstance(period_metric, dict):
             continue
         metric_values = period_metric.get("metrics")
         if not isinstance(metric_values, dict):
             continue
+        bench_metrics = period_metric.get("benchmark_metrics")
+        bench_metrics_dict = bench_metrics if isinstance(bench_metrics, dict) else {}
+        comparison = period_metric.get("comparison")
+        comparison_dict = comparison if isinstance(comparison, dict) else {}
+        period = period_metric.get("period", "")
+        period_label = "out-of-sample (test)" if period == "test" else period
         for metric_name, metric_value in metric_values.items():
-            period = period_metric.get("period", "")
-            period_label = "out-of-sample" if period == "test" else period
+            bench_val = bench_metrics_dict.get(metric_name, "—")
+            impr_key = f"{metric_name}_improvement"
+            impr_val = comparison_dict.get(impr_key, "—")
+            if isinstance(impr_val, (int, float)):
+                impr_str = f"{impr_val * 100:+.2f}%"
+            else:
+                impr_str = str(impr_val)
             doc.append(
                 "      <tr>"
                 f"<td>{html.escape(str(period_label))}</td>"
                 f"<td>{html.escape(str(period_metric.get('observations', '')))}</td>"
-                f"<td>{html.escape(str(metric_name))}</td>"
+                f"<td>{html.escape(str(metric_name).upper())}</td>"
                 f"<td>{html.escape(str(metric_value))}</td>"
+                f"<td>{html.escape(str(bench_val))}</td>"
+                f"<td>{html.escape(impr_str)}</td>"
                 "</tr>"
             )
     doc.extend(
@@ -545,23 +586,37 @@ def generate_predictive_model_html_report(
             f"      <tr><th>{html.escape(label)}</th>"
             f"<td>{html.escape(str(value))}</td></tr>"
         )
-    doc.extend(
-        [
-            "    </tbody>",
-            "  </table>",
-            "  <h2>Warnings</h2>",
-            "  <ul>",
-        ]
-    )
+    doc.extend(["    </tbody>", "  </table>"])
+
+    if assumptions:
+        doc.extend(["  <h2>Assumptions</h2>", "  <ul>"])
+        for assumption in assumptions:
+            doc.append(f"    <li>{html.escape(str(assumption))}</li>")
+        doc.append("  </ul>")
+
+    doc.extend(["  <h2>Warnings</h2>", "  <ul>"])
     if warnings:
         for warning in warnings:
             doc.append(f"    <li>{html.escape(str(warning))}</li>")
     else:
         doc.append("    <li>No warnings recorded.</li>")
+    doc.append("  </ul>")
+
+    if limitations:
+        doc.extend(["  <h2>Limitations</h2>", "  <ul>"])
+        for limitation in limitations:
+            doc.append(f"    <li>{html.escape(str(limitation))}</li>")
+        doc.append("  </ul>")
+
+    if unsupported_claims:
+        doc.extend(["  <h2>Unsupported Claims</h2>", "  <ul>"])
+        for claim in unsupported_claims:
+            doc.append(f"    <li>{html.escape(str(claim))}</li>")
+        doc.append("  </ul>")
+
     doc.extend(
         [
-            "  </ul>",
-            "  <footer>Market Research Lab — Predictive Model Run</footer>",
+            "  <footer>Market Research Lab — Predictive Model Run & Benchmark Report</footer>",
             "</body>",
             "</html>",
         ]
@@ -576,9 +631,22 @@ def generate_predictive_model_csv(result_data: dict[str, JsonValue]) -> str:
     writer.writerow(["Predictive Model", result_data.get("model_name", "")])
     writer.writerow(["Run ID", result_data.get("run_id", "")])
     writer.writerow(["Model Revision", result_data.get("model_revision", "")])
+    evaluation_raw = result_data.get("evaluation")
+    evaluation = evaluation_raw if isinstance(evaluation_raw, dict) else {}
+    benchmark_raw = (
+        evaluation.get("benchmark")
+        or result_data.get("benchmark")
+        or result_data.get("benchmark_comparison")
+    )
+    benchmark = benchmark_raw if isinstance(benchmark_raw, dict) else {}
+    writer.writerow(
+        ["Naive Benchmark", benchmark.get("display_name") or benchmark.get("name") or ""]
+    )
     writer.writerow([])
-    writer.writerow(["Period", "Observations", "Metric", "Value"])
-    metrics_raw = result_data.get("period_metrics")
+    writer.writerow(
+        ["Period", "Observations", "Metric", "Model Value", "Benchmark Value", "Improvement"]
+    )
+    metrics_raw = evaluation.get("period_metrics") or result_data.get("period_metrics")
     period_metrics = metrics_raw if isinstance(metrics_raw, list) else []
     for period_metric in period_metrics:
         if not isinstance(period_metric, dict):
@@ -586,15 +654,23 @@ def generate_predictive_model_csv(result_data: dict[str, JsonValue]) -> str:
         values = period_metric.get("metrics")
         if not isinstance(values, dict):
             continue
+        bench_metrics = period_metric.get("benchmark_metrics")
+        bench_dict = bench_metrics if isinstance(bench_metrics, dict) else {}
+        comparison = period_metric.get("comparison")
+        comp_dict = comparison if isinstance(comparison, dict) else {}
         period = period_metric.get("period", "")
         period_label = "out-of-sample" if period == "test" else period
         for metric_name, metric_value in values.items():
+            bench_val = bench_dict.get(metric_name, "")
+            impr_val = comp_dict.get(f"{metric_name}_improvement", "")
             writer.writerow(
                 [
                     period_label,
                     period_metric.get("observations", ""),
                     metric_name,
                     metric_value,
+                    bench_val,
+                    impr_val,
                 ]
             )
     writer.writerow([])
@@ -612,7 +688,7 @@ def generate_predictive_model_csv(result_data: dict[str, JsonValue]) -> str:
             "Value",
         ]
     )
-    folds_raw = result_data.get("folds")
+    folds_raw = evaluation.get("folds") or result_data.get("folds")
     folds = folds_raw if isinstance(folds_raw, list) else []
     for fold in folds:
         if not isinstance(fold, dict):
