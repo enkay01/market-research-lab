@@ -642,6 +642,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/predictive-models/runs/{run_id}/export/{format_type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Predictive Model */
+        get: operations["export_predictive_model_api_projects__project_id__predictive_models_runs__run_id__export__format_type__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/strategies": {
         parameters: {
             query?: never;
@@ -751,10 +768,7 @@ export interface components {
             run_id?: string | null;
             /** Strategy Revision */
             strategy_revision?: string | null;
-            /** Specification */
-            specification: {
-                [key: string]: components["schemas"]["JsonValue-Output"];
-            };
+            specification: components["schemas"]["BacktestSpecificationResponse"];
             /** Signals */
             signals: components["schemas"]["StrategyTargetResponse"][];
             /** Fills */
@@ -810,6 +824,49 @@ export interface components {
              */
             price_field: "close" | "open" | "high" | "low";
             execution?: components["schemas"]["ExecutionModelAssumptionsRequest"];
+        };
+        /** BacktestSpecificationResponse */
+        BacktestSpecificationResponse: {
+            /** Strategy Name */
+            strategy_name: string;
+            /** Strategy Revision */
+            strategy_revision: string;
+            /** Dataset Version Id */
+            dataset_version_id: string;
+            /**
+             * Security Id
+             * @default
+             */
+            security_id: string;
+            /**
+             * Start Date
+             * @default
+             */
+            start_date: string;
+            /**
+             * End Date
+             * @default
+             */
+            end_date: string;
+            /**
+             * Starting Cash
+             * @default 100000
+             */
+            starting_cash: number;
+            /** Parameters */
+            parameters?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /**
+             * Price Field
+             * @default close
+             */
+            price_field: string;
+            execution?: components["schemas"]["ExecutionModelAssumptionsResponse"];
+            /** Universe */
+            universe?: string[];
+            /** Benchmark Security Id */
+            benchmark_security_id?: string | null;
         };
         /** Body_import_dataset_api_datasets_post */
         Body_import_dataset_api_datasets_post: {
@@ -1126,6 +1183,48 @@ export interface components {
              * @default 0
              */
             slippage_rate: number;
+            /**
+             * Allow Shorting
+             * @default true
+             */
+            allow_shorting: boolean;
+            /**
+             * Borrow Fee Rate
+             * @default 0
+             */
+            borrow_fee_rate: number;
+            /** Unavailable Borrow */
+            unavailable_borrow?: string[];
+        };
+        /** ExecutionModelAssumptionsResponse */
+        ExecutionModelAssumptionsResponse: {
+            /**
+             * Schedule
+             * @default daily
+             */
+            schedule: string;
+            /**
+             * Commission Rate
+             * @default 0
+             */
+            commission_rate: number;
+            /**
+             * Slippage Rate
+             * @default 0
+             */
+            slippage_rate: number;
+            /**
+             * Allow Shorting
+             * @default true
+             */
+            allow_shorting: boolean;
+            /**
+             * Borrow Fee Rate
+             * @default 0
+             */
+            borrow_fee_rate: number;
+            /** Unavailable Borrow */
+            unavailable_borrow?: string[];
         };
         /** FCFFDCFInputResponse */
         FCFFDCFInputResponse: {
@@ -1557,6 +1656,11 @@ export interface components {
              * @default 0
              */
             net_exposure: number;
+            /**
+             * Borrow Fees
+             * @default 0
+             */
+            borrow_fees: number;
         };
         /** PositionSnapshotResponse */
         PositionSnapshotResponse: {
@@ -1599,6 +1703,29 @@ export interface components {
             training_metrics: {
                 [key: string]: number;
             };
+            /** Feature Definition */
+            feature_definition?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Preprocessing */
+            preprocessing?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+        };
+        /** PredictiveModelForecastResponse */
+        PredictiveModelForecastResponse: {
+            /** Session Date */
+            session_date: string;
+            /** Feature Value */
+            feature_value: number;
+            /** Predicted Value */
+            predicted_value: number;
+            /** Actual Target */
+            actual_target?: null;
+            /** Target Date */
+            target_date?: null;
+            /** Period */
+            period?: null;
         };
         /** PredictiveModelMetadataResponse */
         PredictiveModelMetadataResponse: {
@@ -1639,6 +1766,20 @@ export interface components {
             /** Options */
             options?: string[] | null;
         };
+        /** PredictiveModelPeriodMetricsResponse */
+        PredictiveModelPeriodMetricsResponse: {
+            /**
+             * Period
+             * @enum {string}
+             */
+            period: "training" | "validation" | "test";
+            /** Observations */
+            observations: number;
+            /** Metrics */
+            metrics: {
+                [key: string]: number;
+            };
+        };
         /** PredictiveModelPredictionResponse */
         PredictiveModelPredictionResponse: {
             /** Session Date */
@@ -1648,7 +1789,11 @@ export interface components {
             /** Predicted Value */
             predicted_value: number;
             /** Actual Target */
-            actual_target: number | null;
+            actual_target: number;
+            /** Target Date */
+            target_date?: string | null;
+            /** Period */
+            period?: ("training" | "validation" | "test") | null;
         };
         /** PredictiveModelRunRequest */
         PredictiveModelRunRequest: {
@@ -1711,7 +1856,7 @@ export interface components {
             outputs: string[];
             artifact: components["schemas"]["PredictiveModelArtifactResponse"];
             /** Predictions */
-            predictions: components["schemas"]["PredictiveModelPredictionResponse"][];
+            predictions: (components["schemas"]["PredictiveModelPredictionResponse"] | components["schemas"]["PredictiveModelForecastResponse"])[];
             /** Metrics */
             metrics: {
                 [key: string]: number;
@@ -1726,6 +1871,40 @@ export interface components {
             as_of?: string | null;
             /** Out Of Sample Status */
             out_of_sample_status: string;
+            /**
+             * Evaluation Mode
+             * @default holdout
+             * @enum {string}
+             */
+            evaluation_mode: "holdout" | "expanding" | "rolling";
+            /** Splits */
+            splits?: components["schemas"]["PredictiveModelSplitResponse"][];
+            /** Period Metrics */
+            period_metrics?: components["schemas"]["PredictiveModelPeriodMetricsResponse"][];
+            /** Fold Artifacts */
+            fold_artifacts?: components["schemas"]["PredictiveModelArtifactResponse"][];
+        };
+        /** PredictiveModelSplitResponse */
+        PredictiveModelSplitResponse: {
+            /**
+             * Period
+             * @enum {string}
+             */
+            period: "training" | "validation" | "test";
+            /** Start */
+            start: string;
+            /** End */
+            end: string;
+            /** Feature Start */
+            feature_start: string;
+            /** Feature End */
+            feature_end: string;
+            /** Observations */
+            observations: number;
+            /** Labelled Observations */
+            labelled_observations: number;
+            /** Fit Scope */
+            fit_scope: string;
         };
         /** ProjectCreateRequest */
         ProjectCreateRequest: {
@@ -3627,6 +3806,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PredictiveModelRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_predictive_model_api_projects__project_id__predictive_models_runs__run_id__export__format_type__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                run_id: string;
+                format_type: "html" | "csv" | "json";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        manifest: {
+                            [key: string]: unknown;
+                        };
+                        predictive_model: {
+                            [key: string]: unknown;
+                        };
+                    };
+                    "text/html": string;
+                    "text/csv": string;
                 };
             };
             /** @description Validation Error */

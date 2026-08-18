@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .json_types import JsonValue
 from .market_data import DailyBar
@@ -32,6 +32,10 @@ class PredictiveModelDataError(PredictiveModelError):
 
 class PredictiveModelCalculationError(PredictiveModelError):
     """Raised when a Predictive Model cannot be fitted on the supplied data."""
+
+
+SplitName = Literal["training", "validation", "test"]
+EvaluationMode = Literal["holdout", "expanding", "rolling"]
 
 
 @dataclass(frozen=True)
@@ -79,6 +83,8 @@ class FittedModelArtifact:
     parameters: dict[str, JsonValue]
     seed: int | None
     training_metrics: dict[str, JsonValue]
+    feature_definition: dict[str, JsonValue] = field(default_factory=dict)
+    preprocessing: dict[str, JsonValue] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, JsonValue]:
         """Return the fitted state as a JSON-compatible object."""
@@ -95,6 +101,8 @@ class FittedModelArtifact:
             "parameters": self.parameters,
             "seed": self.seed,
             "training_metrics": self.training_metrics,
+            "feature_definition": self.feature_definition,
+            "preprocessing": self.preprocessing,
         }
 
 
@@ -105,7 +113,9 @@ class PredictiveModelPrediction:
     session_date: str
     feature_value: float
     predicted_value: float
-    actual_target: float | None
+    actual_target: float
+    target_date: str | None
+    period: SplitName | None = None
 
     def to_json(self) -> dict[str, JsonValue]:
         """Return this prediction as a JSON-compatible object."""
@@ -114,6 +124,100 @@ class PredictiveModelPrediction:
             "feature_value": self.feature_value,
             "predicted_value": self.predicted_value,
             "actual_target": self.actual_target,
+            "target_date": self.target_date,
+            "period": self.period,
+        }
+
+
+@dataclass(frozen=True)
+class PredictiveModelForecast:
+    """One prediction whose future target is not available yet."""
+
+    session_date: str
+    feature_value: float
+    predicted_value: float
+    actual_target: None
+    target_date: None
+    period: None
+
+    def to_json(self) -> dict[str, JsonValue]:
+        """Return an explicit not-yet-labelled prediction record."""
+        return {
+            "session_date": self.session_date,
+            "feature_value": self.feature_value,
+            "predicted_value": self.predicted_value,
+            "actual_target": self.actual_target,
+            "target_date": self.target_date,
+            "period": self.period,
+        }
+
+
+PredictiveModelOutput = PredictiveModelPrediction | PredictiveModelForecast
+
+
+@dataclass(frozen=True)
+class PredictiveModelSplit:
+    """One chronological period used by a Predictive Model Run."""
+
+    period: SplitName
+    start: str
+    end: str
+    feature_start: str
+    feature_end: str
+    observations: int
+    labelled_observations: int
+    fit_scope: str
+
+    def to_json(self) -> dict[str, JsonValue]:
+        """Return the split boundaries and leakage policy as JSON."""
+        return {
+            "period": self.period,
+            "start": self.start,
+            "end": self.end,
+            "feature_start": self.feature_start,
+            "feature_end": self.feature_end,
+            "observations": self.observations,
+            "labelled_observations": self.labelled_observations,
+            "fit_scope": self.fit_scope,
+        }
+
+
+@dataclass(frozen=True)
+class PredictiveModelPeriodMetrics:
+    """Metrics for one labelled chronological period."""
+
+    period: SplitName
+    observations: int
+    metrics: dict[str, float]
+
+    def to_json(self) -> dict[str, JsonValue]:
+        """Return period-labelled metrics for artifacts and interface responses."""
+        return {
+            "period": self.period,
+            "observations": self.observations,
+            "metrics": self.metrics,
+        }
+
+
+@dataclass(frozen=True)
+class PredictiveModelEvaluation:
+    """Chronological split and metric records for one model calculation."""
+
+    mode: EvaluationMode
+    splits: tuple[PredictiveModelSplit, ...]
+    period_metrics: tuple[PredictiveModelPeriodMetrics, ...]
+
+    def to_json(self) -> dict[str, JsonValue]:
+        """Return the complete evaluation record for a Run manifest."""
+        return {
+            "mode": self.mode,
+            "splits": [split.to_json() for split in self.splits],
+            "period_metrics": [metrics.to_json() for metrics in self.period_metrics],
+            "leakage_policy": {
+                "initial_feature_and_preprocessing_fit_scope": "training_only",
+                "future_labels_excluded_from_each_training_window": True,
+                "validation_and_test_labels_excluded_from_initial_training": True,
+            },
         }
 
 
@@ -125,18 +229,20 @@ class PredictiveModelCalculation:
     artifact: FittedModelArtifact
     parameters: dict[str, JsonValue]
     seed: int | None
-    predictions: list[PredictiveModelPrediction]
+    predictions: list[PredictiveModelOutput]
     metrics: dict[str, float]
     training_start: str
     training_end: str
     out_of_sample_status: str
+    evaluation: PredictiveModelEvaluation
+    fold_artifacts: list[FittedModelArtifact] = field(default_factory=list)
 
 
 FitFunction = Callable[
     [pd.DataFrame, dict[str, JsonValue], int | None], FittedModelArtifact
 ]
 PredictFunction = Callable[
-    [FittedModelArtifact, pd.DataFrame], list[PredictiveModelPrediction]
+    [FittedModelArtifact, pd.DataFrame], list[PredictiveModelOutput]
 ]
 
 
@@ -188,6 +294,17 @@ class MomentumRegressionParameters(BaseModel):
 
     momentum_period: int = Field(default=20, ge=1, le=500)
     training_window: int = Field(default=252, ge=2, le=10_000)
+    validation_fraction: float = Field(default=0.2, gt=0.0, lt=1.0)
+    test_fraction: float = Field(default=0.2, gt=0.0, lt=1.0)
+    evaluation_mode: EvaluationMode = "holdout"
+
+    @model_validator(mode="after")
+    def leaves_training_observations(self) -> "MomentumRegressionParameters":
+        if self.validation_fraction + self.test_fraction >= 1.0:
+            raise ValueError(
+                "validation_fraction plus test_fraction must leave training observations."
+            )
+        return self
 
 
 def build_supervised_frame(
@@ -222,17 +339,23 @@ def build_supervised_frame(
             if index + horizon < len(closes)
             else None
         )
+        target_date = (
+            ordered_bars[index + horizon].session_date
+            if index + horizon < len(ordered_bars)
+            else None
+        )
         rows.append(
             {
                 "session_date": bar.session_date,
                 "momentum": momentum,
                 "next_session_return": next_return,
+                "target_date": target_date,
             }
         )
 
     return pd.DataFrame(
         rows,
-        columns=["session_date", "momentum", "next_session_return"],
+        columns=["session_date", "momentum", "next_session_return", "target_date"],
     )
 
 
@@ -248,6 +371,9 @@ def _resolve_parameters(
     return {
         "momentum_period": config.momentum_period,
         "training_window": config.training_window,
+        "validation_fraction": config.validation_fraction,
+        "test_fraction": config.test_fraction,
+        "evaluation_mode": config.evaluation_mode,
     }
 
 
@@ -300,6 +426,8 @@ def _fit_momentum_regression(
     naive_rmse = math.sqrt(
         sum((target - target_mean) ** 2 for target in targets) / len(targets)
     )
+    training_feature_start = str(usable.loc[0, "session_date"])
+    training_feature_end = str(usable.loc[len(usable) - 1, "session_date"])
 
     return FittedModelArtifact(
         model_name="momentum_return_regression",
@@ -308,8 +436,8 @@ def _fit_momentum_regression(
         horizon=1,
         intercept=intercept,
         coefficient=coefficient,
-        training_start=str(usable.loc[0, "session_date"]),
-        training_end=str(usable.loc[len(usable) - 1, "session_date"]),
+        training_start=training_feature_start,
+        training_end=training_feature_end,
         training_observations=len(usable),
         parameters=parameters,
         seed=seed,
@@ -318,12 +446,28 @@ def _fit_momentum_regression(
             "in_sample_rmse": in_sample_rmse,
             "naive_benchmark_rmse": naive_rmse,
         },
+        feature_definition={
+            "name": "trailing_close_momentum",
+            "source": "close",
+            "lookback": int(parameters["momentum_period"]),
+            "horizon": 1,
+            "uses_future_rows_for_feature": False,
+            "fit_scope": "training_only",
+        },
+        preprocessing={
+            "name": "none",
+            "fit_scope": "training_only",
+            "training_feature_start": training_feature_start,
+            "training_feature_end": training_feature_end,
+            "training_observations": len(usable),
+            "uses_validation_or_test": False,
+        },
     )
 
 
 def _predict_momentum_regression(
     artifact: FittedModelArtifact, eligible_frame: pd.DataFrame
-) -> list[PredictiveModelPrediction]:
+) -> list[PredictiveModelOutput]:
     if not {"session_date", "momentum"}.issubset(eligible_frame.columns):
         raise PredictiveModelCalculationError(
             "Prediction data must contain session_date and momentum."
@@ -334,25 +478,45 @@ def _predict_momentum_regression(
         if "next_session_return" in eligible_frame.columns
         else [None] * len(eligible_frame)
     )
-    predictions: list[PredictiveModelPrediction] = []
-    for date, feature, target in zip(
+    target_dates = (
+        eligible_frame["target_date"].tolist()
+        if "target_date" in eligible_frame.columns
+        else [None] * len(eligible_frame)
+    )
+    predictions: list[PredictiveModelOutput] = []
+    for date, feature, target, target_date in zip(
         eligible_frame["session_date"].tolist(),
         eligible_frame["momentum"].tolist(),
         target_values,
+        target_dates,
         strict=True,
     ):
         if pd.isna(feature):
             continue
         feature_value = float(feature)
         actual_target = None if pd.isna(target) else float(target)
-        predictions.append(
-            PredictiveModelPrediction(
-                session_date=str(date),
-                feature_value=feature_value,
-                predicted_value=artifact.intercept + artifact.coefficient * feature_value,
-                actual_target=actual_target,
+        predicted_value = artifact.intercept + artifact.coefficient * feature_value
+        if actual_target is None:
+            predictions.append(
+                PredictiveModelForecast(
+                    session_date=str(date),
+                    feature_value=feature_value,
+                    predicted_value=predicted_value,
+                    actual_target=None,
+                    target_date=None,
+                    period=None,
+                )
             )
-        )
+        else:
+            predictions.append(
+                PredictiveModelPrediction(
+                    session_date=str(date),
+                    feature_value=feature_value,
+                    predicted_value=predicted_value,
+                    actual_target=actual_target,
+                    target_date=None if pd.isna(target_date) else str(target_date),
+                )
+            )
     return predictions
 
 
@@ -385,6 +549,31 @@ PREDICTIVE_MODEL_REGISTRY: dict[str, PredictiveModelSpec] = {
                     description="Maximum number of latest labelled observations used for fitting.",
                     min_value=2,
                     max_value=10_000,
+                ),
+                PredictiveModelParameter(
+                    name="validation_fraction",
+                    param_type="float",
+                    default=0.2,
+                    description="Fraction of labelled observations reserved for validation.",
+                    min_value=0.01,
+                    max_value=0.49,
+                ),
+                PredictiveModelParameter(
+                    name="test_fraction",
+                    param_type="float",
+                    default=0.2,
+                    description=(
+                        "Fraction of labelled observations reserved for out-of-sample testing."
+                    ),
+                    min_value=0.01,
+                    max_value=0.49,
+                ),
+                PredictiveModelParameter(
+                    name="evaluation_mode",
+                    param_type="str",
+                    default="holdout",
+                    description="Chronological evaluation mode for validation and test folds.",
+                    options=("holdout", "expanding", "rolling"),
                 ),
             ),
             output_meaning=(
@@ -432,10 +621,161 @@ def fit_model(
 
 def predict(
     artifact: FittedModelArtifact, eligible_frame: pd.DataFrame
-) -> list[PredictiveModelPrediction]:
+) -> list[PredictiveModelOutput]:
     """Predict from a fitted artifact using only the supplied eligible feature frame."""
     spec = get_predictive_model_spec(artifact.model_name)
     return spec.predict(artifact, eligible_frame)
+
+
+def _split_period(
+    period: SplitName,
+    frame: pd.DataFrame,
+    fit_scope: str,
+) -> PredictiveModelSplit:
+    """Describe one non-empty labelled period using target and feature dates."""
+    if frame.empty:
+        raise PredictiveModelCalculationError(f"The {period} period must not be empty.")
+    return PredictiveModelSplit(
+        period=period,
+        start=str(frame["target_date"].iloc[0]),
+        end=str(frame["target_date"].iloc[-1]),
+        feature_start=str(frame["session_date"].iloc[0]),
+        feature_end=str(frame["session_date"].iloc[-1]),
+        observations=len(frame),
+        labelled_observations=len(frame),
+        fit_scope=fit_scope,
+    )
+
+
+@dataclass(frozen=True)
+class PredictiveModelChronologicalSplit:
+    """Named result of the chronological frame split."""
+
+    frames: dict[SplitName, pd.DataFrame]
+    periods: tuple[PredictiveModelSplit, ...]
+
+
+@dataclass(frozen=True)
+class PredictiveModelSplitParameters:
+    """Configuration used to build one chronological evaluation split."""
+
+    training_window: int
+    validation_fraction: float
+    test_fraction: float
+    evaluation_mode: EvaluationMode
+
+
+def _chronological_split(
+    frame: pd.DataFrame,
+    parameters: PredictiveModelSplitParameters,
+) -> PredictiveModelChronologicalSplit:
+    """Split labelled rows in target-date order without shuffling or future labels."""
+    labelled = (
+        frame.dropna(subset=["momentum", "next_session_return", "target_date"])
+        .sort_values("target_date")
+        .reset_index(drop=True)
+    )
+    validation_size = max(1, math.ceil(len(labelled) * parameters.validation_fraction))
+    test_size = max(1, math.ceil(len(labelled) * parameters.test_fraction))
+    training_size = len(labelled) - validation_size - test_size
+    if training_size < 2:
+        raise PredictiveModelCalculationError(
+            "At least two labelled training observations and one validation and test "
+            "observation are required for chronological evaluation."
+        )
+
+    training_pool = labelled.iloc[:training_size]
+    training = training_pool.tail(parameters.training_window).reset_index(drop=True)
+    validation_start = training_size
+    validation_end = validation_start + validation_size
+    validation = labelled.iloc[validation_start:validation_end].reset_index(drop=True)
+    test = labelled.iloc[validation_end:].reset_index(drop=True)
+    if validation.empty or test.empty:
+        raise PredictiveModelCalculationError(
+            "Chronological evaluation requires non-empty validation and test periods."
+        )
+
+    fit_scopes = {
+        "training": "training_only",
+        "validation": (
+            "training_only"
+            if parameters.evaluation_mode == "holdout"
+            else "prior_observations_before_target"
+            if parameters.evaluation_mode == "expanding"
+            else "rolling_window_before_target"
+        ),
+        "test": (
+            "training_only"
+            if parameters.evaluation_mode == "holdout"
+            else "prior_observations_before_target"
+            if parameters.evaluation_mode == "expanding"
+            else "rolling_window_before_target"
+        ),
+    }
+    periods = (
+        _split_period("training", training, fit_scopes["training"]),
+        _split_period("validation", validation, fit_scopes["validation"]),
+        _split_period("test", test, fit_scopes["test"]),
+    )
+    if not (
+        periods[0].end < periods[1].start
+        and periods[1].end < periods[2].start
+    ):
+        raise PredictiveModelCalculationError(
+            "Training, validation, and test target periods must be strictly chronological."
+        )
+    return PredictiveModelChronologicalSplit(
+        frames={
+            "training": training,
+            "validation": validation,
+            "test": test,
+        },
+        periods=periods,
+    )
+
+
+def _period_metrics(
+    period: SplitName,
+    predictions: Sequence[PredictiveModelOutput],
+) -> PredictiveModelPeriodMetrics:
+    """Calculate labelled metrics for one period without touching other periods."""
+    labelled = [
+        prediction
+        for prediction in predictions
+        if isinstance(prediction, PredictiveModelPrediction)
+    ]
+    if not labelled:
+        return PredictiveModelPeriodMetrics(period=period, observations=0, metrics={})
+
+    actuals = [float(prediction.actual_target) for prediction in labelled]
+    errors = [
+        float(prediction.predicted_value) - actual
+        for prediction, actual in zip(labelled, actuals, strict=True)
+    ]
+    actual_mean = sum(actuals) / len(actuals)
+    residual_sum = sum(error * error for error in errors)
+    total_sum = sum((actual - actual_mean) ** 2 for actual in actuals)
+    return PredictiveModelPeriodMetrics(
+        period=period,
+        observations=len(labelled),
+        metrics={
+            "mae": sum(abs(error) for error in errors) / len(errors),
+            "rmse": math.sqrt(residual_sum / len(errors)),
+            "r2": 1.0 - residual_sum / total_sum if total_sum > 1e-15 else 0.0,
+        },
+    )
+
+
+def _labelled_predictions(
+    predictions: Sequence[PredictiveModelOutput],
+    period: SplitName,
+) -> list[PredictiveModelPrediction]:
+    return [
+        prediction
+        for prediction in predictions
+        if isinstance(prediction, PredictiveModelPrediction)
+        and prediction.period == period
+    ]
 
 
 def run_predictive_model(
@@ -444,36 +784,123 @@ def run_predictive_model(
     parameters: Mapping[str, JsonValue],
     seed: int | None = None,
 ) -> PredictiveModelCalculation:
-    """Build, fit, and predict one deterministic Predictive Model calculation."""
+    """Build, fit, and evaluate one deterministic chronological model calculation."""
     spec = get_predictive_model_spec(name)
     resolved_parameters = _resolve_parameters(name, parameters)
     momentum_period = int(resolved_parameters["momentum_period"])
     training_window = int(resolved_parameters["training_window"])
+    validation_fraction = float(resolved_parameters["validation_fraction"])
+    test_fraction = float(resolved_parameters["test_fraction"])
+    raw_evaluation_mode = resolved_parameters["evaluation_mode"]
+    if raw_evaluation_mode not in ("holdout", "expanding", "rolling"):
+        raise PredictiveModelParameterError(
+            "evaluation_mode must be one of: holdout, expanding, rolling."
+        )
+    evaluation_mode: EvaluationMode = raw_evaluation_mode
     frame = build_supervised_frame(
         bars,
         momentum_period=momentum_period,
         horizon=spec.horizon,
     )
-    training_frame = frame.dropna(subset=["momentum", "next_session_return"]).tail(
-        training_window
+    chronological_split = _chronological_split(
+        frame,
+        PredictiveModelSplitParameters(
+            training_window=training_window,
+            validation_fraction=validation_fraction,
+            test_fraction=test_fraction,
+            evaluation_mode=evaluation_mode,
+        ),
     )
-    if len(training_frame) < 2:
-        raise PredictiveModelCalculationError(
-            "At least two labelled training observations are required after applying "
-            f"momentum_period={momentum_period} and training_window={training_window}."
-        )
 
+    split_frames = chronological_split.frames
+    training_frame = split_frames["training"]
     artifact = fit_model(name, training_frame, resolved_parameters, seed)
-    predictions = [
-        prediction
-        for prediction in predict(artifact, frame)
-        if prediction.session_date > artifact.training_end
-    ]
+    labelled_frame = (
+        frame.dropna(subset=["momentum", "next_session_return", "target_date"])
+        .sort_values("target_date")
+        .reset_index(drop=True)
+    )
+    target_positions = {
+        str(target_date): index
+        for index, target_date in enumerate(labelled_frame["target_date"].tolist())
+    }
+    period_by_target: dict[str, SplitName] = {}
+    for period_name in ("training", "validation", "test"):
+        period_frame = split_frames[period_name]
+        for target_date in period_frame["target_date"].tolist():
+            period_by_target[str(target_date)] = period_name
+
+    prediction_by_session: dict[str, PredictiveModelOutput] = {}
+    fold_artifacts = [artifact]
+    if evaluation_mode == "holdout":
+        evaluated_predictions = predict(artifact, frame)
+        prediction_by_session = {
+            prediction.session_date: prediction for prediction in evaluated_predictions
+        }
+    else:
+        for period_name in ("validation", "test"):
+            period_frame = split_frames[period_name]
+            for _, row in period_frame.iterrows():
+                target_date = str(row["target_date"])
+                target_position = target_positions[target_date]
+                fitting_frame = labelled_frame.iloc[:target_position]
+                if evaluation_mode == "rolling":
+                    fitting_frame = fitting_frame.tail(training_window)
+                fold_artifact = fit_model(name, fitting_frame, resolved_parameters, seed)
+                fold_artifacts.append(fold_artifact)
+                fold_prediction = predict(fold_artifact, pd.DataFrame([row]))
+                if not fold_prediction:
+                    raise PredictiveModelCalculationError(
+                        f"No prediction was produced for {period_name} target {target_date}."
+                    )
+                prediction_by_session[fold_prediction[0].session_date] = fold_prediction[0]
+
+    final_artifact = fold_artifacts[-1]
+    predictions: list[PredictiveModelOutput] = []
+    for _, row in frame.iterrows():
+        session_date = str(row["session_date"])
+        if session_date <= artifact.training_end:
+            continue
+        prediction = prediction_by_session.get(session_date)
+        if prediction is None:
+            final_prediction = predict(final_artifact, pd.DataFrame([row]))
+            if not final_prediction:
+                continue
+            prediction = final_prediction[0]
+        if isinstance(prediction, PredictiveModelPrediction):
+            period = period_by_target.get(prediction.target_date)
+            predictions.append(replace(prediction, period=period))
+        else:
+            predictions.append(prediction)
+
+    training_metrics = {
+        "r2": float(artifact.training_metrics["in_sample_r2"]),
+        "rmse": float(artifact.training_metrics["in_sample_rmse"]),
+        "naive_rmse": float(artifact.training_metrics["naive_benchmark_rmse"]),
+    }
+    period_metrics = (
+        PredictiveModelPeriodMetrics(
+            period="training",
+            observations=len(training_frame),
+            metrics=training_metrics,
+        ),
+        _period_metrics("validation", _labelled_predictions(predictions, "validation")),
+        _period_metrics("test", _labelled_predictions(predictions, "test")),
+    )
     metrics = {
         metric_name: float(metric_value)
         for metric_name, metric_value in artifact.training_metrics.items()
         if isinstance(metric_value, (int, float))
     }
+    for period_metric in period_metrics:
+        for metric_name, metric_value in period_metric.metrics.items():
+            metrics[f"{period_metric.period}_{metric_name}"] = float(metric_value)
+
+    evaluation = PredictiveModelEvaluation(
+        mode=evaluation_mode,
+        splits=chronological_split.periods,
+        period_metrics=period_metrics,
+    )
     return PredictiveModelCalculation(
         metadata=spec.metadata,
         artifact=artifact,
@@ -483,5 +910,7 @@ def run_predictive_model(
         metrics=metrics,
         training_start=artifact.training_start,
         training_end=artifact.training_end,
-        out_of_sample_status="not_available_until_chronological_splits",
+        out_of_sample_status="available",
+        evaluation=evaluation,
+        fold_artifacts=fold_artifacts,
     )

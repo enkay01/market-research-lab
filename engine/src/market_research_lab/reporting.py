@@ -385,6 +385,211 @@ def generate_valuation_csv(result_data: dict[str, JsonValue]) -> str:
     return output.getvalue()
 
 
+def generate_predictive_model_html_report(
+    result_data: dict[str, JsonValue],
+    manifest_data: dict[str, JsonValue],
+) -> str:
+    """Generate a self-contained report with labelled chronological model metrics."""
+    model_name = html.escape(
+        str(result_data.get("display_name") or result_data.get("model_name") or "Predictive Model")
+    )
+    run_id = html.escape(str(result_data.get("run_id") or manifest_data.get("id") or "N/A"))
+    revision_values = manifest_data.get("definition_revisions")
+    revisions = revision_values if isinstance(revision_values, list) else []
+    revision = html.escape(
+        str(result_data.get("model_revision") or (revisions[0] if revisions else "unversioned"))
+    )
+    datasets_raw = manifest_data.get("dataset_versions")
+    datasets = datasets_raw if isinstance(datasets_raw, list) else []
+    evaluation_raw = result_data.get("evaluation")
+    evaluation = evaluation_raw if isinstance(evaluation_raw, dict) else {}
+    splits_raw = evaluation.get("splits") or result_data.get("splits")
+    splits = splits_raw if isinstance(splits_raw, list) else []
+    metrics_raw = evaluation.get("period_metrics") or result_data.get("period_metrics")
+    period_metrics = metrics_raw if isinstance(metrics_raw, list) else []
+    parameters_raw = manifest_data.get("parameters")
+    parameters = parameters_raw if isinstance(parameters_raw, dict) else {}
+    preprocessing = (
+        result_data.get("artifact", {}).get("preprocessing", {})
+        if isinstance(result_data.get("artifact"), dict)
+        else {}
+    )
+    evaluation_mode = html.escape(
+        str(evaluation.get("mode") or result_data.get("evaluation_mode") or "holdout")
+    )
+    warnings_raw = result_data.get("warnings")
+    warnings = warnings_raw if isinstance(warnings_raw, list) else []
+
+    doc = [
+        "<!DOCTYPE html>",
+        '<html lang="en">',
+        "<head>",
+        '  <meta charset="utf-8">',
+        f"  <title>{model_name} — Chronological Evaluation</title>",
+        "  <style>",
+        "    body { font-family: sans-serif; line-height: 1.5; color: #1e293b; "
+        "max-width: 960px; margin: 40px auto; padding: 0 20px; }",
+        "    h1, h2 { color: #0f172a; }",
+        "    .meta { background: #f8fafc; border: 1px solid #e2e8f0; "
+        "border-radius: 8px; padding: 16px; }",
+        "    table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; }",
+        "    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e2e8f0; }",
+        "    th { background: #f8fafc; }",
+        "    .note { background: #eff6ff; border-left: 4px solid #2563eb; padding: 12px 16px; }",
+        "  </style>",
+        "</head>",
+        "<body>",
+        f"  <h1>{model_name}</h1>",
+        f'  <div class="meta"><strong>Run:</strong> {run_id}<br>'
+        f'<strong>Definition Revision:</strong> {revision}<br>'
+        f'<strong>Dataset Versions:</strong> '
+        f'{html.escape(", ".join(str(dataset) for dataset in datasets))}<br>'
+        f'<strong>Evaluation Mode:</strong> {evaluation_mode}<br>'
+        '<strong>Metric Scope:</strong> In-sample training; held-out validation and '
+        'out-of-sample</div>',
+        '  <p class="note">The initial fit uses training observations only. Each later '
+        'fold uses only data available before its target date.</p>',
+        "  <h2>Chronological Periods</h2>",
+        "  <table>",
+        "    <thead><tr><th>Period</th><th>Target Dates</th><th>Feature Dates</th>"
+        "<th>Observations</th><th>Fit Scope</th></tr></thead>",
+        "    <tbody>",
+    ]
+    for split in splits:
+        if isinstance(split, dict):
+            period = split.get("period", "")
+            period_label = "out-of-sample" if period == "test" else period
+            doc.append(
+                "      <tr>"
+                f"<td>{html.escape(str(period_label))}</td>"
+                f"<td>{html.escape(str(split.get('start', '')))} to "
+                f"{html.escape(str(split.get('end', '')))}</td>"
+                f"<td>{html.escape(str(split.get('feature_start', '')))} to "
+                f"{html.escape(str(split.get('feature_end', '')))}</td>"
+                f"<td>{html.escape(str(split.get('observations', '')))}</td>"
+                f"<td>{html.escape(str(split.get('fit_scope', '')))}</td>"
+                "</tr>"
+            )
+    doc.extend(
+        ["    </tbody>", "  </table>", "  <h2>Period Metrics</h2>", "  <table>"]
+    )
+    doc.append(
+        "    <thead><tr><th>Period</th><th>Observations</th><th>Metric</th>"
+        "<th>Value</th></tr></thead>"
+    )
+    doc.append("    <tbody>")
+    for period_metric in period_metrics:
+        if not isinstance(period_metric, dict):
+            continue
+        metric_values = period_metric.get("metrics")
+        if not isinstance(metric_values, dict):
+            continue
+        for metric_name, metric_value in metric_values.items():
+            period = period_metric.get("period", "")
+            period_label = "out-of-sample" if period == "test" else period
+            doc.append(
+                "      <tr>"
+                f"<td>{html.escape(str(period_label))}</td>"
+                f"<td>{html.escape(str(period_metric.get('observations', '')))}</td>"
+                f"<td>{html.escape(str(metric_name))}</td>"
+                f"<td>{html.escape(str(metric_value))}</td>"
+                "</tr>"
+            )
+    doc.extend(
+        ["    </tbody>", "  </table>", "  <h2>Assumptions and Provenance</h2>", "  <table>"]
+    )
+    doc.append("    <tbody>")
+    for label, value in (
+        ("Target", result_data.get("target", "")),
+        ("Horizon", result_data.get("horizon", "")),
+        ("Features", result_data.get("features", "")),
+        ("Parameters", parameters),
+        ("Preprocessing", preprocessing),
+    ):
+        doc.append(
+            f"      <tr><th>{html.escape(label)}</th>"
+            f"<td>{html.escape(str(value))}</td></tr>"
+        )
+    doc.extend(
+        [
+            "    </tbody>",
+            "  </table>",
+            "  <h2>Warnings</h2>",
+            "  <ul>",
+        ]
+    )
+    if warnings:
+        for warning in warnings:
+            doc.append(f"    <li>{html.escape(str(warning))}</li>")
+    else:
+        doc.append("    <li>No warnings recorded.</li>")
+    doc.extend(
+        [
+            "  </ul>",
+            "  <footer>Market Research Lab — Predictive Model Run</footer>",
+            "</body>",
+            "</html>",
+        ]
+    )
+    return "\n".join(doc)
+
+
+def generate_predictive_model_csv(result_data: dict[str, JsonValue]) -> str:
+    """Generate a CSV export with period-labelled metrics and predictions."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Predictive Model", result_data.get("model_name", "")])
+    writer.writerow(["Run ID", result_data.get("run_id", "")])
+    writer.writerow(["Model Revision", result_data.get("model_revision", "")])
+    writer.writerow([])
+    writer.writerow(["Period", "Observations", "Metric", "Value"])
+    metrics_raw = result_data.get("period_metrics")
+    period_metrics = metrics_raw if isinstance(metrics_raw, list) else []
+    for period_metric in period_metrics:
+        if not isinstance(period_metric, dict):
+            continue
+        values = period_metric.get("metrics")
+        if not isinstance(values, dict):
+            continue
+        period = period_metric.get("period", "")
+        period_label = "out-of-sample" if period == "test" else period
+        for metric_name, metric_value in values.items():
+            writer.writerow(
+                [
+                    period_label,
+                    period_metric.get("observations", ""),
+                    metric_name,
+                    metric_value,
+                ]
+            )
+    writer.writerow([])
+    writer.writerow(
+        [
+            "Session Date",
+            "Target Date",
+            "Period",
+            "Feature Value",
+            "Predicted Value",
+            "Actual Target",
+        ]
+    )
+    predictions_raw = result_data.get("predictions")
+    predictions = predictions_raw if isinstance(predictions_raw, list) else []
+    for prediction in predictions:
+        if isinstance(prediction, dict):
+            writer.writerow(
+                [
+                    prediction.get("session_date", ""),
+                    prediction.get("target_date", ""),
+                    prediction.get("period", ""),
+                    prediction.get("feature_value", ""),
+                    prediction.get("predicted_value", ""),
+                    prediction.get("actual_target", ""),
+                ]
+            )
+    return output.getvalue()
+
+
 # ---------------------------------------------------------------------------
 # Backtest HTML and CSV Exporters
 # ---------------------------------------------------------------------------
@@ -591,16 +796,28 @@ def generate_backtest_html_report(
     )
     if benchmark_id:
         doc.append(f'      <tr><td>Benchmark Security</td><td class="num">{benchmark_id}</td></tr>')
-    doc.append(f'      <tr><td>Strategy Algorithm</td><td class="num">{strategy_name}</td></tr>')
+    doc.append(f'      <tr><td>Strategy</td><td class="num">{strategy_name}</td></tr>')
     doc.append(f'      <tr><td>Strategy Revision</td><td class="num">{strategy_rev}</td></tr>')
     doc.append(f'      <tr><td>Price Field</td><td class="num">{price_field}</td></tr>')
     doc.append(f'      <tr><td>Rebalance Schedule</td><td class="num">{schedule}</td></tr>')
+    borrow_fee_rate = float(execution.get("borrow_fee_rate", 0.0))
+    raw_unavail = execution.get("unavailable_borrow", [])
+    unavailable_borrow = raw_unavail if isinstance(raw_unavail, list) else []
+
     doc.append(
         f'      <tr><td>Commission Rate</td><td class="num">{commission_rate * 10000:.1f} bps ({commission_rate * 100:.3f}%)</td></tr>'
     )
     doc.append(
         f'      <tr><td>Slippage Rate</td><td class="num">{slippage_rate * 10000:.1f} bps ({slippage_rate * 100:.3f}%)</td></tr>'
     )
+    if borrow_fee_rate > 0.0:
+        doc.append(
+            f'      <tr><td>Borrow Fee Rate</td><td class="num">{borrow_fee_rate * 10000:.1f} bps ({borrow_fee_rate * 100:.3f}% p.a.)</td></tr>'
+        )
+    if unavailable_borrow:
+        doc.append(
+            f'      <tr><td>Unavailable Borrow</td><td class="num">{html.escape(", ".join(str(u) for u in unavailable_borrow))}</td></tr>'
+        )
 
     params_raw = spec.get("parameters")
     if isinstance(params_raw, dict):
@@ -669,7 +886,7 @@ def generate_backtest_html_report(
         doc.append('  <div class="scroll-table">')
         doc.append("    <table>")
         doc.append(
-            '      <thead><tr><th>Session Date</th><th class="num">Target Weight</th><th>Positions Breakdown</th><th class="num">Cash Balance</th><th class="num">Position Value</th><th class="num">Portfolio Value</th><th class="num">Gross Exposure</th></tr></thead>'
+            '      <thead><tr><th>Session Date</th><th class="num">Target Weight</th><th>Positions Breakdown</th><th class="num">Cash Balance</th><th class="num">Position Value</th><th class="num">Portfolio Value</th><th class="num">Gross Exp</th><th class="num">Net Exp</th><th class="num">Borrow Fees</th></tr></thead>'
         )
         doc.append("      <tbody>")
         for row in ledger:
@@ -692,11 +909,13 @@ def generate_backtest_html_report(
                     pos_summary = "<br>".join(pos_parts) if pos_parts else "Flat"
                 else:
                     shares_held = float(row.get("shares", 0))
-                    pos_summary = f"{shares_held:.2f} sh" if shares_held > 0 else "Flat"
+                    pos_summary = f"{shares_held:.2f} sh" if abs(shares_held) > 0.0001 else "Flat"
 
                 gross_exp = float(row.get("gross_exposure", 0))
+                net_exp = float(row.get("net_exposure", 0))
+                borrow_fee = float(row.get("borrow_fees", 0.0))
                 doc.append(
-                    f'        <tr><td>{row.get("session_date")}</td><td class="num">{weight_str}</td><td><small>{pos_summary}</small></td><td class="num">${float(row.get("cash", 0)):,.2f}</td><td class="num">${float(row.get("position_value", 0)):,.2f}</td><td class="num"><strong>${float(row.get("portfolio_value", 0)):,.2f}</strong></td><td class="num">{gross_exp * 100:.0f}%</td></tr>'
+                    f'        <tr><td>{row.get("session_date")}</td><td class="num">{weight_str}</td><td><small>{pos_summary}</small></td><td class="num">${float(row.get("cash", 0)):,.2f}</td><td class="num">${float(row.get("position_value", 0)):,.2f}</td><td class="num"><strong>${float(row.get("portfolio_value", 0)):,.2f}</strong></td><td class="num">{gross_exp * 100:.0f}%</td><td class="num">{net_exp * 100:.0f}%</td><td class="num">${borrow_fee:,.2f}</td></tr>'
                 )
         doc.append("      </tbody>")
         doc.append("    </table>")
@@ -749,6 +968,11 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
         writer.writerow(["Schedule", exec_raw.get("schedule", "daily")])
         writer.writerow(["Commission Rate", exec_raw.get("commission_rate", 0.0)])
         writer.writerow(["Slippage Rate", exec_raw.get("slippage_rate", 0.0)])
+        writer.writerow(["Allow Shorting", exec_raw.get("allow_shorting", True)])
+        writer.writerow(["Borrow Fee Rate", exec_raw.get("borrow_fee_rate", 0.0)])
+        raw_u = exec_raw.get("unavailable_borrow", [])
+        u_str = ", ".join(str(x) for x in raw_u) if isinstance(raw_u, list) else str(raw_u)
+        writer.writerow(["Unavailable Borrow", u_str])
 
     params_raw = spec.get("parameters")
     if isinstance(params_raw, dict):
@@ -891,6 +1115,7 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
             "Portfolio Value",
             "Gross Exposure",
             "Net Exposure",
+            "Borrow Fees",
         ]
     )
     for row in ledger:
@@ -915,6 +1140,7 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
                     row.get("portfolio_value", ""),
                     row.get("gross_exposure", ""),
                     row.get("net_exposure", ""),
+                    row.get("borrow_fees", 0.0),
                 ]
             )
 
