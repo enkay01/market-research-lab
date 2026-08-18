@@ -818,6 +818,15 @@ def generate_backtest_html_report(
         doc.append(
             f'      <tr><td>Unavailable Borrow</td><td class="num">{html.escape(", ".join(str(u) for u in unavailable_borrow))}</td></tr>'
         )
+    max_leverage = float(execution.get("max_leverage", 1.0))
+    margin_req = float(execution.get("margin_requirement", 1.0))
+    maint_margin = float(execution.get("maintenance_margin", 0.25))
+    leverage_mode = html.escape(str(execution.get("leverage_mode") or "reject"))
+
+    doc.append(f'      <tr><td>Max Leverage Limit</td><td class="num">{max_leverage:.2f}x ({max_leverage * 100:.0f}% gross exposure)</td></tr>')
+    doc.append(f'      <tr><td>Margin Requirement</td><td class="num">{margin_req * 100:.1f}%</td></tr>')
+    doc.append(f'      <tr><td>Maintenance Margin</td><td class="num">{maint_margin * 100:.1f}%</td></tr>')
+    doc.append(f'      <tr><td>Leverage Constraint Mode</td><td class="num">{leverage_mode}</td></tr>')
 
     params_raw = spec.get("parameters")
     if isinstance(params_raw, dict):

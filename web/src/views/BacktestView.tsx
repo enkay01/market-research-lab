@@ -3,7 +3,9 @@ import {
   Banner,
   Button,
   Card,
+  Divider,
   EmptyState,
+  Grid,
   Heading,
   HStack,
   Layout,
@@ -223,7 +225,7 @@ function EquityDrawdownChart({
 
 export function BacktestView({ project }: BacktestViewProps) {
   const [activeTab, setActiveTab] = useState<
-    "overview" | "trades" | "fills" | "ledger" | "manifest" | "compare"
+    "overview" | "trades" | "fills" | "ledger" | "rejections" | "manifest" | "compare"
   >("overview");
 
   // Datasets & Securities
@@ -247,6 +249,10 @@ export function BacktestView({ project }: BacktestViewProps) {
   const [allowShorting, setAllowShorting] = useState<boolean>(true);
   const [borrowFeeBps, setBorrowFeeBps] = useState<string>("0.0");
   const [unavailableBorrowInput, setUnavailableBorrowInput] = useState<string>("");
+  const [maxLeverage, setMaxLeverage] = useState<string>("1.0");
+  const [marginRequirement, setMarginRequirement] = useState<string>("100.0");
+  const [maintenanceMargin, setMaintenanceMargin] = useState<string>("25.0");
+  const [leverageMode, setLeverageMode] = useState<"reject" | "constrain">("reject");
 
   // Execution & Result state
   const [isRunning, setIsRunning] = useState(false);
@@ -387,6 +393,10 @@ export function BacktestView({ project }: BacktestViewProps) {
           allow_shorting: allowShorting,
           borrow_fee_rate: (parseFloat(borrowFeeBps) || 0) / 10000,
           unavailable_borrow: unavailableList,
+          max_leverage: parseFloat(maxLeverage) || 1.0,
+          margin_requirement: (parseFloat(marginRequirement) || 100.0) / 100.0,
+          maintenance_margin: (parseFloat(maintenanceMargin) || 25.0) / 100.0,
+          leverage_mode: leverageMode,
         },
       });
       setCurrentResult(res);
@@ -513,6 +523,12 @@ export function BacktestView({ project }: BacktestViewProps) {
             onClick={() => setActiveTab("ledger")}
           />
           <Button
+            label={`Rejections (${currentResult?.rejections?.length ?? 0})`}
+            variant={activeTab === "rejections" ? "primary" : "secondary"}
+            size="sm"
+            onClick={() => setActiveTab("rejections")}
+          />
+          <Button
             label="Manifest"
             variant={activeTab === "manifest" ? "primary" : "secondary"}
             size="sm"
@@ -531,118 +547,167 @@ export function BacktestView({ project }: BacktestViewProps) {
         ) : (
           <VStack gap={4}>
             {message && (
-              <Banner variant={bannerType === "warning" ? "warning" : "neutral"}>
+              <Banner status={bannerType === "warning" ? "warning" : "info"}>
                 <Text>{message}</Text>
               </Banner>
             )}
 
             {/* Simulation Parameters & Execution Setup */}
             <Card padding={4}>
-              <VStack gap={3}>
+              <VStack gap={4}>
                 <Heading level={3}>Multi-Security Simulation Setup &amp; Parameters</Heading>
 
-                <HStack gap={3} align="end">
-                  <Selector
-                    label="Strategy"
-                    value={strategyName}
-                    onChange={(v) => {
-                      const val = v as string;
-                      setStrategyName(val);
-                      setStrategyRevision(`${val}:v1`);
-                    }}
-                    options={[
-                      { value: "long_flat_moving_average", label: "Long/Flat Moving Average" },
-                      { value: "long_short_moving_average", label: "Long/Short Moving Average" },
-                    ]}
-                  />
-                  <Selector
-                    label="Dataset Version"
-                    value={selectedDatasetId}
-                    onChange={handleDatasetChange}
-                    options={datasets.map((d: any) => ({
-                      value: d.id,
-                      label: `${d.source || "Dataset"} — ${d.id.slice(0, 16)}... (${d.row_count ?? d.total_bars ?? 0} bars)`,
-                    }))}
-                    placeholder="Select market dataset"
-                    hasSearch
-                  />
-                  <TextInput
-                    label="Universe (Symbols)"
-                    value={universeInput}
-                    onChange={(v) => setUniverseInput(typeof v === "string" ? v : "")}
-                  />
-                  <TextInput
-                    label="Benchmark (Optional)"
-                    value={benchmarkInput}
-                    onChange={(v) => setBenchmarkInput(typeof v === "string" ? v : "")}
-                  />
-                  <TextInput
-                    label="Start Date"
-                    value={startDate}
-                    onChange={(v) => setStartDate(typeof v === "string" ? v : "")}
-                  />
-                  <TextInput
-                    label="End Date"
-                    value={endDate}
-                    onChange={(v) => setEndDate(typeof v === "string" ? v : "")}
-                  />
-                </HStack>
+                {/* Section 1: Scope & Universe */}
+                <VStack gap={2}>
+                  <Text type="supporting" weight="bold">
+                    1. Scope &amp; Target Strategy
+                  </Text>
+                  <Grid columns={{ minWidth: 200, repeat: "fit" }} gap={3}>
+                    <Selector
+                      label="Strategy"
+                      value={strategyName}
+                      onChange={(v) => {
+                        const val = v as string;
+                        setStrategyName(val);
+                        setStrategyRevision(`${val}:v1`);
+                      }}
+                      options={[
+                        { value: "long_flat_moving_average", label: "Long/Flat Moving Average" },
+                        { value: "long_short_moving_average", label: "Long/Short Moving Average" },
+                      ]}
+                    />
+                    <Selector
+                      label="Dataset Version"
+                      value={selectedDatasetId}
+                      onChange={handleDatasetChange}
+                      options={datasets.map((d: any) => ({
+                        value: d.id,
+                        label: `${d.source || "Dataset"} — ${d.id.slice(0, 16)}... (${d.row_count ?? d.total_bars ?? 0} bars)`,
+                      }))}
+                      placeholder="Select market dataset"
+                      hasSearch
+                    />
+                    <TextInput
+                      label="Universe (Symbols)"
+                      value={universeInput}
+                      onChange={(v) => setUniverseInput(typeof v === "string" ? v : "")}
+                    />
+                    <TextInput
+                      label="Benchmark (Optional)"
+                      value={benchmarkInput}
+                      onChange={(v) => setBenchmarkInput(typeof v === "string" ? v : "")}
+                    />
+                    <TextInput
+                      label="Start Date"
+                      value={startDate}
+                      onChange={(v) => setStartDate(typeof v === "string" ? v : "")}
+                    />
+                    <TextInput
+                      label="End Date"
+                      value={endDate}
+                      onChange={(v) => setEndDate(typeof v === "string" ? v : "")}
+                    />
+                  </Grid>
+                </VStack>
 
-                <HStack gap={3} align="end">
-                  <TextInput
-                    label="Starting Cash ($)"
-                    value={startingCash}
-                    onChange={(v) => setStartingCash(typeof v === "string" ? v : "")}
-                  />
-                  <TextInput
-                    label="Fast MA Period"
-                    value={fastPeriod}
-                    onChange={(v) => setFastPeriod(typeof v === "string" ? v : "")}
-                  />
-                  <TextInput
-                    label="Slow MA Period"
-                    value={slowPeriod}
-                    onChange={(v) => setSlowPeriod(typeof v === "string" ? v : "")}
-                  />
-                  <Selector
-                    label="Moving Average Type"
-                    value={maType}
-                    onChange={(v) => setMaType(v as "sma" | "ema")}
-                    options={[
-                      { value: "sma", label: "Simple (SMA)" },
-                      { value: "ema", label: "Exponential (EMA)" },
-                    ]}
-                  />
-                  <TextInput
-                    label="Commission (bps)"
-                    value={commissionBps}
-                    onChange={(v) => setCommissionBps(typeof v === "string" ? v : "")}
-                  />
-                  <TextInput
-                    label="Slippage (bps)"
-                    value={slippageBps}
-                    onChange={(v) => setSlippageBps(typeof v === "string" ? v : "")}
-                  />
-                  <Selector
-                    label="Allow Short Positions"
-                    value={allowShorting ? "yes" : "no"}
-                    onChange={(v) => setAllowShorting(v === "yes")}
-                    options={[
-                      { value: "yes", label: "Enabled (Long/Short)" },
-                      { value: "no", label: "Disabled (Long-Only)" },
-                    ]}
-                  />
-                  <TextInput
-                    label="Borrow Fee (bps p.a.)"
-                    value={borrowFeeBps}
-                    onChange={(v) => setBorrowFeeBps(typeof v === "string" ? v : "")}
-                  />
-                  <TextInput
-                    label="Unavailable Borrow (Symbols)"
-                    value={unavailableBorrowInput}
-                    onChange={(v) => setUnavailableBorrowInput(typeof v === "string" ? v : "")}
-                  />
-                </HStack>
+                <Divider />
+
+                {/* Section 2: Execution Model & Trading Costs */}
+                <VStack gap={2}>
+                  <Text type="supporting" weight="bold">
+                    2. Execution Model &amp; Trading Costs
+                  </Text>
+                  <Grid columns={{ minWidth: 200, repeat: "fit" }} gap={3}>
+                    <TextInput
+                      label="Starting Cash ($)"
+                      value={startingCash}
+                      onChange={(v) => setStartingCash(typeof v === "string" ? v : "")}
+                    />
+                    <TextInput
+                      label="Fast MA Period"
+                      value={fastPeriod}
+                      onChange={(v) => setFastPeriod(typeof v === "string" ? v : "")}
+                    />
+                    <TextInput
+                      label="Slow MA Period"
+                      value={slowPeriod}
+                      onChange={(v) => setSlowPeriod(typeof v === "string" ? v : "")}
+                    />
+                    <Selector
+                      label="Moving Average Type"
+                      value={maType}
+                      onChange={(v) => setMaType(v as "sma" | "ema")}
+                      options={[
+                        { value: "sma", label: "Simple (SMA)" },
+                        { value: "ema", label: "Exponential (EMA)" },
+                      ]}
+                    />
+                    <TextInput
+                      label="Commission (bps)"
+                      value={commissionBps}
+                      onChange={(v) => setCommissionBps(typeof v === "string" ? v : "")}
+                    />
+                    <TextInput
+                      label="Slippage (bps)"
+                      value={slippageBps}
+                      onChange={(v) => setSlippageBps(typeof v === "string" ? v : "")}
+                    />
+                    <Selector
+                      label="Allow Short Positions"
+                      value={allowShorting ? "yes" : "no"}
+                      onChange={(v) => setAllowShorting(v === "yes")}
+                      options={[
+                        { value: "yes", label: "Enabled (Long/Short)" },
+                        { value: "no", label: "Disabled (Long-Only)" },
+                      ]}
+                    />
+                    <TextInput
+                      label="Borrow Fee (bps p.a.)"
+                      value={borrowFeeBps}
+                      onChange={(v) => setBorrowFeeBps(typeof v === "string" ? v : "")}
+                    />
+                    <TextInput
+                      label="Unavailable Borrow (Symbols)"
+                      value={unavailableBorrowInput}
+                      onChange={(v) => setUnavailableBorrowInput(typeof v === "string" ? v : "")}
+                    />
+                  </Grid>
+                </VStack>
+
+                <Divider />
+
+                {/* Section 3: Leverage & Margin Limits */}
+                <VStack gap={2}>
+                  <Text type="supporting" weight="bold">
+                    3. Leverage &amp; Margin Limits
+                  </Text>
+                  <Grid columns={{ minWidth: 200, repeat: "fit" }} gap={3}>
+                    <TextInput
+                      label="Max Leverage Limit (x)"
+                      value={maxLeverage}
+                      onChange={(v) => setMaxLeverage(typeof v === "string" ? v : "")}
+                    />
+                    <Selector
+                      label="Leverage Breach Mode"
+                      value={leverageMode}
+                      onChange={(v) => setLeverageMode(v as "reject" | "constrain")}
+                      options={[
+                        { value: "reject", label: "Reject Orders" },
+                        { value: "constrain", label: "Constrain / Scale" },
+                      ]}
+                    />
+                    <TextInput
+                      label="Margin Requirement (%)"
+                      value={marginRequirement}
+                      onChange={(v) => setMarginRequirement(typeof v === "string" ? v : "")}
+                    />
+                    <TextInput
+                      label="Maintenance Margin (%)"
+                      value={maintenanceMargin}
+                      onChange={(v) => setMaintenanceMargin(typeof v === "string" ? v : "")}
+                    />
+                  </Grid>
+                </VStack>
               </VStack>
             </Card>
 
@@ -704,6 +769,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                         | "trades"
                         | "fills"
                         | "ledger"
+                        | "rejections"
                         | "manifest"
                         | "compare",
                     )
@@ -721,6 +787,10 @@ export function BacktestView({ project }: BacktestViewProps) {
                   <SegmentedControlItem
                     value="ledger"
                     label={`Daily Ledger (${currentResult.ledger?.length ?? 0})`}
+                  />
+                  <SegmentedControlItem
+                    value="rejections"
+                    label={`Rejections (${currentResult.rejections?.length ?? 0})`}
                   />
                   <SegmentedControlItem value="manifest" label="Manifest & Integrity" />
                   <SegmentedControlItem
@@ -767,7 +837,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                             </Text>
                           </TableCell>
                           <TableCell>
-                            <Text type="supporting">Starting Capital</Text>
+                            <Text type="supporting">Starting Cash</Text>
                           </TableCell>
                           <TableCell>
                             <Text>
@@ -808,38 +878,38 @@ export function BacktestView({ project }: BacktestViewProps) {
 
                 {/* TAB: Trades */}
                 {activeTab === "trades" && (
-                  <VStack gap={3}>
+                  <VStack gap={3} style={{ width: "100%", overflowX: "auto" }}>
                     <Heading level={3}>Closed Round-Trip Trades</Heading>
                     {currentResult.trades && currentResult.trades.length > 0 ? (
-                      <Table>
+                      <Table style={{ minWidth: "900px" }}>
                         <TableHeader>
                           <TableRow>
-                            <TableHeaderCell>Trade ID</TableHeaderCell>
-                            <TableHeaderCell>Security</TableHeaderCell>
-                            <TableHeaderCell>Entry Date</TableHeaderCell>
-                            <TableHeaderCell>Exit Date</TableHeaderCell>
-                            <TableHeaderCell>Entry Price</TableHeaderCell>
-                            <TableHeaderCell>Exit Price</TableHeaderCell>
-                            <TableHeaderCell>Quantity</TableHeaderCell>
-                            <TableHeaderCell>Total PnL</TableHeaderCell>
-                            <TableHeaderCell>Return (%)</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Trade ID</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Security</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Entry Date</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Exit Date</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Entry Price</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Exit Price</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Quantity</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Total PnL</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Return (%)</TableHeaderCell>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {currentResult.trades.map((tr) => (
                             <TableRow key={tr.trade_id}>
-                              <TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>
                                 <Text weight="bold">{tr.trade_id}</Text>
                               </TableCell>
-                              <TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>
                                 <Token label={tr.security_id} color="blue" />
                               </TableCell>
-                              <TableCell>{tr.entry_date}</TableCell>
-                              <TableCell>{tr.exit_date}</TableCell>
-                              <TableCell>{currencyFormat(tr.entry_price)}</TableCell>
-                              <TableCell>{currencyFormat(tr.exit_price)}</TableCell>
-                              <TableCell>{decimalFormat(tr.quantity, 2)}</TableCell>
-                              <TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>{tr.entry_date}</TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>{tr.exit_date}</TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>{currencyFormat(tr.entry_price)}</TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>{currencyFormat(tr.exit_price)}</TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>{decimalFormat(tr.quantity, 2)}</TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>
                                 <Text
                                   weight="bold"
                                   style={{
@@ -852,7 +922,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                                   {currencyFormat(tr.pnl)}
                                 </Text>
                               </TableCell>
-                              <TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>
                                 <Text
                                   weight="bold"
                                   style={{
@@ -879,41 +949,41 @@ export function BacktestView({ project }: BacktestViewProps) {
 
                 {/* TAB: Fills */}
                 {activeTab === "fills" && (
-                  <VStack gap={3}>
+                  <VStack gap={3} style={{ width: "100%", overflowX: "auto" }}>
                     <Heading level={3}>Simulated Execution Fills</Heading>
                     {currentResult.fills && currentResult.fills.length > 0 ? (
-                      <Table>
+                      <Table style={{ minWidth: "950px" }}>
                         <TableHeader>
                           <TableRow>
-                            <TableHeaderCell>Fill Date</TableHeaderCell>
-                            <TableHeaderCell>Side</TableHeaderCell>
-                            <TableHeaderCell>Security</TableHeaderCell>
-                            <TableHeaderCell>Quantity</TableHeaderCell>
-                            <TableHeaderCell>Fill Price</TableHeaderCell>
-                            <TableHeaderCell>Notional Value</TableHeaderCell>
-                            <TableHeaderCell>Commission</TableHeaderCell>
-                            <TableHeaderCell>Slippage Cost</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Fill Date</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Side</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Security</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Quantity</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Fill Price</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Notional Value</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Commission</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Slippage Cost</TableHeaderCell>
                             <TableHeaderCell>Rationale</TableHeaderCell>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {currentResult.fills.map((fill, idx) => (
                             <TableRow key={idx}>
-                              <TableCell>{fill.session_date}</TableCell>
-                              <TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>{fill.session_date}</TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>
                                 <Token
                                   label={fill.side.toUpperCase()}
                                   color={fill.side.toLowerCase() === "buy" ? "green" : "purple"}
                                 />
                               </TableCell>
-                              <TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>
                                 <Text weight="bold">{fill.security_id}</Text>
                               </TableCell>
-                              <TableCell>{decimalFormat(fill.quantity, 2)}</TableCell>
-                              <TableCell>{currencyFormat(fill.price)}</TableCell>
-                              <TableCell>{currencyFormat(fill.notional)}</TableCell>
-                              <TableCell>{currencyFormat(fill.commission)}</TableCell>
-                              <TableCell>{currencyFormat(fill.slippage_cost)}</TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>{decimalFormat(fill.quantity, 2)}</TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>{currencyFormat(fill.price)}</TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>{currencyFormat(fill.notional)}</TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>{currencyFormat(fill.commission)}</TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>{currencyFormat(fill.slippage_cost)}</TableCell>
                               <TableCell>
                                 <Text type="supporting">{fill.rationale || "—"}</Text>
                               </TableCell>
@@ -929,20 +999,20 @@ export function BacktestView({ project }: BacktestViewProps) {
 
                 {/* TAB: Ledger */}
                 {activeTab === "ledger" && (
-                  <VStack gap={3}>
+                  <VStack gap={3} style={{ width: "100%", overflowX: "auto" }}>
                     <Heading level={3}>Daily Mark-to-Market Portfolio Ledger</Heading>
                     {currentResult.ledger && currentResult.ledger.length > 0 ? (
-                      <Table>
+                      <Table style={{ tableLayout: "auto", minWidth: "1200px" }}>
                         <TableHeader>
                           <TableRow>
-                            <TableHeaderCell>Session Date</TableHeaderCell>
-                            <TableHeaderCell>Positions (Shares &amp; Value)</TableHeaderCell>
-                            <TableHeaderCell>Cash Balance</TableHeaderCell>
-                            <TableHeaderCell>Total Position Value</TableHeaderCell>
-                            <TableHeaderCell>Portfolio Value</TableHeaderCell>
-                            <TableHeaderCell>Gross Exp</TableHeaderCell>
-                            <TableHeaderCell>Net Exp</TableHeaderCell>
-                            <TableHeaderCell>Borrow Fees</TableHeaderCell>
+                            <TableHeaderCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>Session Date</TableHeaderCell>
+                            <TableHeaderCell style={{ maxWidth: "none", whiteSpace: "nowrap", minWidth: "300px" }}>Positions (Shares &amp; Value)</TableHeaderCell>
+                            <TableHeaderCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>Cash Balance</TableHeaderCell>
+                            <TableHeaderCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>Total Position Value</TableHeaderCell>
+                            <TableHeaderCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>Portfolio Value</TableHeaderCell>
+                            <TableHeaderCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>Gross Exp</TableHeaderCell>
+                            <TableHeaderCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>Net Exp</TableHeaderCell>
+                            <TableHeaderCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>Borrow Fees</TableHeaderCell>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -950,30 +1020,34 @@ export function BacktestView({ project }: BacktestViewProps) {
                             const posEntries = Object.entries(row.positions || {});
                             return (
                               <TableRow key={idx}>
-                                <TableCell>{row.session_date}</TableCell>
-                                <TableCell>
+                                <TableCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>{row.session_date}</TableCell>
+                                <TableCell style={{ maxWidth: "none", minWidth: "300px" }}>
                                   {posEntries.length > 0 ? (
-                                    <HStack gap={2} wrap>
+                                    <HStack gap={2} wrap align="center">
                                       {posEntries.map(([sym, pos]) => (
-                                        <Token
-                                          key={sym}
-                                          label={`${sym}: ${decimalFormat(pos.shares, 2)} sh ($${decimalFormat(pos.position_value, 0)})`}
-                                          color={pos.shares > 0 ? "blue" : pos.shares < 0 ? "purple" : "default"}
-                                        />
+                                        <HStack key={sym} gap={1} align="center">
+                                          <Token
+                                            label={sym}
+                                            color={pos.shares > 0 ? "blue" : pos.shares < 0 ? "purple" : "default"}
+                                          />
+                                          <Text size="sm" type="supporting" style={{ whiteSpace: "nowrap" }}>
+                                            {decimalFormat(pos.shares, 2)} sh ({currencyFormat(pos.position_value)})
+                                          </Text>
+                                        </HStack>
                                       ))}
                                     </HStack>
                                   ) : (
                                     <Text type="supporting">Flat</Text>
                                   )}
                                 </TableCell>
-                                <TableCell>{currencyFormat(row.cash)}</TableCell>
-                                <TableCell>{currencyFormat(row.position_value)}</TableCell>
-                                <TableCell>
+                                <TableCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>{currencyFormat(row.cash)}</TableCell>
+                                <TableCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>{currencyFormat(row.position_value)}</TableCell>
+                                <TableCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>
                                   <Text weight="bold">{currencyFormat(row.portfolio_value)}</Text>
                                 </TableCell>
-                                <TableCell>{percentage(row.gross_exposure)}</TableCell>
-                                <TableCell>{percentage(row.net_exposure)}</TableCell>
-                                <TableCell>{currencyFormat(row.borrow_fees ?? 0)}</TableCell>
+                                <TableCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>{percentage(row.gross_exposure)}</TableCell>
+                                <TableCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>{percentage(row.net_exposure)}</TableCell>
+                                <TableCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>{currencyFormat(row.borrow_fees ?? 0)}</TableCell>
                               </TableRow>
                             );
                           })}
@@ -981,6 +1055,60 @@ export function BacktestView({ project }: BacktestViewProps) {
                       </Table>
                     ) : (
                       <Text type="supporting">Ledger is empty.</Text>
+                    )}
+                  </VStack>
+                )}
+
+                {/* TAB: Rejections */}
+                {activeTab === "rejections" && (
+                  <VStack gap={3} style={{ width: "100%", overflowX: "auto" }}>
+                    <Heading level={3}>Constraint Rejections &amp; Margin Limits</Heading>
+                    {currentResult.rejections && currentResult.rejections.length > 0 ? (
+                      <Table style={{ minWidth: "950px" }}>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Session Date</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Security</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Rule</TableHeaderCell>
+                            <TableHeaderCell style={{ whiteSpace: "nowrap" }}>Requested Weight</TableHeaderCell>
+                            <TableHeaderCell>Reason</TableHeaderCell>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {currentResult.rejections.map((rej, idx) => (
+                            <TableRow key={idx}>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>{rej.session_date}</TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>
+                                <Token label={rej.security_id} color="blue" />
+                              </TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>
+                                <Token
+                                  label={rej.rule}
+                                  color={
+                                    rej.rule.includes("maintenance") || rej.rule.includes("margin")
+                                      ? "purple"
+                                      : rej.rule.includes("constrained")
+                                      ? "green"
+                                      : "blue"
+                                  }
+                                />
+                              </TableCell>
+                              <TableCell style={{ whiteSpace: "nowrap" }}>
+                                {rej.requested_weight !== null && rej.requested_weight !== undefined
+                                  ? `${(rej.requested_weight * 100).toFixed(1)}%`
+                                  : "—"}
+                              </TableCell>
+                              <TableCell>
+                                <Text>{rej.reason}</Text>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    ) : (
+                      <Text type="supporting">
+                        No constraint rejections or margin breaches occurred during this Backtest run.
+                      </Text>
                     )}
                   </VStack>
                 )}
