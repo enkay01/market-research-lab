@@ -357,7 +357,8 @@ class PredictiveModelEvaluation:
         "Single-feature momentum regression does not account for volatility clustering",
     )
     limitations: tuple[str, ...] = (
-        "Model emits forecast return values only and does not decide portfolio weights or execution orders",
+        "Model emits forecast return values only and does not decide portfolio weights "
+        "or execution orders",
         "Evaluation assumes execution at exact close price without slippage or transaction fees",
     )
     unsupported_claims: tuple[str, ...] = (

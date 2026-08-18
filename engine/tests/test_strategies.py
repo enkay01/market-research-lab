@@ -192,7 +192,7 @@ def test_predictive_model_cannot_feed_strategy_without_completed_benchmark_mod00
 def test_saved_model_result_is_unwrapped_before_strategy_guard():
     from market_research_lab.strategies import validate_model_eligibility_for_strategy
 
-    validate_model_eligibility_for_strategy(
+    result = validate_model_eligibility_for_strategy(
         {
             "result": {
                 "evaluation": {
@@ -208,3 +208,4 @@ def test_saved_model_result_is_unwrapped_before_strategy_guard():
             }
         }
     )
+    assert result is None

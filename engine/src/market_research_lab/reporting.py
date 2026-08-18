@@ -484,14 +484,17 @@ def generate_predictive_model_html_report(
         f'{html.escape(", ".join(str(dataset) for dataset in datasets))}<br>'
         f'<strong>Evaluation Mode:</strong> {evaluation_mode}<br>'
         f'<strong>Naive Benchmark:</strong> {bench_name}<br>'
-        f'<strong>Strategy Eligibility:</strong> {"Eligible" if strategy_eligible is True else "Blocked"}<br>'
+        f'<strong>Strategy Eligibility:</strong> '
+        f'{"Eligible" if strategy_eligible is True else "Blocked"}<br>'
         '<strong>Metric Scope:</strong> In-sample training; held-out validation and '
         'out-of-sample test</div>',
         '  <p class="note">The initial fit uses training observations only. Each later '
         'fold uses only data available before its decision session.</p>',
         f'  <div class="benchmark-box"><strong>Naive Benchmark Comparison:</strong> {bench_name}'
         f'<br><small>{bench_desc}</small></div>',
-        f'  <p class="note"><strong>Strategy eligibility:</strong> {html.escape("Eligible" if strategy_eligible is True else "Blocked")}. {eligibility_reason}</p>',
+        f'  <p class="note"><strong>Strategy eligibility:</strong> '
+        f'{html.escape("Eligible" if strategy_eligible is True else "Blocked")}. '
+        f'{eligibility_reason}</p>',
         "  <h2>Chronological Periods</h2>",
         "  <table>",
         "    <thead><tr><th>Period</th><th>Target Dates</th><th>Feature Dates</th>"
