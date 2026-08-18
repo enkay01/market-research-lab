@@ -148,3 +148,63 @@ def test_evaluate_strategy_unknown_name_raises():
             {},
             decision_time="2024-01-05T21:00:00Z",
         )
+
+
+def test_predictive_model_cannot_feed_strategy_without_completed_benchmark_mod009():
+    from market_research_lab.strategies import validate_model_eligibility_for_strategy
+
+    with pytest.raises(StrategyEvaluationError, match="MOD-009"):
+        validate_model_eligibility_for_strategy({"evaluation": {"mode": "holdout"}})
+
+    with pytest.raises(StrategyEvaluationError, match="MOD-009"):
+        validate_model_eligibility_for_strategy(
+            {
+                "evaluation": {
+                    "benchmark": {
+                        "completed": True,
+                        "out_of_sample_comparison": {
+                            "comparison_complete": False,
+                            "same_eligible_periods": True,
+                        },
+                    },
+                    "is_eligible_for_strategy": True,
+                }
+            }
+        )
+
+    validate_model_eligibility_for_strategy(
+        {
+            "evaluation": {
+                "benchmark": {
+                    "name": "zero_return",
+                    "completed": True,
+                    "out_of_sample_comparison": {
+                        "comparison_complete": True,
+                        "same_eligible_periods": True,
+                    },
+                },
+                "is_eligible_for_strategy": True,
+            }
+        }
+    )
+
+
+def test_saved_model_result_is_unwrapped_before_strategy_guard():
+    from market_research_lab.strategies import validate_model_eligibility_for_strategy
+
+    validate_model_eligibility_for_strategy(
+        {
+            "result": {
+                "evaluation": {
+                    "benchmark": {
+                        "completed": True,
+                        "out_of_sample_comparison": {
+                            "comparison_complete": True,
+                            "same_eligible_periods": True,
+                        },
+                    },
+                    "is_eligible_for_strategy": True,
+                }
+            }
+        }
+    )

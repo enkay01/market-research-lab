@@ -101,6 +101,7 @@ from .strategies import (
     evaluate_strategy,
     get_strategy_spec,
     list_strategies,
+    validate_model_eligibility_for_strategy,
 )
 from .valuation import (
     ComparableCompanyInput,
@@ -658,6 +659,18 @@ class PredictiveModelPeriodMetricsResponse(BaseModel):
     period: Literal["training", "validation", "test"]
     observations: int
     metrics: dict[str, float]
+    benchmark_metrics: dict[str, float] = Field(default_factory=dict)
+    comparison: dict[str, JsonValue] = Field(default_factory=dict)
+    sample_scope: Literal["in_sample", "validation", "out_of_sample"] = "in_sample"
+
+
+class NaiveBenchmarkEvaluationResponse(BaseModel):
+    name: str
+    display_name: str
+    description: str
+    period_metrics: dict[str, dict[str, float]]
+    out_of_sample_comparison: dict[str, JsonValue]
+    completed: bool = True
 
 
 class PredictiveModelPredictionResponse(BaseModel):
@@ -723,6 +736,16 @@ class PredictiveModelRunResponse(BaseModel):
     period_metrics: list[PredictiveModelPeriodMetricsResponse] = Field(default_factory=list)
     fold_artifacts: list[PredictiveModelArtifactResponse] = Field(default_factory=list)
     folds: list[PredictiveModelFoldResponse] = Field(default_factory=list)
+    benchmark: NaiveBenchmarkEvaluationResponse | None = None
+    assumptions: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    unsupported_claims: list[str] = Field(default_factory=list)
+    is_eligible_for_strategy: bool = False
+    eligibility_reason: str = (
+        "Predictive Model is not eligible for a Strategy until the naive benchmark "
+        "comparison is complete."
+    )
 
 
 @dataclass(frozen=True)
@@ -1164,6 +1187,9 @@ def _predictive_run_response(
                 period=period_metrics.period,
                 observations=period_metrics.observations,
                 metrics=period_metrics.metrics,
+                benchmark_metrics=period_metrics.benchmark_metrics,
+                comparison=period_metrics.comparison,
+                sample_scope=period_metrics.sample_scope,
             )
             for period_metrics in calculation.evaluation.period_metrics
         ],
@@ -1172,6 +1198,26 @@ def _predictive_run_response(
             for fold_artifact in calculation.fold_artifacts
         ],
         folds=[_predictive_fold_response(fold) for fold in calculation.evaluation.folds],
+        benchmark=(
+            NaiveBenchmarkEvaluationResponse(
+                name=calculation.evaluation.benchmark.name,
+                display_name=calculation.evaluation.benchmark.display_name,
+                description=calculation.evaluation.benchmark.description,
+                period_metrics=calculation.evaluation.benchmark.period_metrics,
+                out_of_sample_comparison=(
+                    calculation.evaluation.benchmark.out_of_sample_comparison
+                ),
+                completed=calculation.evaluation.benchmark.completed,
+            )
+            if calculation.evaluation.benchmark
+            else None
+        ),
+        assumptions=list(calculation.evaluation.assumptions),
+        warnings=list(calculation.evaluation.warnings),
+        limitations=list(calculation.evaluation.limitations),
+        unsupported_claims=list(calculation.evaluation.unsupported_claims),
+        is_eligible_for_strategy=calculation.evaluation.is_eligible_for_strategy,
+        eligibility_reason=calculation.evaluation.eligibility_reason,
     )
 
 
@@ -3095,6 +3141,10 @@ def create_app(
         request: StrategyEvaluateRequest,
     ) -> StrategyEvaluationResponse:
         context = _strategy_market_view(market_store, request)
+        if "predictive_model_evaluation" in request.parameters and isinstance(
+            request.parameters["predictive_model_evaluation"], dict
+        ):
+            validate_model_eligibility_for_strategy(request.parameters["predictive_model_evaluation"])
         evaluation = evaluate_strategy(
             name=request.name,
             market_view=context.market_view,
@@ -3116,6 +3166,19 @@ def create_app(
     def save_strategy_evaluation(
         project_id: UUID, request: StrategyEvaluateRequest
     ) -> SavedStrategyEvaluationResponse:
+        model_run_id = request.parameters.get("predictive_model_run_id")
+        if model_run_id and isinstance(model_run_id, str):
+            model_record = store.get_predictive_model_result(str(project_id), model_run_id)
+            if model_record is None:
+                raise StrategyEvaluationError(
+                    "Predictive Model Run not found. A saved, benchmark-verified Run "
+                    "is required before a Strategy can use model output (MOD-009)."
+                )
+            validate_model_eligibility_for_strategy(model_record)
+        if "predictive_model_evaluation" in request.parameters and isinstance(
+            request.parameters["predictive_model_evaluation"], dict
+        ):
+            validate_model_eligibility_for_strategy(request.parameters["predictive_model_evaluation"])
         context = _strategy_market_view(market_store, request)
         evaluation = evaluate_strategy(
             name=request.name,

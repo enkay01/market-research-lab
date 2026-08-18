@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -274,6 +275,44 @@ def evaluate_long_short_moving_average(
     )
 
 
+def validate_model_eligibility_for_strategy(
+    model_data: Mapping[str, JsonValue],
+) -> None:
+    """Enforce MOD-009 before a Predictive Model can feed a Strategy.
+
+    The check accepts either a saved model result or its evaluation object. It
+    requires the completed comparison and its out-of-sample provenance. A
+    caller-supplied boolean is not sufficient.
+    """
+    result = model_data.get("result")
+    source = result if isinstance(result, dict) else model_data
+    evaluation_value = source.get("evaluation")
+    evaluation = evaluation_value if isinstance(evaluation_value, dict) else source
+
+    benchmark = evaluation.get("benchmark")
+    comparison = benchmark.get("out_of_sample_comparison") if isinstance(benchmark, dict) else None
+    if (
+        not isinstance(benchmark, dict)
+        or benchmark.get("completed") is not True
+        or not isinstance(comparison, dict)
+        or comparison.get("comparison_complete") is not True
+        or comparison.get("same_eligible_periods") is not True
+    ):
+        raise StrategyEvaluationError(
+            "Predictive Model cannot feed an enabled Strategy until its naive "
+            "out-of-sample benchmark comparison is complete (MOD-009)."
+        )
+
+    if evaluation.get("is_eligible_for_strategy") is not True:
+        reason = evaluation.get(
+            "eligibility_reason", "benchmark comparison eligibility is not verified"
+        )
+        raise StrategyEvaluationError(
+            "Predictive Model is not eligible to feed a Strategy: "
+            f"{reason} (MOD-009)."
+        )
+
+
 STRATEGY_REGISTRY: dict[str, StrategyMetadata] = {
     "long_flat_moving_average": StrategyMetadata(
         name="long_flat_moving_average",
@@ -375,7 +414,6 @@ def evaluate_strategy(
         return evaluate_long_short_moving_average(
             market_view, parameters, decision_time=decision_time
         )
-
     raise StrategyEvaluationError(
         f"Unknown Strategy '{name}'. Available: {list(STRATEGY_REGISTRY.keys())}"
     )

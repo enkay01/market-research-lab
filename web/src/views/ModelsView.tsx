@@ -1078,8 +1078,81 @@ export function ModelsView({ project }: ModelsViewProps) {
                           label={`Chronological ${predictiveResult.evaluation_mode} evaluation`}
                           color="orange"
                         />
+                        {predictiveResult.benchmark && (
+                          <Token
+                            label={predictiveResult.benchmark.display_name}
+                            color="purple"
+                          />
+                        )}
+                        {predictiveResult.benchmark?.out_of_sample_comparison && (
+                          <Token
+                            label={
+                              predictiveResult.benchmark.out_of_sample_comparison.outperforms_benchmark
+                                ? "Outperforms Benchmark"
+                                : "Underperforms Benchmark"
+                            }
+                            color={
+                              predictiveResult.benchmark.out_of_sample_comparison.outperforms_benchmark
+                                ? "green"
+                                : "orange"
+                            }
+                          />
+                        )}
                       </HStack>
                     </HStack>
+
+                    {predictiveResult.benchmark && (
+                      <Card padding={4}>
+                        <VStack gap={3}>
+                          <HStack justify="between" align="center" style={{ flexWrap: "wrap" }}>
+                            <Heading level={4}>Naive Benchmark Comparison</Heading>
+                            <Token
+                              label={
+                                predictiveResult.is_eligible_for_strategy
+                                  ? "Strategy Feeding: Eligible (MOD-009)"
+                                  : "Strategy Feeding: Ineligible"
+                              }
+                              color={predictiveResult.is_eligible_for_strategy ? "green" : "red"}
+                            />
+                          </HStack>
+                          <Text>{predictiveResult.benchmark.description}</Text>
+                          <HStack gap={4} style={{ flexWrap: "wrap" }}>
+                            <VStack gap={0}>
+                              <Text type="supporting">Out-of-Sample Model RMSE</Text>
+                              <Text weight="bold">
+                                {typeof predictiveResult.benchmark.out_of_sample_comparison.model_rmse === "number"
+                                  ? predictiveResult.benchmark.out_of_sample_comparison.model_rmse.toFixed(6)
+                                  : "—"}
+                              </Text>
+                            </VStack>
+                            <VStack gap={0}>
+                              <Text type="supporting">Benchmark RMSE</Text>
+                              <Text weight="bold">
+                                {typeof predictiveResult.benchmark.out_of_sample_comparison.benchmark_rmse === "number"
+                                  ? predictiveResult.benchmark.out_of_sample_comparison.benchmark_rmse.toFixed(6)
+                                  : "—"}
+                              </Text>
+                            </VStack>
+                            <VStack gap={0}>
+                              <Text type="supporting">RMSE Improvement</Text>
+                              <Text weight="bold">
+                                {typeof predictiveResult.benchmark.out_of_sample_comparison.rmse_improvement === "number"
+                                  ? `${(predictiveResult.benchmark.out_of_sample_comparison.rmse_improvement * 100).toFixed(2)}%`
+                                  : "—"}
+                              </Text>
+                            </VStack>
+                            <VStack gap={0}>
+                              <Text type="supporting">Outperformance Status</Text>
+                              <Text weight="bold">
+                                {predictiveResult.benchmark.out_of_sample_comparison.outperforms_benchmark
+                                  ? "Yes (Lower RMSE)"
+                                  : "No (Higher RMSE)"}
+                              </Text>
+                            </VStack>
+                          </HStack>
+                        </VStack>
+                      </Card>
+                    )}
 
                     <Card padding={4}>
                       <VStack gap={3}>
@@ -1100,7 +1173,7 @@ export function ModelsView({ project }: ModelsViewProps) {
                     <VStack gap={3}>
                       <Heading level={4}>Chronological Evaluation</Heading>
                       <Text type="supporting">
-                        The initial fit uses training observations only. Each later fold uses only data available before its target date. Metric scope: training is in-sample; validation and out-of-sample are held out. Warnings: none recorded.
+                        The initial fit uses training observations only. Each later fold uses only data available before its decision session. Metric scope: training is in-sample; validation and out-of-sample test are held out.
                       </Text>
                       <Table>
                         <TableHeader>
@@ -1109,29 +1182,85 @@ export function ModelsView({ project }: ModelsViewProps) {
                             <TableHeaderCell>Target Dates</TableHeaderCell>
                             <TableHeaderCell>Feature Dates</TableHeaderCell>
                             <TableHeaderCell>Observations</TableHeaderCell>
-                            <TableHeaderCell>RMSE</TableHeaderCell>
-                            <TableHeaderCell>R²</TableHeaderCell>
+                            <TableHeaderCell>Model RMSE</TableHeaderCell>
+                            <TableHeaderCell>Benchmark RMSE</TableHeaderCell>
+                            <TableHeaderCell>RMSE Improvement</TableHeaderCell>
+                            <TableHeaderCell>Model R²</TableHeaderCell>
+                            <TableHeaderCell>Benchmark R²</TableHeaderCell>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {(predictiveResult.splits ?? []).map((split) => {
-                            const metrics = (predictiveResult.period_metrics ?? []).find(
+                            const periodItem = (predictiveResult.period_metrics ?? []).find(
                               (item) => item.period === split.period,
-                            )?.metrics;
+                            );
+                            const metrics = periodItem?.metrics;
+                            const benchMetrics = periodItem?.benchmark_metrics;
+                            const comp = periodItem?.comparison;
+                            const rmseImpr = typeof comp?.rmse_improvement === "number"
+                              ? `${(comp.rmse_improvement * 100).toFixed(2)}%`
+                              : "—";
                             return (
                               <TableRow key={split.period}>
-                                <TableCell>{split.period === "test" ? "out-of-sample" : split.period}</TableCell>
+                                <TableCell>{split.period === "test" ? "out-of-sample (test)" : split.period}</TableCell>
                                 <TableCell>{split.start} to {split.end}</TableCell>
                                 <TableCell>{split.feature_start} to {split.feature_end}</TableCell>
                                 <TableCell>{split.observations}</TableCell>
-                                <TableCell>{metrics?.rmse?.toFixed(6) ?? "Not available"}</TableCell>
-                                <TableCell>{metrics?.r2?.toFixed(3) ?? "Not available"}</TableCell>
+                                <TableCell>{metrics?.rmse?.toFixed(6) ?? "—"}</TableCell>
+                                <TableCell>{benchMetrics?.rmse?.toFixed(6) ?? "—"}</TableCell>
+                                <TableCell>{rmseImpr}</TableCell>
+                                <TableCell>{metrics?.r2?.toFixed(3) ?? "—"}</TableCell>
+                                <TableCell>{benchMetrics?.r2?.toFixed(3) ?? "—"}</TableCell>
                               </TableRow>
                             );
                           })}
                         </TableBody>
                       </Table>
                     </VStack>
+
+                    {/* Preserved Assumptions, Warnings, Limitations, and Claims (REP-006) */}
+                    <HStack gap={4} style={{ flexWrap: "wrap", alignItems: "stretch" }}>
+                      {predictiveResult.assumptions && predictiveResult.assumptions.length > 0 && (
+                        <Card padding={3} style={{ flex: "1 1 280px" }}>
+                          <VStack gap={2}>
+                            <Text weight="bold">Assumptions</Text>
+                            {predictiveResult.assumptions.map((a, i) => (
+                              <Text type="supporting" key={i}>• {a}</Text>
+                            ))}
+                          </VStack>
+                        </Card>
+                      )}
+                      {predictiveResult.warnings && predictiveResult.warnings.length > 0 && (
+                        <Card padding={3} style={{ flex: "1 1 280px" }}>
+                          <VStack gap={2}>
+                            <Text weight="bold">Warnings</Text>
+                            {predictiveResult.warnings.map((w, i) => (
+                              <Text type="supporting" key={i}>• {w}</Text>
+                            ))}
+                          </VStack>
+                        </Card>
+                      )}
+                      {predictiveResult.limitations && predictiveResult.limitations.length > 0 && (
+                        <Card padding={3} style={{ flex: "1 1 280px" }}>
+                          <VStack gap={2}>
+                            <Text weight="bold">Limitations</Text>
+                            {predictiveResult.limitations.map((l, i) => (
+                              <Text type="supporting" key={i}>• {l}</Text>
+                            ))}
+                          </VStack>
+                        </Card>
+                      )}
+                      {predictiveResult.unsupported_claims && predictiveResult.unsupported_claims.length > 0 && (
+                        <Card padding={3} style={{ flex: "1 1 280px" }}>
+                          <VStack gap={2}>
+                            <Text weight="bold">Unsupported Claims</Text>
+                            {predictiveResult.unsupported_claims.map((c, i) => (
+                              <Text type="supporting" key={i}>• {c}</Text>
+                            ))}
+                          </VStack>
+                        </Card>
+                      )}
+                    </HStack>
 
                     {(predictiveResult.folds ?? []).length > 0 && (
                       <VStack gap={3}>

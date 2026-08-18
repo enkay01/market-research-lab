@@ -51,6 +51,7 @@ def test_registry_exposes_the_model_contract() -> None:
         "validation_fraction",
         "test_fraction",
         "evaluation_mode",
+        "naive_benchmark",
     }
     assert "predicted_next_session_return" in spec.outputs
     assert "next session simple return" in spec.output_meaning
@@ -429,4 +430,89 @@ def test_run_rejects_invalid_parameters_and_insufficient_history() -> None:
             "momentum_return_regression",
             _bars([100.0, 102.0, 101.0]),
             {"momentum_period": 2, "training_window": 3},
+        )
+
+
+@pytest.mark.parametrize("benchmark_name", ["zero_return", "historical_mean", "persistence"])
+def test_run_evaluates_explicit_naive_benchmark_across_periods(
+    benchmark_name: str,
+) -> None:
+    bars = _bars(
+        [
+            100.0,
+            102.0,
+            101.0,
+            105.0,
+            104.0,
+            108.0,
+            107.0,
+            111.0,
+            115.0,
+            113.0,
+            118.0,
+            120.0,
+            119.0,
+            123.0,
+            126.0,
+        ]
+    )
+    result = run_predictive_model(
+        "momentum_return_regression",
+        bars,
+        {
+            "momentum_period": 2,
+            "training_window": 6,
+            "validation_fraction": 0.2,
+            "test_fraction": 0.2,
+            "naive_benchmark": benchmark_name,
+        },
+    )
+
+    benchmark = result.evaluation.benchmark
+    assert benchmark is not None
+    assert benchmark.name == benchmark_name
+    assert benchmark.completed is True
+    assert benchmark.display_name != ""
+    assert benchmark.description != ""
+
+    # Period-by-period metrics include model and benchmark metrics
+    for period_metric in result.evaluation.period_metrics:
+        assert "rmse" in period_metric.metrics
+        assert "mae" in period_metric.metrics
+        assert "r2" in period_metric.metrics
+        assert "rmse" in period_metric.benchmark_metrics
+        assert "mae" in period_metric.benchmark_metrics
+        assert "r2" in period_metric.benchmark_metrics
+        assert "rmse_improvement" in period_metric.comparison
+        assert "mae_improvement" in period_metric.comparison
+        assert "outperforms_benchmark" in period_metric.comparison
+        assert isinstance(period_metric.comparison["outperforms_benchmark"], bool)
+
+    # Out of sample test comparison
+    oos = benchmark.out_of_sample_comparison
+    assert oos["benchmark_name"] == benchmark_name
+    assert "model_rmse" in oos
+    assert "benchmark_rmse" in oos
+    assert "rmse_improvement" in oos
+    assert "outperforms_benchmark" in oos
+    assert oos["status"] == "evaluated"
+
+    # Assumptions, warnings, limitations, and claims preservation
+    assert len(result.evaluation.assumptions) >= 2
+    assert len(result.evaluation.warnings) >= 1
+    assert len(result.evaluation.limitations) >= 1
+    assert len(result.evaluation.unsupported_claims) >= 1
+    assert result.evaluation.is_eligible_for_strategy is True
+
+
+def test_run_rejects_unknown_naive_benchmark() -> None:
+    with pytest.raises(PredictiveModelParameterError, match="naive_benchmark"):
+        run_predictive_model(
+            "momentum_return_regression",
+            _bars([100.0, 102.0, 101.0, 105.0, 104.0, 108.0]),
+            {
+                "momentum_period": 2,
+                "training_window": 3,
+                "naive_benchmark": "magic_crystal_ball",
+            },
         )

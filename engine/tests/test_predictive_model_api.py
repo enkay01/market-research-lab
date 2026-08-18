@@ -75,6 +75,7 @@ def test_predictive_model_metadata_exposes_the_complete_contract(tmp_path: Path)
         "validation_fraction",
         "test_fraction",
         "evaluation_mode",
+        "naive_benchmark",
     }
 
 
@@ -97,6 +98,9 @@ def test_predictive_model_can_run_preview_and_save_a_reproducible_run(
     assert preview_body["metrics"]["in_sample_r2"] is not None
     assert preview_body["out_of_sample_status"] == "available"
     assert preview_body["evaluation_mode"] == "holdout"
+    assert preview_body["benchmark"]["name"] == "zero_return"
+    assert preview_body["benchmark"]["completed"] is True
+    assert preview_body["is_eligible_for_strategy"] is True
     assert [split["period"] for split in preview_body["splits"]] == [
         "training",
         "validation",
@@ -108,6 +112,8 @@ def test_predictive_model_can_run_preview_and_save_a_reproducible_run(
         "test",
     ]
     assert preview_body["period_metrics"][1]["metrics"]["rmse"] >= 0
+    assert "rmse" in preview_body["period_metrics"][1]["benchmark_metrics"]
+    assert "rmse_improvement" in preview_body["period_metrics"][1]["comparison"]
 
     saved = client.post(
         f"/api/projects/{project_id}/predictive-models/runs",
@@ -160,14 +166,16 @@ def test_predictive_model_can_run_preview_and_save_a_reproducible_run(
     assert "Chronological Periods" in report.text
     assert "Validation" in report.text or "validation" in report.text
     assert "out-of-sample" in report.text
-    assert "Metric Scope" in report.text
-    assert "No warnings recorded" in report.text
+    assert "Naive Benchmark Comparison" in report.text
+    assert "Warnings" in report.text
+    assert "Assumptions" in report.text
+    assert "Limitations" in report.text
 
     csv_export = client.get(
         f"/api/projects/{project_id}/predictive-models/runs/{saved_body['run_id']}/export/csv"
     )
     assert csv_export.status_code == 200
-    assert "Period,Observations,Metric,Value" in csv_export.text
+    assert "Period,Observations,Metric,Model Value,Benchmark Value,Improvement" in csv_export.text
     assert "validation" in csv_export.text
     assert "out-of-sample" in csv_export.text
 
