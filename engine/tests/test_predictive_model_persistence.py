@@ -36,6 +36,21 @@ def _record() -> PredictiveModelRunRecord:
             "metrics": {"in_sample_r2": 0.4},
             "out_of_sample_status": "not_available_until_chronological_splits",
         },
+        folds=[
+            {
+                "fold_index": 1,
+                "period": "validation",
+                "prediction_session_date": "2024-01-04",
+                "target_date": "2024-01-05",
+                "training_start": "2024-01-01",
+                "training_end": "2024-01-03",
+                "training_observations": 3,
+                "fit_scope": "rolling_window_before_target",
+                "artifact": {"coefficient": 0.12},
+                "prediction": {"session_date": "2024-01-04", "predicted_value": 0.01},
+                "metrics": {"mae": 0.01, "rmse": 0.01},
+            }
+        ],
     )
 
 
@@ -56,11 +71,14 @@ def test_predictive_model_run_persists_artifact_predictions_and_provenance(
     assert "2024-01-03T00:00:00+00:00" in manifest
     assert (run_root / "artifacts" / "fitted_model.json").exists()
     assert (run_root / "artifacts" / "predictions.json").exists()
+    assert (run_root / "artifacts" / "fold_artifacts.json").exists()
+    assert (run_root / "artifacts" / "folds.json").exists()
 
     loaded = store.get_predictive_model_result(project.id, run_id)
     assert loaded is not None
     assert loaded["model_revision"] == "momentum_return_regression:v1"
     assert loaded["result"]["model_name"] == "momentum_return_regression"
+    assert loaded["result"]["folds"] == _record().folds
 
     listed = store.list_predictive_model_results(project.id)
     assert len(listed) == 1

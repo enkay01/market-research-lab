@@ -192,6 +192,59 @@ def test_predictive_model_api_rejects_invalid_parameters_with_stable_error(
     assert response.json()["code"] == "parameter_validation_error"
 
 
+def test_walk_forward_folds_round_trip_through_api_and_run_artifacts(
+    tmp_path: Path,
+) -> None:
+    inputs = _client_and_inputs(tmp_path)
+    client, dataset_id, project_id = inputs
+    request = _run_request(dataset_id)
+    request["parameters"] = {
+        "momentum_period": 2,
+        "training_window": 3,
+        "evaluation_mode": "rolling",
+    }
+
+    preview = client.post("/api/predictive-models/run", json=request)
+
+    assert preview.status_code == 200
+    preview_body = preview.json()
+    assert preview_body["evaluation_mode"] == "rolling"
+    assert len(preview_body["folds"]) == len(preview_body["fold_artifacts"]) - 1
+    first_fold = preview_body["folds"][0]
+    assert first_fold["artifact"]["training_end"] < first_fold["prediction_session_date"]
+    assert first_fold["metrics"]["rmse"] >= 0
+
+    saved = client.post(
+        f"/api/projects/{project_id}/predictive-models/runs",
+        json=request,
+    )
+
+    assert saved.status_code == 201
+    saved_body = saved.json()
+    reopened = client.get(
+        f"/api/projects/{project_id}/predictive-models/runs/{saved_body['run_id']}"
+    )
+    assert reopened.status_code == 200
+    assert reopened.json()["folds"] == saved_body["folds"]
+
+    run_root = tmp_path / "projects" / project_id / "runs" / saved_body["run_id"]
+    assert (run_root / "artifacts" / "folds.json").exists()
+    manifest = (run_root / "manifest.json").read_text(encoding="utf-8")
+    assert '"folds"' in manifest
+
+    html_report = client.get(
+        f"/api/projects/{project_id}/predictive-models/runs/{saved_body['run_id']}/export/html"
+    )
+    assert html_report.status_code == 200
+    assert "Walk-forward Folds" in html_report.text
+
+    csv_report = client.get(
+        f"/api/projects/{project_id}/predictive-models/runs/{saved_body['run_id']}/export/csv"
+    )
+    assert csv_report.status_code == 200
+    assert "Fold,Period,Prediction Session" in csv_report.text
+
+
 def test_predictive_model_api_rejects_missing_dataset_with_stable_error(
     tmp_path: Path,
 ) -> None:

@@ -1133,6 +1133,44 @@ export function ModelsView({ project }: ModelsViewProps) {
                       </Table>
                     </VStack>
 
+                    {(predictiveResult.folds ?? []).length > 0 && (
+                      <VStack gap={3}>
+                        <Heading level={4}>Walk-forward Folds</Heading>
+                        <Text type="supporting">
+                          Each fold stores the fitted artifact, the prediction it produced, and the
+                          training observations eligible before that prediction session.
+                        </Text>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHeaderCell>Fold</TableHeaderCell>
+                              <TableHeaderCell>Period</TableHeaderCell>
+                              <TableHeaderCell>Prediction Session</TableHeaderCell>
+                              <TableHeaderCell>Target Date</TableHeaderCell>
+                              <TableHeaderCell>Training Range</TableHeaderCell>
+                              <TableHeaderCell>Observations</TableHeaderCell>
+                              <TableHeaderCell>MAE</TableHeaderCell>
+                              <TableHeaderCell>RMSE</TableHeaderCell>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {predictiveResult.folds.map((fold) => (
+                              <TableRow key={fold.fold_index}>
+                                <TableCell>{fold.fold_index}</TableCell>
+                                <TableCell>{fold.period === "test" ? "out-of-sample" : fold.period}</TableCell>
+                                <TableCell>{fold.prediction_session_date}</TableCell>
+                                <TableCell>{fold.target_date ?? "Not available"}</TableCell>
+                                <TableCell>{fold.training_start} to {fold.training_end}</TableCell>
+                                <TableCell>{fold.training_observations}</TableCell>
+                                <TableCell>{fold.metrics["mae"]?.toFixed(6) ?? "Not available"}</TableCell>
+                                <TableCell>{fold.metrics["rmse"]?.toFixed(6) ?? "Not available"}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </VStack>
+                    )}
+
                     <VStack gap={2}>
                       <Heading level={4}>Timestamped Model Output</Heading>
                       <Table>

@@ -84,6 +84,7 @@ class PredictiveModelRunRecord:
     result: dict[str, JsonValue]
     evaluation: dict[str, JsonValue] = field(default_factory=dict)
     fold_artifacts: list[dict[str, JsonValue]] = field(default_factory=list)
+    folds: list[dict[str, JsonValue]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -439,6 +440,7 @@ class ProjectStore:
                     "predictions": record.predictions,
                     "evaluation": record.evaluation,
                     "fold_artifacts": record.fold_artifacts,
+                    "folds": record.folds,
                 }
             )
             self._write_json(
@@ -452,6 +454,10 @@ class ProjectStore:
             self._write_json(
                 temporary_artifacts / "fold_artifacts.json",
                 {"artifacts": record.fold_artifacts},
+            )
+            self._write_json(
+                temporary_artifacts / "folds.json",
+                {"folds": record.folds},
             )
             (temporary_artifacts / "predictive_model_report.html").write_text(
                 generate_predictive_model_html_report(persisted_result, manifest),
