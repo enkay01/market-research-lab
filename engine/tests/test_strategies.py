@@ -178,9 +178,25 @@ def test_predictive_model_cannot_feed_strategy_without_completed_benchmark_mod00
                 "benchmark": {
                     "name": "zero_return",
                     "completed": True,
+                    "period_metrics": {
+                        "test": {"mae": 1.0, "rmse": 1.0, "r2": 0.0}
+                    },
                     "out_of_sample_comparison": {
+                        "benchmark_name": "zero_return",
+                        "period": "test",
+                        "sample_scope": "out_of_sample",
+                        "observations": 1,
                         "comparison_complete": True,
                         "same_eligible_periods": True,
+                        "status": "evaluated",
+                        "model_rmse": 1.0,
+                        "benchmark_rmse": 1.0,
+                        "rmse_improvement": 0.0,
+                        "model_mae": 1.0,
+                        "benchmark_mae": 1.0,
+                        "mae_improvement": 0.0,
+                        "model_r2": 0.0,
+                        "benchmark_r2": 0.0,
                     },
                 },
                 "is_eligible_for_strategy": True,
@@ -197,10 +213,27 @@ def test_saved_model_result_is_unwrapped_before_strategy_guard():
             "result": {
                 "evaluation": {
                     "benchmark": {
+                        "name": "zero_return",
                         "completed": True,
+                        "period_metrics": {
+                            "test": {"mae": 1.0, "rmse": 1.0, "r2": 0.0}
+                        },
                         "out_of_sample_comparison": {
+                            "benchmark_name": "zero_return",
+                            "period": "test",
+                            "sample_scope": "out_of_sample",
+                            "observations": 1,
                             "comparison_complete": True,
                             "same_eligible_periods": True,
+                            "status": "evaluated",
+                            "model_rmse": 1.0,
+                            "benchmark_rmse": 1.0,
+                            "rmse_improvement": 0.0,
+                            "model_mae": 1.0,
+                            "benchmark_mae": 1.0,
+                            "mae_improvement": 0.0,
+                            "model_r2": 0.0,
+                            "benchmark_r2": 0.0,
                         },
                     },
                     "is_eligible_for_strategy": True,

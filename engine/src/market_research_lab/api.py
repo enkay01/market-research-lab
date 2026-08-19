@@ -661,7 +661,7 @@ class PredictiveModelPeriodMetricsResponse(BaseModel):
     metrics: dict[str, float]
     benchmark_metrics: dict[str, float] = Field(default_factory=dict)
     comparison: dict[str, JsonValue] = Field(default_factory=dict)
-    sample_scope: Literal["in_sample", "validation", "out_of_sample"] = "in_sample"
+    sample_scope: Literal["in_sample", "validation", "out_of_sample"]
 
 
 class NaiveBenchmarkEvaluationResponse(BaseModel):
@@ -670,7 +670,7 @@ class NaiveBenchmarkEvaluationResponse(BaseModel):
     description: str
     period_metrics: dict[str, dict[str, float]]
     out_of_sample_comparison: dict[str, JsonValue]
-    completed: bool = True
+    completed: bool = False
 
 
 class PredictiveModelPredictionResponse(BaseModel):
@@ -1219,6 +1219,36 @@ def _predictive_run_response(
         is_eligible_for_strategy=calculation.evaluation.is_eligible_for_strategy,
         eligibility_reason=calculation.evaluation.eligibility_reason,
     )
+
+
+def _normalize_predictive_model_result(
+    result: dict[str, JsonValue],
+) -> dict[str, JsonValue]:
+    """Fill period scope for legacy Runs without changing persisted artifacts."""
+    raw_period_metrics = result.get("period_metrics")
+    if not isinstance(raw_period_metrics, list):
+        return result
+
+    scopes = {
+        "training": "in_sample",
+        "validation": "validation",
+        "test": "out_of_sample",
+    }
+    normalized = dict(result)
+    normalized_period_metrics: list[JsonValue] = []
+    for raw_metric in raw_period_metrics:
+        if not isinstance(raw_metric, dict):
+            normalized_period_metrics.append(raw_metric)
+            continue
+        metric = dict(raw_metric)
+        if "sample_scope" not in metric:
+            period = metric.get("period")
+            scope = scopes.get(period) if isinstance(period, str) else None
+            if scope is not None:
+                metric["sample_scope"] = scope
+        normalized_period_metrics.append(metric)
+    normalized["period_metrics"] = normalized_period_metrics
+    return normalized
 
 
 def _predictive_model_calculation(
@@ -3019,10 +3049,11 @@ def create_app(
             result = item.get("result")
             if not isinstance(result, dict):
                 continue
+            normalized_result = _normalize_predictive_model_result(result)
             responses.append(
                 PredictiveModelRunResponse.model_validate(
                     {
-                        **result,
+                        **normalized_result,
                         "run_id": item.get("run_id"),
                         "model_revision": item.get("model_revision"),
                         "status": "completed",
@@ -3054,7 +3085,7 @@ def create_app(
             )
         return PredictiveModelRunResponse.model_validate(
             {
-                **result,
+                **_normalize_predictive_model_result(result),
                 "run_id": item.get("run_id"),
                 "model_revision": item.get("model_revision"),
                 "status": "completed",
@@ -3140,11 +3171,15 @@ def create_app(
     def evaluate_strategy_endpoint(
         request: StrategyEvaluateRequest,
     ) -> StrategyEvaluationResponse:
+        if {
+            "predictive_model_run_id",
+            "predictive_model_evaluation",
+        }.intersection(request.parameters):
+            raise StrategyEvaluationError(
+                "A saved Predictive Model Run reference is required before a "
+                "Strategy can use model output (MOD-009)."
+            )
         context = _strategy_market_view(market_store, request)
-        if "predictive_model_evaluation" in request.parameters and isinstance(
-            request.parameters["predictive_model_evaluation"], dict
-        ):
-            validate_model_eligibility_for_strategy(request.parameters["predictive_model_evaluation"])
         evaluation = evaluate_strategy(
             name=request.name,
             market_view=context.market_view,
@@ -3167,18 +3202,27 @@ def create_app(
         project_id: UUID, request: StrategyEvaluateRequest
     ) -> SavedStrategyEvaluationResponse:
         model_run_id = request.parameters.get("predictive_model_run_id")
-        if model_run_id and isinstance(model_run_id, str):
+        evaluation_payload_present = "predictive_model_evaluation" in request.parameters
+        if evaluation_payload_present:
+            raise StrategyEvaluationError(
+                "Caller-supplied Predictive Model evaluations are not accepted. "
+                "Use a persisted Predictive Model Run reference (MOD-009)."
+            )
+        if model_run_id is not None:
+            if not isinstance(model_run_id, str) or not model_run_id.strip():
+                raise StrategyEvaluationError(
+                    "Predictive Model Run reference must be a non-empty saved Run ID "
+                    "(MOD-009)."
+                )
             model_record = store.get_predictive_model_result(str(project_id), model_run_id)
             if model_record is None:
                 raise StrategyEvaluationError(
                     "Predictive Model Run not found. A saved, benchmark-verified Run "
                     "is required before a Strategy can use model output (MOD-009)."
                 )
-            validate_model_eligibility_for_strategy(model_record)
-        if "predictive_model_evaluation" in request.parameters and isinstance(
-            request.parameters["predictive_model_evaluation"], dict
-        ):
-            validate_model_eligibility_for_strategy(request.parameters["predictive_model_evaluation"])
+            validate_model_eligibility_for_strategy(
+                model_record, require_persisted_run=True
+            )
         context = _strategy_market_view(market_store, request)
         evaluation = evaluate_strategy(
             name=request.name,

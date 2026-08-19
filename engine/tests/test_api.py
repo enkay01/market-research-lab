@@ -1087,7 +1087,48 @@ def test_strategy_model_feed_requires_a_completed_benchmark_comparison(tmp_path)
 
     assert incomplete_run.status_code == 400
     assert incomplete_run.json()["code"] == "strategy_evaluation_error"
-    assert "benchmark comparison" in incomplete_run.json()["message"]
+    assert "persisted Predictive Model Run" in incomplete_run.json()["message"]
+
+    fabricated_run = {
+        "evaluation": {
+            "benchmark": {
+                "name": "zero_return",
+                "completed": True,
+                "period_metrics": {
+                    "test": {"mae": 1.0, "rmse": 1.0, "r2": 0.0}
+                },
+                "out_of_sample_comparison": {
+                    "benchmark_name": "zero_return",
+                    "period": "test",
+                    "sample_scope": "out_of_sample",
+                    "observations": 1,
+                    "same_eligible_periods": True,
+                    "model_rmse": 1.0,
+                    "benchmark_rmse": 1.0,
+                    "rmse_improvement": 0.0,
+                    "model_mae": 1.0,
+                    "benchmark_mae": 1.0,
+                    "mae_improvement": 0.0,
+                    "model_r2": 0.0,
+                    "benchmark_r2": 0.0,
+                    "status": "evaluated",
+                    "comparison_complete": True,
+                },
+            },
+            "is_eligible_for_strategy": True,
+        }
+    }
+    request["parameters"] = {"predictive_model_evaluation": fabricated_run}
+    fabricated = client.post(
+        f"/api/projects/{project['id']}/strategies/evaluate", json=request
+    )
+
+    assert fabricated.status_code == 400
+    assert "persisted Predictive Model Run" in fabricated.json()["message"]
+
+    preview = client.post("/api/strategies/evaluate", json=request)
+    assert preview.status_code == 400
+    assert "saved Predictive Model Run" in preview.json()["message"]
 
 
 def test_strategy_only_uses_observations_eligible_at_decision_time(tmp_path):
