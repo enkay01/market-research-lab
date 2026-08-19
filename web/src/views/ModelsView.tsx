@@ -255,7 +255,7 @@ export function ModelsView({ project }: ModelsViewProps) {
     for (const p of currentStrategy.parameters) {
       defaults[p.name] = (p.default as string | number) ?? (p.param_type === "int" ? 20 : "sma");
     }
-    setStrategyParams((prev) => ({ ...defaults, ...prev }));
+    setStrategyParams(defaults);
   }, [currentStrategy]);
 
   useEffect(() => {
@@ -266,7 +266,7 @@ export function ModelsView({ project }: ModelsViewProps) {
         defaults[parameter.name] = parameter.default;
       }
     }
-    setPredictiveParams((previous) => ({ ...defaults, ...previous }));
+    setPredictiveParams(defaults);
   }, [currentPredictiveModel]);
 
   async function handleCalculate() {
