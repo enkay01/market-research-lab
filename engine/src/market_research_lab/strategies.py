@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from .indicators import IndicatorPoint, IndicatorSeries, calculate_indicator
 from .json_types import JsonValue
+from .predictive_models import is_naive_benchmark_comparison_complete
 
 
 class StrategyParameterValidationError(ValueError):
@@ -277,26 +278,32 @@ def evaluate_long_short_moving_average(
 
 def validate_model_eligibility_for_strategy(
     model_data: Mapping[str, JsonValue],
+    *,
+    require_persisted_run: bool = False,
 ) -> None:
     """Enforce MOD-009 before a Predictive Model can feed a Strategy.
 
-    The check accepts either a saved model result or its evaluation object. It
-    requires the completed comparison and its out-of-sample provenance. A
-    caller-supplied boolean is not sufficient.
+    The check accepts a saved model result or, for non-persisted diagnostics,
+    its evaluation object. It requires complete out-of-sample provenance and
+    finite comparable metrics. A caller-supplied boolean is not sufficient.
     """
+    if require_persisted_run and not (
+        isinstance(model_data.get("run_id"), str)
+        and bool(str(model_data["run_id"]).strip())
+    ):
+        raise StrategyEvaluationError(
+            "A persisted Predictive Model Run reference is required before a "
+            "Strategy can use model output (MOD-009)."
+        )
+
     result = model_data.get("result")
     source = result if isinstance(result, dict) else model_data
     evaluation_value = source.get("evaluation")
     evaluation = evaluation_value if isinstance(evaluation_value, dict) else source
 
     benchmark = evaluation.get("benchmark")
-    comparison = benchmark.get("out_of_sample_comparison") if isinstance(benchmark, dict) else None
-    if (
-        not isinstance(benchmark, dict)
-        or benchmark.get("completed") is not True
-        or not isinstance(comparison, dict)
-        or comparison.get("comparison_complete") is not True
-        or comparison.get("same_eligible_periods") is not True
+    if not isinstance(benchmark, dict) or not is_naive_benchmark_comparison_complete(
+        benchmark
     ):
         raise StrategyEvaluationError(
             "Predictive Model cannot feed an enabled Strategy until its naive "

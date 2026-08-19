@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from market_research_lab.api import create_app
 from market_research_lab.json_types import JsonValue
+from market_research_lab.reporting import generate_predictive_model_html_report
 
 
 class ApiTestInputs(NamedTuple):
@@ -56,6 +57,30 @@ def _run_request(dataset_id: str) -> dict[str, JsonValue]:
         "seed": 7,
         "as_of": "2099-01-01T00:00:00+00:00",
     }
+
+
+def test_predictive_model_report_does_not_invent_a_benchmark_for_legacy_data() -> None:
+    report = generate_predictive_model_html_report(
+        {
+            "run_id": "legacy-run",
+            "model_name": "legacy-model",
+            "benchmark": {
+                "name": "zero_return",
+                "display_name": "Zero Return Benchmark",
+                "completed": True,
+                "out_of_sample_comparison": {
+                    "comparison_complete": True,
+                    "same_eligible_periods": False,
+                },
+            },
+        },
+        {},
+    )
+
+    assert "Not evaluated" in report
+    assert "Zero Return Benchmark" not in report
+    assert "Model vs Naive Benchmark Performance" not in report
+    assert "Model-versus-benchmark metrics are not available" in report
 
 
 def test_predictive_model_metadata_exposes_the_complete_contract(tmp_path: Path) -> None:
@@ -114,6 +139,13 @@ def test_predictive_model_can_run_preview_and_save_a_reproducible_run(
     assert preview_body["period_metrics"][1]["metrics"]["rmse"] >= 0
     assert "rmse" in preview_body["period_metrics"][1]["benchmark_metrics"]
     assert "rmse_improvement" in preview_body["period_metrics"][1]["comparison"]
+    assert preview_body["period_metrics"][2]["sample_scope"] == "out_of_sample"
+    assert (
+        preview_body["benchmark"]["out_of_sample_comparison"]["same_eligible_periods"] is True
+    )
+    assert (
+        preview_body["benchmark"]["out_of_sample_comparison"]["comparison_complete"] is True
+    )
 
     saved = client.post(
         f"/api/projects/{project_id}/predictive-models/runs",
@@ -146,12 +178,19 @@ def test_predictive_model_can_run_preview_and_save_a_reproducible_run(
     for prediction in legacy_result["predictions"]:
         prediction.pop("target_date", None)
         prediction.pop("period", None)
+    for period_metric in legacy_result["period_metrics"]:
+        period_metric.pop("sample_scope", None)
     predictive_model_path.write_text(json.dumps(legacy_result), encoding="utf-8")
     legacy_reopened = client.get(
         f"/api/projects/{project_id}/predictive-models/runs/{saved_body['run_id']}"
     )
     assert legacy_reopened.status_code == 200
     assert legacy_reopened.json()["predictions"][-1]["actual_target"] is None
+    assert [metric["sample_scope"] for metric in legacy_reopened.json()["period_metrics"]] == [
+        "in_sample",
+        "validation",
+        "out_of_sample",
+    ]
 
     manifest = (run_root / "manifest.json").read_text(encoding="utf-8")
     assert '"evaluation"' in manifest

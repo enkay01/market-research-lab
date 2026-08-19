@@ -11,6 +11,8 @@ from market_research_lab.market_data import DailyBar
 from market_research_lab.predictive_models import (
     PredictiveModelCalculationError,
     PredictiveModelParameterError,
+    PredictiveModelPrediction,
+    _evaluate_period_metrics,
     build_supervised_frame,
     fit_model,
     get_predictive_model_spec,
@@ -476,6 +478,11 @@ def test_run_evaluates_explicit_naive_benchmark_across_periods(
     assert benchmark.description != ""
 
     # Period-by-period metrics include model and benchmark metrics
+    expected_scopes = {
+        "training": "in_sample",
+        "validation": "validation",
+        "test": "out_of_sample",
+    }
     for period_metric in result.evaluation.period_metrics:
         assert "rmse" in period_metric.metrics
         assert "mae" in period_metric.metrics
@@ -487,6 +494,11 @@ def test_run_evaluates_explicit_naive_benchmark_across_periods(
         assert "mae_improvement" in period_metric.comparison
         assert "outperforms_benchmark" in period_metric.comparison
         assert isinstance(period_metric.comparison["outperforms_benchmark"], bool)
+        assert period_metric.sample_scope == expected_scopes[period_metric.period]
+
+    assert [split.labelled_observations for split in result.evaluation.splits] == [
+        period_metric.observations for period_metric in result.evaluation.period_metrics
+    ]
 
     # Out of sample test comparison
     oos = benchmark.out_of_sample_comparison
@@ -496,6 +508,15 @@ def test_run_evaluates_explicit_naive_benchmark_across_periods(
     assert "rmse_improvement" in oos
     assert "outperforms_benchmark" in oos
     assert oos["status"] == "evaluated"
+    assert oos["period"] == "test"
+    assert oos["sample_scope"] == "out_of_sample"
+    assert oos["same_eligible_periods"] is True
+    assert oos["comparison_complete"] is True
+    assert oos["observations"] == next(
+        metric.observations
+        for metric in result.evaluation.period_metrics
+        if metric.period == "test"
+    )
 
     # Assumptions, warnings, limitations, and claims preservation
     assert len(result.evaluation.assumptions) >= 2
@@ -503,6 +524,23 @@ def test_run_evaluates_explicit_naive_benchmark_across_periods(
     assert len(result.evaluation.limitations) >= 1
     assert len(result.evaluation.unsupported_claims) >= 1
     assert result.evaluation.is_eligible_for_strategy is True
+
+
+def test_benchmark_comparison_rejects_misaligned_session_or_target_keys() -> None:
+    prediction = PredictiveModelPrediction(
+        session_date="2024-01-02",
+        feature_value=0.1,
+        predicted_value=0.02,
+        actual_target=0.03,
+        target_date="2024-01-03",
+    )
+
+    with pytest.raises(PredictiveModelCalculationError, match="do not match"):
+        _evaluate_period_metrics(
+            "test",
+            [prediction],
+            [("2024-01-02", "2024-01-04", 0.0)],
+        )
 
 
 def test_run_rejects_unknown_naive_benchmark() -> None:

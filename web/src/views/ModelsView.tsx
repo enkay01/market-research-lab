@@ -47,6 +47,44 @@ interface ModelsViewProps {
   project?: Project;
 }
 
+type CompletedBenchmark = NonNullable<PredictiveModelRun["benchmark"]>;
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
+function isCompleteBenchmark(
+  benchmark: PredictiveModelRun["benchmark"],
+): benchmark is CompletedBenchmark {
+  const comparison = benchmark?.out_of_sample_comparison;
+  if (!benchmark || !comparison || benchmark.completed !== true) {
+    return false;
+  }
+  const comparisonMetricNames = [
+    "model_rmse",
+    "benchmark_rmse",
+    "rmse_improvement",
+    "model_mae",
+    "benchmark_mae",
+    "mae_improvement",
+    "model_r2",
+    "benchmark_r2",
+  ];
+  const testMetrics = benchmark.period_metrics.test;
+  return (
+    comparison.benchmark_name === benchmark.name &&
+    comparison.period === "test" &&
+    comparison.sample_scope === "out_of_sample" &&
+    comparison.status === "evaluated" &&
+    isFiniteNumber(comparison.observations) &&
+    comparison.observations > 0 &&
+    comparison.same_eligible_periods === true &&
+    comparison.comparison_complete === true &&
+    typeof comparison.outperforms_benchmark === "boolean" &&
+    testMetrics !== undefined &&
+    ["mae", "rmse", "r2"].every((name) => isFiniteNumber(testMetrics[name])) &&
+    comparisonMetricNames.every((name) => isFiniteNumber(comparison[name]))
+  );
+}
+
 export function ModelsView({ project }: ModelsViewProps) {
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"indicators" | "predictive" | "strategies">("indicators");
 
@@ -510,6 +548,11 @@ export function ModelsView({ project }: ModelsViewProps) {
   }, [series]);
 
   const activeHoveredPoint = hoveredIndex !== null && series ? series.points[hoveredIndex] : null;
+  const benchmarkComplete = isCompleteBenchmark(predictiveResult?.benchmark);
+  const benchmarkComparison = predictiveResult?.benchmark?.out_of_sample_comparison;
+  const rmseTie =
+    benchmarkComplete &&
+    benchmarkComparison?.model_rmse === benchmarkComparison?.benchmark_rmse;
 
   return (
     <Layout
@@ -1080,21 +1123,29 @@ export function ModelsView({ project }: ModelsViewProps) {
                         />
                         {predictiveResult.benchmark && (
                           <Token
-                            label={predictiveResult.benchmark.display_name}
-                            color="purple"
+                            label={
+                              benchmarkComplete
+                                ? predictiveResult.benchmark.display_name
+                                : "Benchmark Not Evaluated"
+                            }
+                            color={benchmarkComplete ? "purple" : "orange"}
                           />
                         )}
-                        {predictiveResult.benchmark?.out_of_sample_comparison && (
+                        {benchmarkComplete && benchmarkComparison && (
                           <Token
                             label={
-                              predictiveResult.benchmark.out_of_sample_comparison.outperforms_benchmark
+                              benchmarkComparison.outperforms_benchmark
                                 ? "Outperforms Benchmark"
-                                : "Underperforms Benchmark"
+                                : rmseTie
+                                  ? "Matches Benchmark"
+                                  : "Underperforms Benchmark"
                             }
                             color={
-                              predictiveResult.benchmark.out_of_sample_comparison.outperforms_benchmark
+                              benchmarkComparison.outperforms_benchmark
                                 ? "green"
-                                : "orange"
+                                : rmseTie
+                                  ? "purple"
+                                  : "orange"
                             }
                           />
                         )}
@@ -1108,48 +1159,58 @@ export function ModelsView({ project }: ModelsViewProps) {
                             <Heading level={4}>Naive Benchmark Comparison</Heading>
                             <Token
                               label={
-                                predictiveResult.is_eligible_for_strategy
+                                benchmarkComplete && predictiveResult.is_eligible_for_strategy
                                   ? "Strategy Feeding: Eligible (MOD-009)"
                                   : "Strategy Feeding: Ineligible"
                               }
-                              color={predictiveResult.is_eligible_for_strategy ? "green" : "red"}
+                              color={benchmarkComplete && predictiveResult.is_eligible_for_strategy ? "green" : "red"}
                             />
                           </HStack>
-                          <Text>{predictiveResult.benchmark.description}</Text>
-                          <HStack gap={4} style={{ flexWrap: "wrap" }}>
+                          <Text>
+                            {benchmarkComplete
+                              ? predictiveResult.benchmark.description
+                              : "Not evaluated. Complete the out-of-sample benchmark comparison before this model can feed a Strategy."}
+                          </Text>
+                          {benchmarkComplete && benchmarkComparison ? (
+                            <HStack gap={4} style={{ flexWrap: "wrap" }}>
                             <VStack gap={0}>
                               <Text type="supporting">Out-of-Sample Model RMSE</Text>
                               <Text weight="bold">
-                                {typeof predictiveResult.benchmark.out_of_sample_comparison.model_rmse === "number"
-                                  ? predictiveResult.benchmark.out_of_sample_comparison.model_rmse.toFixed(6)
+                                {typeof benchmarkComparison.model_rmse === "number"
+                                  ? benchmarkComparison.model_rmse.toFixed(6)
                                   : "—"}
                               </Text>
                             </VStack>
                             <VStack gap={0}>
                               <Text type="supporting">Benchmark RMSE</Text>
                               <Text weight="bold">
-                                {typeof predictiveResult.benchmark.out_of_sample_comparison.benchmark_rmse === "number"
-                                  ? predictiveResult.benchmark.out_of_sample_comparison.benchmark_rmse.toFixed(6)
+                                {typeof benchmarkComparison.benchmark_rmse === "number"
+                                  ? benchmarkComparison.benchmark_rmse.toFixed(6)
                                   : "—"}
                               </Text>
                             </VStack>
                             <VStack gap={0}>
                               <Text type="supporting">RMSE Improvement</Text>
                               <Text weight="bold">
-                                {typeof predictiveResult.benchmark.out_of_sample_comparison.rmse_improvement === "number"
-                                  ? `${(predictiveResult.benchmark.out_of_sample_comparison.rmse_improvement * 100).toFixed(2)}%`
+                                {typeof benchmarkComparison.rmse_improvement === "number"
+                                  ? `${(benchmarkComparison.rmse_improvement * 100).toFixed(2)}%`
                                   : "—"}
                               </Text>
                             </VStack>
                             <VStack gap={0}>
                               <Text type="supporting">Outperformance Status</Text>
                               <Text weight="bold">
-                                {predictiveResult.benchmark.out_of_sample_comparison.outperforms_benchmark
+                                {benchmarkComparison.outperforms_benchmark
                                   ? "Yes (Lower RMSE)"
-                                  : "No (Higher RMSE)"}
+                                  : rmseTie
+                                    ? "Matches Benchmark"
+                                    : "No (Higher RMSE)"}
                               </Text>
                             </VStack>
-                          </HStack>
+                            </HStack>
+                          ) : (
+                            <Text type="supporting">Benchmark metrics are unavailable for this Run.</Text>
+                          )}
                         </VStack>
                       </Card>
                     )}

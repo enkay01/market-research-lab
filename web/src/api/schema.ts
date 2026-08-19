@@ -1723,7 +1723,7 @@ export interface components {
             };
             /**
              * Completed
-             * @default true
+             * @default false
              */
             completed: boolean;
         };
@@ -1883,7 +1883,6 @@ export interface components {
             };
             /**
              * Sample Scope
-             * @default in_sample
              * @enum {string}
              */
             sample_scope: "in_sample" | "validation" | "out_of_sample";

@@ -7,6 +7,7 @@ import html
 import io
 
 from .json_types import JsonValue
+from .predictive_models import is_naive_benchmark_comparison_complete
 
 
 def generate_valuation_html_report(
@@ -428,10 +429,27 @@ def generate_predictive_model_html_report(
         or result_data.get("benchmark_comparison")
     )
     benchmark = benchmark_raw if isinstance(benchmark_raw, dict) else {}
+    benchmark_complete = is_naive_benchmark_comparison_complete(benchmark)
     bench_name = html.escape(
-        str(benchmark.get("display_name") or benchmark.get("name") or "Zero Return Benchmark")
+        str(
+            (
+                benchmark.get("display_name")
+                or benchmark.get("name")
+                or "Naive Benchmark"
+            )
+            if benchmark_complete
+            else "Not evaluated"
+        )
     )
     bench_desc = html.escape(str(benchmark.get("description") or ""))
+    benchmark_summary = (
+        f'  <div class="benchmark-box"><strong>Naive Benchmark Comparison:</strong> '
+        f'{bench_name}<br><small>{bench_desc}</small></div>'
+        if benchmark_complete
+        else '  <p class="note"><strong>Naive Benchmark Comparison:</strong> '
+        "Not evaluated for this Run. Strategy use is blocked until the comparison "
+        "is complete.</p>"
+    )
 
     assumptions_raw = evaluation.get("assumptions") or result_data.get("assumptions")
     assumptions = assumptions_raw if isinstance(assumptions_raw, list) else []
@@ -484,14 +502,16 @@ def generate_predictive_model_html_report(
         f'{html.escape(", ".join(str(dataset) for dataset in datasets))}<br>'
         f'<strong>Evaluation Mode:</strong> {evaluation_mode}<br>'
         f'<strong>Naive Benchmark:</strong> {bench_name}<br>'
-        f'<strong>Strategy Eligibility:</strong> {"Eligible" if strategy_eligible is True else "Blocked"}<br>'
+        f'<strong>Strategy Eligibility:</strong> '
+        f'{"Eligible" if strategy_eligible is True else "Blocked"}<br>'
         '<strong>Metric Scope:</strong> In-sample training; held-out validation and '
         'out-of-sample test</div>',
         '  <p class="note">The initial fit uses training observations only. Each later '
         'fold uses only data available before its decision session.</p>',
-        f'  <div class="benchmark-box"><strong>Naive Benchmark Comparison:</strong> {bench_name}'
-        f'<br><small>{bench_desc}</small></div>',
-        f'  <p class="note"><strong>Strategy eligibility:</strong> {html.escape("Eligible" if strategy_eligible is True else "Blocked")}. {eligibility_reason}</p>',
+        benchmark_summary,
+        f'  <p class="note"><strong>Strategy eligibility:</strong> '
+        f'{html.escape("Eligible" if strategy_eligible is True else "Blocked")}. '
+        f'{eligibility_reason}</p>',
         "  <h2>Chronological Periods</h2>",
         "  <table>",
         "    <thead><tr><th>Period</th><th>Target Dates</th><th>Feature Dates</th>"
@@ -556,8 +576,13 @@ def generate_predictive_model_html_report(
             "<th>Model Value</th><th>Benchmark Value</th><th>Improvement</th></tr></thead>",
             "    <tbody>",
         ]
+        if benchmark_complete
+        else [
+            "  <p class=\"note\">Model-versus-benchmark metrics are not available "
+            "because the comparison is incomplete.</p>"
+        ]
     )
-    for period_metric in period_metrics:
+    for period_metric in (period_metrics if benchmark_complete else []):
         if not isinstance(period_metric, dict):
             continue
         metric_values = period_metric.get("metrics")
@@ -588,7 +613,12 @@ def generate_predictive_model_html_report(
                 "</tr>"
             )
     doc.extend(
-        ["    </tbody>", "  </table>", "  <h2>Assumptions and Provenance</h2>", "  <table>"]
+        (
+            ["    </tbody>", "  </table>"]
+            if benchmark_complete
+            else []
+        )
+        + ["  <h2>Assumptions and Provenance</h2>", "  <table>"]
     )
     doc.append("    <tbody>")
     for label, value in (
@@ -655,8 +685,16 @@ def generate_predictive_model_csv(result_data: dict[str, JsonValue]) -> str:
         or result_data.get("benchmark_comparison")
     )
     benchmark = benchmark_raw if isinstance(benchmark_raw, dict) else {}
+    benchmark_complete = is_naive_benchmark_comparison_complete(benchmark)
     writer.writerow(
-        ["Naive Benchmark", benchmark.get("display_name") or benchmark.get("name") or ""]
+        [
+            "Naive Benchmark",
+            (
+                benchmark.get("display_name") or benchmark.get("name")
+                if benchmark_complete
+                else "Not evaluated"
+            ),
+        ]
     )
     writer.writerow([])
     writer.writerow(
@@ -664,7 +702,7 @@ def generate_predictive_model_csv(result_data: dict[str, JsonValue]) -> str:
     )
     metrics_raw = evaluation.get("period_metrics") or result_data.get("period_metrics")
     period_metrics = metrics_raw if isinstance(metrics_raw, list) else []
-    for period_metric in period_metrics:
+    for period_metric in (period_metrics if benchmark_complete else []):
         if not isinstance(period_metric, dict):
             continue
         values = period_metric.get("metrics")

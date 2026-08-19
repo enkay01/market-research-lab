@@ -1,10 +1,36 @@
 import { chromium } from "playwright";
 import fs from "fs";
+import net from "net";
+import os from "os";
 import path from "path";
-import { spawn } from "child_process";
+import { execFileSync, spawn } from "child_process";
+import { fileURLToPath } from "url";
 
-const SCREENSHOTS_DIR = "C:/Users/stroo/.gemini/antigravity/brain/1f92e451-e362-4153-a1d8-1a98e66e6901/screenshots";
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const WORKTREE_ROOT = path.resolve(SCRIPT_DIR, "..", "..");
+const WEB_ROOT = path.resolve(SCRIPT_DIR, "..");
+const SCREENSHOTS_DIR =
+  process.env.MARKET_RESEARCH_LAB_E2E_SCREENSHOTS_DIR ??
+  path.join(os.tmpdir(), "market-research-lab-e2e-screenshots");
 fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
+
+async function findFreePort(environmentVariable) {
+  const configuredPort = process.env[environmentVariable];
+  if (configuredPort) return configuredPort;
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? String(address.port) : null;
+      server.close((error) => {
+        if (error) reject(error);
+        else if (port) resolve(port);
+        else reject(new Error("Could not allocate a local test port."));
+      });
+    });
+  });
+}
 
 async function waitForServer(url, timeoutMs = 20000) {
   const start = Date.now();
@@ -21,33 +47,59 @@ async function waitForServer(url, timeoutMs = 20000) {
 
 async function run() {
   console.log("1. Starting backend and frontend dev servers...");
-  const worktreeRoot = path.resolve(process.cwd(), "..");
+  const apiPort = await findFreePort("MARKET_RESEARCH_LAB_API_PORT");
+  const webPort = await findFreePort("MARKET_RESEARCH_LAB_WEB_PORT");
+  const apiBaseUrl = `http://127.0.0.1:${apiPort}`;
+  const webBaseUrl = `http://127.0.0.1:${webPort}`;
   const engineProc = spawn(
     "uv",
-    ["run", "--project", "engine", "python", "-m", "uvicorn", "market_research_lab.api:app", "--host", "127.0.0.1", "--port", "8000"],
+    [
+      "run",
+      "--project",
+      "engine",
+      "python",
+      "-m",
+      "uvicorn",
+      "market_research_lab.api:app",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      apiPort,
+    ],
     {
-      cwd: worktreeRoot,
+      cwd: WORKTREE_ROOT,
       shell: true,
       stdio: "inherit",
     }
   );
 
-  const webProc = spawn("npx", ["vite", "--port", "5173"], {
-    cwd: process.cwd(),
+  const webProc = spawn("npx", ["vite", "--port", webPort], {
+    cwd: WEB_ROOT,
+    env: { ...process.env, MARKET_RESEARCH_LAB_API_PORT: apiPort },
     shell: true,
     stdio: "inherit",
   });
 
   const cleanup = () => {
-    try { engineProc.kill(); } catch {}
-    try { webProc.kill(); } catch {}
+    for (const child of [engineProc, webProc]) {
+      if (!child.pid) continue;
+      try {
+        if (process.platform === "win32") {
+          execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+            stdio: "ignore",
+          });
+        } else {
+          child.kill();
+        }
+      } catch {}
+    }
   };
   process.on("exit", cleanup);
   process.on("SIGINT", cleanup);
   process.on("SIGTERM", cleanup);
 
-  await waitForServer("http://127.0.0.1:8000/api/health");
-  await waitForServer("http://127.0.0.1:5173");
+  await waitForServer(`${apiBaseUrl}/api/health`);
+  await waitForServer(webBaseUrl);
   console.log("Servers are up and ready.");
 
   console.log("2. Launching Playwright Chromium browser...");
@@ -57,8 +109,8 @@ async function run() {
 
   page.on("console", (msg) => console.log("Browser console:", msg.text()));
 
-  console.log("3. Navigating to http://127.0.0.1:5173 ...");
-  await page.goto("http://127.0.0.1:5173", { waitUntil: "networkidle" });
+  console.log(`3. Navigating to ${webBaseUrl} ...`);
+  await page.goto(webBaseUrl, { waitUntil: "networkidle" });
   await page.waitForTimeout(1500);
 
   // Ensure Project exists
@@ -80,18 +132,7 @@ async function run() {
 
   const importBtn = page.getByRole("button", { name: "Import File" }).first();
   if (await importBtn.isVisible()) {
-    const sampleCsv = path.join(process.cwd(), "sample_market_data.csv");
-    let csvData = "symbol,name,exchange,currency,date,open,high,low,close,volume,available_at\n";
-    let base = 100.0;
-    for (let d = 1; d <= 40; d++) {
-      const monthStr = d <= 31 ? "01" : "02";
-      const fullDate = `2024-${monthStr}-${String(d <= 31 ? d : d - 31).padStart(2, "0")}`;
-      const availStr = `${fullDate}T21:00:00Z`;
-      base += (d % 2 === 0 ? 1.5 : -0.8);
-      csvData += `AAPL,Apple Inc,NASDAQ,USD,${fullDate},${base.toFixed(2)},${(base + 2).toFixed(2)},${(base - 1).toFixed(2)},${(base + 0.5).toFixed(2)},5000000,${availStr}\n`;
-    }
-    fs.writeFileSync(sampleCsv, csvData);
-
+    const sampleCsv = path.join(WEB_ROOT, "sample_market_data.csv");
     await importBtn.click();
     await page.waitForTimeout(500);
     await page.locator("input[type='file']").setInputFiles(sampleCsv);
@@ -105,49 +146,109 @@ async function run() {
   await page.waitForTimeout(1000);
 
   const predictiveTab = page.locator("button").filter({ hasText: /Predictive Models/i }).first();
-  if (await predictiveTab.isVisible()) {
-    await predictiveTab.click();
-    await page.waitForTimeout(1000);
-  }
+  await predictiveTab.waitFor({ state: "visible" });
+  await predictiveTab.click();
+  await page.waitForTimeout(1000);
 
   console.log("7. Running Predictive Model with Naive Benchmark...");
   const runModelBtn = page.getByRole("button", { name: /Run & Save Model|Run Model/i }).first();
+  const runResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/api\/projects\/[^/]+\/predictive-models\/runs$/.test(
+        new URL(response.url()).pathname,
+      ),
+  );
   await runModelBtn.click();
+  const runResponse = await runResponsePromise;
+  const runBody = await runResponse.json();
   await page.waitForTimeout(3000);
+
+  const projectMatch = new URL(runResponse.url()).pathname.match(
+    /\/api\/projects\/([^/]+)\/predictive-models\/runs$/,
+  );
+  if (!projectMatch) throw new Error("Could not identify the saved Project for the model Run.");
+  const projectId = projectMatch[1];
+  const benchmark = runBody.benchmark;
+  const comparison = benchmark?.out_of_sample_comparison;
+  const testPeriod = runBody.period_metrics?.find((period) => period.period === "test");
+  const numericComparisonKeys = [
+    "model_rmse",
+    "benchmark_rmse",
+    "rmse_improvement",
+    "model_mae",
+    "benchmark_mae",
+    "mae_improvement",
+    "model_r2",
+    "benchmark_r2",
+  ];
+  if (
+    runBody.status !== "completed" ||
+    !runBody.run_id ||
+    benchmark?.completed !== true ||
+    comparison?.comparison_complete !== true ||
+    comparison?.same_eligible_periods !== true ||
+    comparison?.sample_scope !== "out_of_sample" ||
+    comparison?.status !== "evaluated" ||
+    comparison?.observations <= 0 ||
+    !testPeriod ||
+    testPeriod.sample_scope !== "out_of_sample" ||
+    !numericComparisonKeys.every((key) => Number.isFinite(comparison[key])) ||
+    !["mae", "rmse", "r2"].every((key) => Number.isFinite(testPeriod.benchmark_metrics?.[key])) ||
+    !runBody.assumptions?.length ||
+    !runBody.warnings?.length ||
+    !runBody.limitations?.length ||
+    !runBody.unsupported_claims?.length
+  ) {
+    throw new Error("The saved Run did not preserve complete benchmark and provenance data.");
+  }
+
+  const gatePayload = {
+    name: "long_flat_moving_average",
+    dataset_version_id: runBody.dataset_version_id,
+    symbol: runBody.symbol,
+    parameters: {
+      predictive_model_evaluation: {
+        benchmark,
+        is_eligible_for_strategy: true,
+      },
+    },
+  };
+  const gateResponse = await fetch(
+    `${apiBaseUrl}/api/projects/${projectId}/strategies/evaluate`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(gatePayload),
+    },
+  );
+  const gateBody = await gateResponse.json();
+  if (
+    gateResponse.status !== 400 ||
+    !String(gateBody.message ?? "").includes("persisted Predictive Model Run")
+  ) {
+    throw new Error("The MOD-009 Strategy gate accepted a caller-supplied model evaluation.");
+  }
 
   const shot1 = path.join(SCREENSHOTS_DIR, "01_predictive_model_benchmark_overview.png");
   await page.screenshot({ path: shot1, fullPage: true });
   console.log(`Saved screenshot: ${shot1}`);
 
-  // Switch to Strategies Tab
-  console.log("8. Navigating to Strategies tab to verify MOD-009 strategy evaluation...");
-  const strategiesTab = page.locator("button").filter({ hasText: /Strategies/i }).first();
-  if (await strategiesTab.isVisible()) {
-    await strategiesTab.click();
-    await page.waitForTimeout(1000);
+  const benchmarkCard = page.getByText("Naive Benchmark Comparison").first();
+  if (!(await benchmarkCard.isVisible())) {
+    throw new Error("Naive benchmark comparison was not shown after the Predictive Model Run.");
   }
-
-  // Select Predictive Return Threshold Strategy
-  const stratSelector = page.getByRole("combobox", { name: "Strategy" });
-  if (await stratSelector.isVisible()) {
-    await stratSelector.click();
-    await page.waitForTimeout(300);
-    const predStratOpt = page.getByRole("option", { name: /Predictive Return Threshold/i });
-    if (await predStratOpt.isVisible()) {
-      await predStratOpt.click();
-      await page.waitForTimeout(500);
+  for (const marker of [
+    page.getByText(/out-of-sample/i).first(),
+    page.getByText("Assumptions", { exact: true }).first(),
+    page.getByText("Warnings", { exact: true }).first(),
+    page.getByText("Limitations", { exact: true }).first(),
+    page.getByText("Unsupported Claims", { exact: true }).first(),
+  ]) {
+    if (!(await marker.isVisible())) {
+      throw new Error("The Predictive Model Run did not show all benchmark provenance sections.");
     }
   }
-
-  const evalStratBtn = page.getByRole("button", { name: "Evaluate Strategy" }).first();
-  if (await evalStratBtn.isVisible()) {
-    await evalStratBtn.click();
-    await page.waitForTimeout(2000);
-  }
-
-  const shot2 = path.join(SCREENSHOTS_DIR, "02_predictive_strategy_evaluation.png");
-  await page.screenshot({ path: shot2, fullPage: true });
-  console.log(`Saved screenshot: ${shot2}`);
 
   console.log("E2E browser verification completed successfully!");
   await browser.close();
