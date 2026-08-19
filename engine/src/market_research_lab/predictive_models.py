@@ -65,6 +65,25 @@ _MOMENTUM_MODEL_UNSUPPORTED_CLAIMS = (
     "Model is not an autonomous trading agent or order router",
 )
 
+_POTTS_MODEL_ASSUMPTIONS = (
+    "Market price dynamics exhibit gain-loss asymmetry from collective trader imitation and fear",
+    "Return distributions can be mapped into discrete q-state Potts spin configurations",
+    "Inverse waiting times capture acceleration differences between downward drawdowns and upward rallies",
+    "Feature values computed solely from session observations available at decision time",
+)
+_POTTS_MODEL_WARNINGS = (
+    "Empirical gain-loss asymmetry varies with market volatility regimes and coverage universe",
+    "Discrete state discretization may smooth extreme tail events",
+)
+_POTTS_MODEL_LIMITATIONS = (
+    "Model emits forecast return values only and does not execute or route orders",
+    "Evaluation assumes execution at exact close price without slippage or transaction fees",
+)
+_POTTS_MODEL_UNSUPPORTED_CLAIMS = (
+    "Model does not guarantee trading profitability or eliminate drawdown risk",
+    "Model is not an autonomous trading agent or general plugin framework",
+)
+
 
 @dataclass(frozen=True)
 class _NaiveBenchmarkSpec:
@@ -543,6 +562,29 @@ class MomentumRegressionParameters(BaseModel):
         return self
 
 
+class PottsGainLossParameters(BaseModel):
+    """Validated parameters for the published Potts Gain-Loss Asymmetry technique."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    threshold_return: float = Field(default=0.05, gt=0.0, le=0.5)
+    lookback_window: int = Field(default=60, ge=10, le=500)
+    q_states: int = Field(default=4, ge=2, le=16)
+    training_window: int = Field(default=252, ge=2, le=10_000)
+    validation_fraction: float = Field(default=0.2, gt=0.0, lt=1.0)
+    test_fraction: float = Field(default=0.2, gt=0.0, lt=1.0)
+    evaluation_mode: EvaluationMode = "holdout"
+    naive_benchmark: NaiveBenchmarkName = "zero_return"
+
+    @model_validator(mode="after")
+    def leaves_training_observations(self) -> "PottsGainLossParameters":
+        if self.validation_fraction + self.test_fraction >= 1.0:
+            raise ValueError(
+                "validation_fraction plus test_fraction must leave training observations."
+            )
+        return self
+
+
 def build_supervised_frame(
     bars: Sequence[DailyBar], *, momentum_period: int, horizon: int
 ) -> pd.DataFrame:
@@ -595,23 +637,171 @@ def build_supervised_frame(
     )
 
 
+def build_potts_supervised_frame(
+    bars: Sequence[DailyBar],
+    config: PottsGainLossParameters | None = None,
+    *,
+    horizon: int = 1,
+) -> pd.DataFrame:
+    """Build point-in-time Potts gain-loss asymmetry features and labels (Bornholdt 2021)."""
+    cfg = config or PottsGainLossParameters()
+    threshold_return = cfg.threshold_return
+    lookback_window = cfg.lookback_window
+    q_states = cfg.q_states
+    if horizon < 1:
+        raise PredictiveModelParameterError(f"horizon must be at least 1, got {horizon}.")
+
+    ordered_bars = sorted(bars, key=lambda bar: bar.session_date)
+    closes: list[float] = []
+    for bar in ordered_bars:
+        if not math.isfinite(bar.close) or bar.close <= 0:
+            raise PredictiveModelCalculationError(
+                f"Close price for session {bar.session_date} must be a positive finite number."
+            )
+        closes.append(float(bar.close))
+
+    returns: list[float] = [0.0]
+    for i in range(1, len(closes)):
+        returns.append(closes[i] / closes[i - 1] - 1.0)
+
+    rows: list[dict[str, float | str | None]] = []
+    for index, bar in enumerate(ordered_bars):
+        potts_score: float | None = None
+        asymmetry_ratio: float | None = None
+        order_param: float | None = None
+
+        if index >= lookback_window:
+            window_closes = closes[index - lookback_window : index + 1]
+            window_returns = returns[index - lookback_window + 1 : index + 1]
+
+            # 1. Inverse statistics: shortest waiting time to drop <= -threshold_return from any peak
+            # vs shortest waiting time to gain >= +threshold_return from any trough
+            tau_loss = float(lookback_window)
+            tau_gain = float(lookback_window)
+
+            running_peak = window_closes[0]
+            peak_idx = 0
+            for w_idx in range(1, len(window_closes)):
+                price = window_closes[w_idx]
+                if price > running_peak:
+                    running_peak = price
+                    peak_idx = w_idx
+                drop = (price - running_peak) / running_peak
+                if drop <= -threshold_return:
+                    dur = float(w_idx - peak_idx)
+                    if dur > 0 and dur < tau_loss:
+                        tau_loss = dur
+
+            running_trough = window_closes[0]
+            trough_idx = 0
+            for w_idx in range(1, len(window_closes)):
+                price = window_closes[w_idx]
+                if price < running_trough:
+                    running_trough = price
+                    trough_idx = w_idx
+                gain = (price - running_trough) / running_trough
+                if gain >= threshold_return:
+                    dur = float(w_idx - trough_idx)
+                    if dur > 0 and dur < tau_gain:
+                        tau_gain = dur
+
+            # Gain-loss asymmetry ratio: (tau_loss - tau_gain) / (tau_loss + tau_gain)
+            denom_tau = tau_gain + tau_loss
+            if denom_tau > 1e-12:
+                asymmetry_ratio = (tau_loss - tau_gain) / denom_tau
+            else:
+                asymmetry_ratio = 0.0
+
+            # 2. Potts q-state spin discretization and order parameter
+            n_obs = len(window_returns)
+            sorted_rets = sorted(window_returns)
+            bin_counts = [0] * q_states
+            for r in window_returns:
+                rank = 0
+                for s_r in sorted_rets:
+                    if r > s_r:
+                        rank += 1
+                bin_idx = min(q_states - 1, int((rank / n_obs) * q_states))
+                bin_counts[bin_idx] += 1
+
+            n_max = max(bin_counts)
+            expected_n = n_obs / q_states
+            denom_m = n_obs - expected_n
+            if denom_m > 1e-12:
+                order_param = max(0.0, (n_max - expected_n) / denom_m)
+            else:
+                order_param = 0.0
+
+            # Composite Potts Gain-Loss feature
+            potts_score = asymmetry_ratio * (1.0 + order_param)
+
+        next_return = (
+            closes[index + horizon] / closes[index] - 1.0
+            if index + horizon < len(closes)
+            else None
+        )
+        target_date = (
+            ordered_bars[index + horizon].session_date
+            if index + horizon < len(ordered_bars)
+            else None
+        )
+
+        rows.append(
+            {
+                "session_date": bar.session_date,
+                "potts_gain_loss_score": potts_score,
+                "gain_loss_asymmetry_ratio": asymmetry_ratio,
+                "potts_order_parameter": order_param,
+                "next_session_return": next_return,
+                "target_date": target_date,
+            }
+        )
+
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "session_date",
+            "potts_gain_loss_score",
+            "gain_loss_asymmetry_ratio",
+            "potts_order_parameter",
+            "next_session_return",
+            "target_date",
+        ],
+    )
+
+
 def _resolve_parameters(
     name: str, parameters: Mapping[str, JsonValue]
 ) -> dict[str, JsonValue]:
-    if name != "momentum_return_regression":
-        raise PredictiveModelNotFoundError(f"Unknown Predictive Model '{name}'.")
-    try:
-        config = MomentumRegressionParameters.model_validate(dict(parameters))
-    except ValidationError as error:
-        raise PredictiveModelParameterError(str(error)) from error
-    return {
-        "momentum_period": config.momentum_period,
-        "training_window": config.training_window,
-        "validation_fraction": config.validation_fraction,
-        "test_fraction": config.test_fraction,
-        "evaluation_mode": config.evaluation_mode,
-        "naive_benchmark": config.naive_benchmark,
-    }
+    if name == "momentum_return_regression":
+        try:
+            config = MomentumRegressionParameters.model_validate(dict(parameters))
+        except ValidationError as error:
+            raise PredictiveModelParameterError(str(error)) from error
+        return {
+            "momentum_period": config.momentum_period,
+            "training_window": config.training_window,
+            "validation_fraction": config.validation_fraction,
+            "test_fraction": config.test_fraction,
+            "evaluation_mode": config.evaluation_mode,
+            "naive_benchmark": config.naive_benchmark,
+        }
+    elif name == "potts_gain_loss_asymmetry":
+        try:
+            potts_config = PottsGainLossParameters.model_validate(dict(parameters))
+        except ValidationError as error:
+            raise PredictiveModelParameterError(str(error)) from error
+        return {
+            "threshold_return": potts_config.threshold_return,
+            "lookback_window": potts_config.lookback_window,
+            "q_states": potts_config.q_states,
+            "training_window": potts_config.training_window,
+            "validation_fraction": potts_config.validation_fraction,
+            "test_fraction": potts_config.test_fraction,
+            "evaluation_mode": potts_config.evaluation_mode,
+            "naive_benchmark": potts_config.naive_benchmark,
+        }
+    raise PredictiveModelNotFoundError(f"Unknown Predictive Model '{name}'.")
 
 
 def _fit_momentum_regression(
@@ -696,6 +886,147 @@ def _fit_momentum_regression(
             "uses_validation_or_test": False,
         },
     )
+
+
+def _fit_potts_gain_loss(
+    training_frame: pd.DataFrame,
+    parameters: dict[str, JsonValue],
+    seed: int | None,
+) -> FittedModelArtifact:
+    required_columns = {"session_date", "potts_gain_loss_score", "next_session_return"}
+    if not required_columns.issubset(training_frame.columns):
+        raise PredictiveModelCalculationError(
+            "Training data must contain session_date, potts_gain_loss_score, and next_session_return."
+        )
+
+    usable = training_frame.dropna(
+        subset=["potts_gain_loss_score", "next_session_return"]
+    ).reset_index(drop=True)
+    if len(usable) < 2:
+        raise PredictiveModelCalculationError(
+            "At least two training observations are required to fit the Predictive Model."
+        )
+
+    features = [float(value) for value in usable["potts_gain_loss_score"].tolist()]
+    targets = [float(value) for value in usable["next_session_return"].tolist()]
+    if any(not math.isfinite(value) for value in features + targets):
+        raise PredictiveModelCalculationError("Training data contains non-finite values.")
+
+    feature_mean = sum(features) / len(features)
+    target_mean = sum(targets) / len(targets)
+    denominator = sum((feature - feature_mean) ** 2 for feature in features)
+    if denominator <= 1e-15:
+        coefficient = 0.0
+        intercept = target_mean
+    else:
+        numerator = sum(
+            (feature - feature_mean) * (target - target_mean)
+            for feature, target in zip(features, targets, strict=True)
+        )
+        coefficient = numerator / denominator
+        intercept = target_mean - coefficient * feature_mean
+
+    fitted_values = [intercept + coefficient * feature for feature in features]
+    residual_sum = sum(
+        (target - fitted) ** 2
+        for target, fitted in zip(targets, fitted_values, strict=True)
+    )
+    total_sum = sum((target - target_mean) ** 2 for target in targets)
+    in_sample_r2 = 1.0 - residual_sum / total_sum if total_sum > 1e-15 else 0.0
+    in_sample_rmse = math.sqrt(residual_sum / len(targets))
+    training_feature_start = str(usable.loc[0, "session_date"])
+    training_feature_end = str(usable.loc[len(usable) - 1, "session_date"])
+
+    return FittedModelArtifact(
+        model_name="potts_gain_loss_asymmetry",
+        feature_name="potts_gain_loss_score",
+        target_name="next_session_return",
+        horizon=1,
+        intercept=intercept,
+        coefficient=coefficient,
+        training_start=training_feature_start,
+        training_end=training_feature_end,
+        training_observations=len(usable),
+        parameters=parameters,
+        seed=seed,
+        training_metrics={
+            "in_sample_r2": in_sample_r2,
+            "in_sample_rmse": in_sample_rmse,
+        },
+        feature_definition={
+            "name": "potts_gain_loss_score",
+            "source": "close",
+            "lookback_window": int(parameters.get("lookback_window", 60)),
+            "threshold_return": float(parameters.get("threshold_return", 0.05)),
+            "q_states": int(parameters.get("q_states", 4)),
+            "horizon": 1,
+            "uses_future_rows_for_feature": False,
+            "fit_scope": "training_only",
+        },
+        preprocessing={
+            "name": "none",
+            "fit_scope": "training_only",
+            "training_feature_start": training_feature_start,
+            "training_feature_end": training_feature_end,
+            "training_observations": len(usable),
+            "uses_validation_or_test": False,
+        },
+    )
+
+
+def _predict_potts_gain_loss(
+    artifact: FittedModelArtifact, eligible_frame: pd.DataFrame
+) -> list[PredictiveModelOutput]:
+    if not {"session_date", "potts_gain_loss_score"}.issubset(eligible_frame.columns):
+        raise PredictiveModelCalculationError(
+            "Prediction data must contain session_date and potts_gain_loss_score."
+        )
+
+    target_values = (
+        eligible_frame["next_session_return"].tolist()
+        if "next_session_return" in eligible_frame.columns
+        else [None] * len(eligible_frame)
+    )
+    target_dates = (
+        eligible_frame["target_date"].tolist()
+        if "target_date" in eligible_frame.columns
+        else [None] * len(eligible_frame)
+    )
+    predictions: list[PredictiveModelOutput] = []
+    for date, feature, target, target_date in zip(
+        eligible_frame["session_date"].tolist(),
+        eligible_frame["potts_gain_loss_score"].tolist(),
+        target_values,
+        target_dates,
+        strict=True,
+    ):
+        if pd.isna(feature):
+            continue
+        feature_value = float(feature)
+        actual_target = None if pd.isna(target) else float(target)
+        predicted_value = artifact.intercept + artifact.coefficient * feature_value
+        if actual_target is None:
+            predictions.append(
+                PredictiveModelForecast(
+                    session_date=str(date),
+                    feature_value=feature_value,
+                    predicted_value=predicted_value,
+                    actual_target=None,
+                    target_date=None,
+                    period=None,
+                )
+            )
+        else:
+            predictions.append(
+                PredictiveModelPrediction(
+                    session_date=str(date),
+                    feature_value=feature_value,
+                    predicted_value=predicted_value,
+                    actual_target=actual_target,
+                    target_date=None if pd.isna(target_date) else str(target_date),
+                )
+            )
+    return predictions
 
 
 def _predict_momentum_regression(
@@ -831,7 +1162,102 @@ PREDICTIVE_MODEL_REGISTRY: dict[str, PredictiveModelSpec] = {
         ),
         fit=_fit_momentum_regression,
         predict=_predict_momentum_regression,
-    )
+    ),
+    "potts_gain_loss_asymmetry": PredictiveModelSpec(
+        metadata=PredictiveModelMetadata(
+            name="potts_gain_loss_asymmetry",
+            display_name="Potts Gain-Loss Asymmetry",
+            description=(
+                "Fits an emergent inverse-statistics and Potts spin magnetization model "
+                "to predict the next session's return from gain-loss waiting-time asymmetry "
+                "and discrete return polarization."
+            ),
+            target="next_session_return",
+            horizon=1,
+            features=("potts_gain_loss_score", "gain_loss_asymmetry_ratio", "potts_order_parameter"),
+            training_window=252,
+            parameters=(
+                PredictiveModelParameter(
+                    name="threshold_return",
+                    param_type="float",
+                    default=0.05,
+                    description="Return threshold for gain and loss waiting times.",
+                    min_value=0.01,
+                    max_value=0.5,
+                ),
+                PredictiveModelParameter(
+                    name="lookback_window",
+                    param_type="int",
+                    default=60,
+                    description="Number of sessions used to calculate inverse waiting times and return state bins.",
+                    min_value=10,
+                    max_value=500,
+                ),
+                PredictiveModelParameter(
+                    name="q_states",
+                    param_type="int",
+                    default=4,
+                    description="Number of discrete Potts spin states for return partition.",
+                    min_value=2,
+                    max_value=16,
+                ),
+                PredictiveModelParameter(
+                    name="training_window",
+                    param_type="int",
+                    default=252,
+                    description=(
+                        "Initial number of latest labelled observations used for fitting; "
+                        "rolling keeps this size and expanding grows from it."
+                    ),
+                    min_value=2,
+                    max_value=10_000,
+                ),
+                PredictiveModelParameter(
+                    name="validation_fraction",
+                    param_type="float",
+                    default=0.2,
+                    description="Fraction of labelled observations reserved for validation.",
+                    min_value=0.01,
+                    max_value=0.49,
+                ),
+                PredictiveModelParameter(
+                    name="test_fraction",
+                    param_type="float",
+                    default=0.2,
+                    description=(
+                        "Fraction of labelled observations reserved for out-of-sample testing."
+                    ),
+                    min_value=0.01,
+                    max_value=0.49,
+                ),
+                PredictiveModelParameter(
+                    name="evaluation_mode",
+                    param_type="str",
+                    default="holdout",
+                    description="Chronological evaluation mode for validation and test folds.",
+                    options=("holdout", "expanding", "rolling"),
+                ),
+                PredictiveModelParameter(
+                    name="naive_benchmark",
+                    param_type="str",
+                    default="zero_return",
+                    description="Explicit naive benchmark for out-of-sample comparison.",
+                    options=("zero_return", "historical_mean", "persistence"),
+                ),
+            ),
+            output_meaning=(
+                "Predicted next session simple return, expressed as a decimal fraction, "
+                "derived from emergent gain-loss asymmetry."
+            ),
+            outputs=(
+                "predicted_next_session_return",
+                "potts_gain_loss_score",
+                "actual_next_session_return",
+            ),
+        ),
+        fit=_fit_potts_gain_loss,
+        predict=_predict_potts_gain_loss,
+    ),
 }
 
 
@@ -911,10 +1337,11 @@ class PredictiveModelSplitParameters:
 def _chronological_split(
     frame: pd.DataFrame,
     parameters: PredictiveModelSplitParameters,
+    feature_column: str = "momentum",
 ) -> PredictiveModelChronologicalSplit:
     """Split labelled rows in target-date order without shuffling or future labels."""
     labelled = (
-        frame.dropna(subset=["momentum", "next_session_return", "target_date"])
+        frame.dropna(subset=[feature_column, "next_session_return", "target_date"])
         .sort_values("target_date")
         .reset_index(drop=True)
     )
@@ -1139,7 +1566,6 @@ def run_predictive_model(
     """Build, fit, and evaluate one deterministic chronological model calculation."""
     spec = get_predictive_model_spec(name)
     resolved_parameters = _resolve_parameters(name, parameters)
-    momentum_period = int(resolved_parameters["momentum_period"])
     training_window = int(resolved_parameters["training_window"])
     validation_fraction = float(resolved_parameters["validation_fraction"])
     test_fraction = float(resolved_parameters["test_fraction"])
@@ -1157,11 +1583,42 @@ def run_predictive_model(
     naive_benchmark_name = raw_benchmark_name
     benchmark_spec = _NAIVE_BENCHMARKS[naive_benchmark_name]
 
-    frame = build_supervised_frame(
-        bars,
-        momentum_period=momentum_period,
-        horizon=spec.horizon,
-    )
+    if name == "momentum_return_regression":
+        momentum_period = int(resolved_parameters["momentum_period"])
+        frame = build_supervised_frame(
+            bars,
+            momentum_period=momentum_period,
+            horizon=spec.horizon,
+        )
+        feature_col = "momentum"
+        model_assumptions = _MOMENTUM_MODEL_ASSUMPTIONS
+        model_warnings = _MOMENTUM_MODEL_WARNINGS
+        model_limitations = _MOMENTUM_MODEL_LIMITATIONS
+        model_unsupported = _MOMENTUM_MODEL_UNSUPPORTED_CLAIMS
+    elif name == "potts_gain_loss_asymmetry":
+        potts_cfg = PottsGainLossParameters(
+            threshold_return=float(resolved_parameters["threshold_return"]),
+            lookback_window=int(resolved_parameters["lookback_window"]),
+            q_states=int(resolved_parameters["q_states"]),
+            training_window=training_window,
+            validation_fraction=validation_fraction,
+            test_fraction=test_fraction,
+            evaluation_mode=evaluation_mode,
+            naive_benchmark=naive_benchmark_name,
+        )
+        frame = build_potts_supervised_frame(
+            bars,
+            config=potts_cfg,
+            horizon=spec.horizon,
+        )
+        feature_col = "potts_gain_loss_score"
+        model_assumptions = _POTTS_MODEL_ASSUMPTIONS
+        model_warnings = _POTTS_MODEL_WARNINGS
+        model_limitations = _POTTS_MODEL_LIMITATIONS
+        model_unsupported = _POTTS_MODEL_UNSUPPORTED_CLAIMS
+    else:
+        raise PredictiveModelNotFoundError(f"Unknown Predictive Model '{name}'.")
+
     chronological_split = _chronological_split(
         frame,
         PredictiveModelSplitParameters(
@@ -1170,6 +1627,7 @@ def run_predictive_model(
             test_fraction=test_fraction,
             evaluation_mode=evaluation_mode,
         ),
+        feature_column=feature_col,
     )
 
     # Build prior realized return lookup for persistence benchmark
@@ -1185,7 +1643,7 @@ def run_predictive_model(
     training_frame = split_frames["training"]
     artifact = fit_model(name, training_frame, resolved_parameters, seed)
     labelled_frame = (
-        frame.dropna(subset=["momentum", "next_session_return", "target_date"])
+        frame.dropna(subset=[feature_col, "next_session_return", "target_date"])
         .sort_values("target_date")
         .reset_index(drop=True)
     )
@@ -1423,10 +1881,10 @@ def run_predictive_model(
         period_metrics=period_metrics,
         folds=tuple(fold_records),
         benchmark=benchmark_eval,
-        assumptions=_MOMENTUM_MODEL_ASSUMPTIONS,
-        warnings=_MOMENTUM_MODEL_WARNINGS,
-        limitations=_MOMENTUM_MODEL_LIMITATIONS,
-        unsupported_claims=_MOMENTUM_MODEL_UNSUPPORTED_CLAIMS,
+        assumptions=model_assumptions,
+        warnings=model_warnings,
+        limitations=model_limitations,
+        unsupported_claims=model_unsupported,
         is_eligible_for_strategy=is_eligible,
         eligibility_reason=eligibility_reason,
     )

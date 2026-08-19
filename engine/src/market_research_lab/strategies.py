@@ -276,6 +276,195 @@ def evaluate_long_short_moving_average(
     )
 
 
+class CombinedPredictiveModelParams(BaseModel):
+    """Validated boundary parameters for the combined predictive model Strategy."""
+
+    threshold: float = Field(default=0.0002, ge=0.0, le=0.1)
+    momentum_weight: float = Field(default=0.5, ge=-2.0, le=2.0)
+    potts_weight: float = Field(default=0.5, ge=-2.0, le=2.0)
+    momentum_period: int = Field(default=20, ge=1, le=500)
+    lookback_window: int = Field(default=60, ge=10, le=500)
+    threshold_return: float = Field(default=0.05, gt=0.0, le=0.5)
+    q_states: int = Field(default=4, ge=2, le=16)
+    mode: Literal["long_short", "long_flat"] = "long_short"
+
+
+def evaluate_combined_predictive_model(
+    market_view: MarketView,
+    parameters: dict[str, JsonValue],
+    *,
+    decision_time: str,
+) -> StrategyEvaluation:
+    """Evaluate combined predictive models over an eligible Market View."""
+    try:
+        config = CombinedPredictiveModelParams.model_validate(parameters)
+    except Exception as error:
+        raise StrategyParameterValidationError(str(error)) from error
+
+    prices = list(market_view.prices)
+    session_dates = list(market_view.session_dates)
+    if len(session_dates) != len(prices):
+        raise StrategyParameterValidationError(
+            f"session_dates length ({len(session_dates)}) must match prices length ({len(prices)})."
+        )
+
+    required_history = max(config.lookback_window, config.momentum_period) + 1
+    if len(prices) < required_history:
+        return StrategyEvaluation(
+            strategy_name="combined_predictive_model",
+            parameters={
+                "threshold": config.threshold,
+                "momentum_weight": config.momentum_weight,
+                "potts_weight": config.potts_weight,
+                "momentum_period": config.momentum_period,
+                "lookback_window": config.lookback_window,
+                "threshold_return": config.threshold_return,
+                "q_states": config.q_states,
+                "mode": config.mode,
+            },
+            decision_time=decision_time,
+            targets=(
+                StrategyTarget(
+                    security_id=market_view.security_id,
+                    weight=0.0,
+                    decision_time=decision_time,
+                    rationale="Insufficient history for combined predictive model features; target flat position.",
+                    indicator_state="warmup",
+                ),
+            ),
+            latest_session_date=session_dates[-1] if session_dates else None,
+            warnings=("Warm-up window: insufficient observations.",),
+        )
+
+    idx = len(prices) - 1
+    mom_price = prices[idx - config.momentum_period]
+    mom_return = (prices[idx] / mom_price - 1.0) if mom_price > 0 else 0.0
+
+    window_closes = prices[idx - config.lookback_window : idx + 1]
+    window_returns: list[float] = []
+    for i in range(1, len(window_closes)):
+        if window_closes[i - 1] > 0:
+            window_returns.append(window_closes[i] / window_closes[i - 1] - 1.0)
+        else:
+            window_returns.append(0.0)
+
+    tau_loss = float(config.lookback_window)
+    tau_gain = float(config.lookback_window)
+
+    running_peak = window_closes[0]
+    peak_idx = 0
+    for w_idx in range(1, len(window_closes)):
+        price = window_closes[w_idx]
+        if price > running_peak:
+            running_peak = price
+            peak_idx = w_idx
+        if running_peak > 0:
+            drop = (price - running_peak) / running_peak
+            if drop <= -config.threshold_return:
+                dur = float(w_idx - peak_idx)
+                if dur > 0 and dur < tau_loss:
+                    tau_loss = dur
+
+    running_trough = window_closes[0]
+    trough_idx = 0
+    for w_idx in range(1, len(window_closes)):
+        price = window_closes[w_idx]
+        if price < running_trough:
+            running_trough = price
+            trough_idx = w_idx
+        if running_trough > 0:
+            gain = (price - running_trough) / running_trough
+            if gain >= config.threshold_return:
+                dur = float(w_idx - trough_idx)
+                if dur > 0 and dur < tau_gain:
+                    tau_gain = dur
+
+    denom_tau = tau_gain + tau_loss
+    asymmetry_ratio = (tau_loss - tau_gain) / denom_tau if denom_tau > 1e-12 else 0.0
+
+    n_obs = len(window_returns)
+    sorted_rets = sorted(window_returns)
+    bin_counts = [0] * config.q_states
+    for r in window_returns:
+        rank = 0
+        for s_r in sorted_rets:
+            if r > s_r:
+                rank += 1
+        bin_idx = min(config.q_states - 1, int((rank / n_obs) * config.q_states))
+        bin_counts[bin_idx] += 1
+
+    n_max = max(bin_counts)
+    expected_n = n_obs / config.q_states
+    denom_m = n_obs - expected_n
+    order_param = max(0.0, (n_max - expected_n) / denom_m) if denom_m > 1e-12 else 0.0
+
+    potts_score = asymmetry_ratio * (1.0 + order_param)
+    combined_score = config.momentum_weight * mom_return + config.potts_weight * potts_score
+
+    if config.mode == "long_short":
+        if combined_score > config.threshold:
+            weight = 1.0
+            state = "bullish_combined"
+            rationale = (
+                f"Combined forecast ({combined_score:.6f}) exceeds threshold {config.threshold}; "
+                "target long position at 100% allocation."
+            )
+        elif combined_score < -config.threshold:
+            weight = -1.0
+            state = "bearish_combined"
+            rationale = (
+                f"Combined forecast ({combined_score:.6f}) is below threshold -{config.threshold}; "
+                "target short position at -100% allocation."
+            )
+        else:
+            weight = 0.0
+            state = "neutral_combined"
+            rationale = (
+                f"Combined forecast ({combined_score:.6f}) is within threshold band; "
+                "target flat position."
+            )
+    else:
+        if combined_score > config.threshold:
+            weight = 1.0
+            state = "bullish_combined"
+            rationale = (
+                f"Combined forecast ({combined_score:.6f}) exceeds threshold {config.threshold}; "
+                "target long position at 100% allocation."
+            )
+        else:
+            weight = 0.0
+            state = "neutral_combined"
+            rationale = (
+                f"Combined forecast ({combined_score:.6f}) is below threshold; "
+                "target flat position."
+            )
+
+    return StrategyEvaluation(
+        strategy_name="combined_predictive_model",
+        parameters={
+            "threshold": config.threshold,
+            "momentum_weight": config.momentum_weight,
+            "potts_weight": config.potts_weight,
+            "momentum_period": config.momentum_period,
+            "lookback_window": config.lookback_window,
+            "threshold_return": config.threshold_return,
+            "q_states": config.q_states,
+            "mode": config.mode,
+        },
+        decision_time=decision_time,
+        targets=(
+            StrategyTarget(
+                security_id=market_view.security_id,
+                weight=weight,
+                decision_time=decision_time,
+                rationale=rationale,
+                indicator_state=state,
+            ),
+        ),
+        latest_session_date=session_dates[-1],
+    )
+
+
 def validate_model_eligibility_for_strategy(
     model_data: Mapping[str, JsonValue],
     *,
@@ -389,6 +578,80 @@ STRATEGY_REGISTRY: dict[str, StrategyMetadata] = {
         ],
         outputs=["weight", "rationale", "indicator_state"],
     ),
+    "combined_predictive_model": StrategyMetadata(
+        name="combined_predictive_model",
+        display_name="Combined Predictive Model",
+        description=(
+            "Combines signals from momentum return regression and Potts gain-loss "
+            "asymmetry to produce directional target weights (MOD-008)."
+        ),
+        parameters=[
+            StrategyParameter(
+                name="threshold",
+                param_type="float",
+                default=0.0002,
+                description="Forecast return threshold to trigger position changes",
+                min_value=0.0,
+                max_value=0.1,
+            ),
+            StrategyParameter(
+                name="momentum_weight",
+                param_type="float",
+                default=0.5,
+                description="Weight assigned to trailing momentum regression forecast",
+                min_value=-2.0,
+                max_value=2.0,
+            ),
+            StrategyParameter(
+                name="potts_weight",
+                param_type="float",
+                default=0.5,
+                description="Weight assigned to Potts gain-loss asymmetry forecast",
+                min_value=-2.0,
+                max_value=2.0,
+            ),
+            StrategyParameter(
+                name="momentum_period",
+                param_type="int",
+                default=20,
+                description="Momentum lookback period in daily bars",
+                min_value=1,
+                max_value=500,
+            ),
+            StrategyParameter(
+                name="lookback_window",
+                param_type="int",
+                default=60,
+                description="Potts lookback window in daily bars",
+                min_value=10,
+                max_value=500,
+            ),
+            StrategyParameter(
+                name="threshold_return",
+                param_type="float",
+                default=0.05,
+                description="Potts return threshold for gain/loss waiting times",
+                min_value=0.01,
+                max_value=0.5,
+            ),
+            StrategyParameter(
+                name="q_states",
+                param_type="int",
+                default=4,
+                description="Number of Potts spin states",
+                min_value=2,
+                max_value=16,
+            ),
+            StrategyParameter(
+                name="mode",
+                param_type="str",
+                default="long_short",
+                description="Strategy position mode ('long_short' or 'long_flat')",
+                options=["long_short", "long_flat"],
+            ),
+        ],
+        outputs=["weight", "rationale", "indicator_state"],
+    ),
 }
 
 
@@ -419,6 +682,10 @@ def evaluate_strategy(
         )
     if name == "long_short_moving_average":
         return evaluate_long_short_moving_average(
+            market_view, parameters, decision_time=decision_time
+        )
+    if name == "combined_predictive_model":
+        return evaluate_combined_predictive_model(
             market_view, parameters, decision_time=decision_time
         )
     raise StrategyEvaluationError(
