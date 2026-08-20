@@ -1453,3 +1453,63 @@ def test_backtest_run_shorting_and_borrow_fees(tmp_path):
     assert has_short
     total_borrow_fees = sum(row.get("borrow_fees", 0.0) for row in result["ledger"])
     assert total_borrow_fees > 0.0
+
+
+def test_backtest_run_with_corporate_actions_and_calendar(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Corporate Actions Project"}).json()
+
+    # Import DailyBars
+    bars_csv = (
+        "symbol,date,open,high,low,close,volume,available_at\n"
+        "AAPL,2024-01-08,10,10,10,10,1000,2024-01-08T20:00:00Z\n"
+        "AAPL,2024-01-09,11,11,11,11,1000,2024-01-09T20:00:00Z\n"
+        "AAPL,2024-01-10,12,12,12,12,1000,2024-01-10T20:00:00Z\n"
+        "AAPL,2024-01-11,13,13,13,13,1000,2024-01-11T20:00:00Z\n"
+        "AAPL,2024-01-12,14,14,14,14,1000,2024-01-12T20:00:00Z\n"
+        "AAPL,2024-01-16,14,14,14,14,1000,2024-01-16T20:00:00Z\n"
+    )
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "bars_source"},
+        files={"file": ("bars.csv", io.BytesIO(bars_csv.encode("utf-8")), "text/csv")},
+    )
+    assert imported.status_code == 201
+    version_id = imported.json()["dataset_version_id"]
+
+    # Import Corporate Actions
+    actions_csv = (
+        "symbol,type,effective_date,value,available_at\n"
+        "AAPL,dividend,2024-01-16,0.50,2024-01-12T21:00:00Z\n"
+    )
+    imported_actions = client.post(
+        "/api/datasets",
+        data={"source": "actions_source"},
+        files={"file": ("actions.csv", io.BytesIO(actions_csv.encode("utf-8")), "text/csv")},
+    )
+    assert imported_actions.status_code == 201
+    actions_version_id = imported_actions.json()["dataset_version_id"]
+
+    # Run backtest with US calendar
+    response = client.post(
+        f"/api/projects/{project['id']}/backtests",
+        json={
+            "strategy_name": "long_flat_moving_average",
+            "strategy_revision": "long_flat_moving_average:v1",
+            "dataset_version_id": version_id,
+            "symbols": ["AAPL"],
+            "start_date": "2024-01-08",
+            "end_date": "2024-01-16",
+            "starting_cash": 100000,
+            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+            "calendar": "US",
+        },
+    )
+    assert response.status_code == 201
+    result = response.json()
+    assert result["run_id"]
+    assert result["specification"]["calendar"] == "US"
+    # Verification of US calendar dates (Jan 8, 9, 10, 11, 12, 16 - MLK Day skipped)
+    ledger_dates = [row["session_date"] for row in result["ledger"]]
+    assert ledger_dates == ["2024-01-08", "2024-01-09", "2024-01-10", "2024-01-11", "2024-01-12", "2024-01-16"]
+
