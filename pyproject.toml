@@ -4,3 +4,35 @@ members = ["engine"]
 [tool.pytest.ini_options]
 testpaths = ["engine/tests"]
 pythonpath = ["engine/src"]
+
+[tool.anti-slop]
+ignore_patterns = [
+  ".agent/**",
+  ".agents/**",
+  ".claude/**",
+  ".codex/**",
+  ".continue/**",
+  ".cursor/**",
+  ".gemini/**",
+  ".git/**",
+  ".hg/**",
+  ".mypy_cache/**",
+  ".opencode/**",
+  ".pi/**",
+  ".pytest_cache/**",
+  ".roo/**",
+  ".ruff_cache/**",
+  ".tox/**",
+  ".venv/**",
+  ".windsurf/**",
+  "__pycache__/**",
+  "build/**",
+  "dist/**",
+  "engine/.venv/**",
+  "env/**",
+  "node_modules/**",
+  "skills/**",
+  "tools/anti_slop/**",
+  "tools/anti-slop/**",
+  "venv/**",
+]
