@@ -169,6 +169,8 @@ predictions = predict(artifact, eligible_frame)
 
 The walk-forward runner owns chronological folds and calls feature fitting inside each training fold. Model implementations receive bounded data rather than filtering dates themselves. Artifacts and predictions are serializable into the Run directory.
 
+Each Predictive Model Run also stores one named Naive Benchmark, model and benchmark metrics for training, validation, and out-of-sample periods, and the assumptions, warnings, limitations, and unsupported claims used to interpret the comparison. The benchmark uses the same labelled eligible periods as the model. A Strategy guard reads this persisted evaluation and rejects model output until the out-of-sample comparison is complete.
+
 ### Strategies
 
 Strategies receive a read-only view restricted to a decision time and return target weights:

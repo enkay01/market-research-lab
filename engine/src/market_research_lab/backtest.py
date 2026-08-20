@@ -1,15 +1,18 @@
-"""Deterministic multi-Security long-only Backtest engine with a dated portfolio ledger."""
+"""Deterministic multi-Security Backtest engine supporting long and short positions with borrowing."""
 
 from __future__ import annotations
 
+import contextlib
 import math
 import re
 import statistics
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from typing import Literal, Sequence
 
+from .exchange_calendar import get_trading_days, is_trading_day, next_trading_day
 from .json_types import JsonValue
-from .market_data import DailyBar
+from .market_data import CorporateAction, DailyBar
 from .strategies import MarketView, StrategyTarget, evaluate_strategy, get_strategy_spec
 
 
@@ -22,6 +25,7 @@ class BacktestParameterError(ValueError):
 
 
 EPS = 1e-9
+TRADING_DAYS_PER_YEAR = 252.0
 _DATE_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$")
 
 
@@ -32,6 +36,15 @@ class ExecutionModelAssumptions:
     schedule: Literal["daily"] = "daily"
     commission_rate: float = 0.0  # fraction of trade notional
     slippage_rate: float = 0.0  # fraction applied to fill price
+    allow_shorting: bool = True
+    borrow_fee_rate: float = 0.0  # annualized borrow fee rate on short market value
+    cash_interest_rate: float = 0.0  # signed annualized rate on cash between eligible bars
+    unavailable_borrow: tuple[str, ...] = ()
+    hard_to_borrow_rates: dict[str, float] = field(default_factory=dict)
+    max_leverage: float = 1.0  # maximum allowed gross portfolio exposure (e.g. 1.0 for 100%, 2.0 for 200%)
+    margin_requirement: float = 1.0  # initial margin requirement fraction (e.g. 1.0 for cash, 0.5 for 2:1 margin)
+    maintenance_margin: float = 0.25  # maintenance margin requirement fraction
+    leverage_mode: Literal["reject", "constrain"] = "reject"
 
 
 @dataclass(frozen=True)
@@ -50,6 +63,7 @@ class BacktestSpecification:
     execution: ExecutionModelAssumptions = field(default_factory=ExecutionModelAssumptions)
     universe: tuple[str, ...] = ()
     benchmark_security_id: str | None = None
+    calendar: Literal["US", "none"] = "none"
 
 
 @dataclass(frozen=True)
@@ -107,6 +121,11 @@ class LedgerRow:
     signal_weights: dict[str, float] = field(default_factory=dict)
     gross_exposure: float = 0.0
     net_exposure: float = 0.0
+    borrow_fees: float = 0.0
+    cash_interest: float = 0.0  # signed interest credited to or charged against cash
+    dividends: float = 0.0  # net cash dividends credited (positive) or debited (negative)
+    splits: dict[str, float] = field(default_factory=dict)  # security_id -> split factor applied today
+    delistings: tuple[str, ...] = ()  # securities delisted today
 
 
 @dataclass(frozen=True)
@@ -120,10 +139,10 @@ class Trade:
     entry_price: float
     exit_price: float
     quantity: float
-    entry_cost: float  # entry notional + entry commission
-    exit_proceeds: float  # exit notional - exit commission
-    pnl: float  # exit_proceeds - entry_cost
-    return_pct: float  # pnl / entry_cost
+    entry_cost: float  # entry notional + entry commission for long, entry proceeds for short
+    exit_proceeds: float  # exit proceeds for long, exit cost for short
+    pnl: float  # net realized profit and loss
+    return_pct: float  # pnl / cost basis
 
 
 @dataclass(frozen=True)
@@ -206,11 +225,23 @@ class OpenTrade:
     entry_price: float
     quantity: float
     entry_cost: float
+    side: Literal["long", "short"] = "long"
 
 
 def _valid_date(value: str) -> bool:
     """Return True when value has the YYYY-MM-DD shape."""
     return _DATE_PATTERN.fullmatch(value) is not None
+
+
+def _parse_available_at(value: str) -> datetime:
+    """Parse one DailyBar eligibility timestamp as an aware UTC datetime."""
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise BacktestError(f"DailyBar available_at is not an ISO timestamp: {value!r}.") from error
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _resolve_universe(specification: BacktestSpecification) -> tuple[str, ...]:
@@ -238,10 +269,43 @@ def _validate_specification(specification: BacktestSpecification) -> tuple[str, 
     slippage = specification.execution.slippage_rate
     if not math.isfinite(slippage) or not 0.0 <= slippage < 1.0:
         raise BacktestParameterError(f"slippage_rate must be finite and in [0, 1), got {slippage}.")
+    borrow_fee = specification.execution.borrow_fee_rate
+    if not math.isfinite(borrow_fee) or borrow_fee < 0.0:
+        raise BacktestParameterError(
+            f"borrow_fee_rate must be finite and >= 0, got {borrow_fee}."
+        )
+    cash_interest = specification.execution.cash_interest_rate
+    if not math.isfinite(cash_interest):
+        raise BacktestParameterError(
+            f"cash_interest_rate must be finite, got {cash_interest}."
+        )
+    max_leverage = specification.execution.max_leverage
+    if not math.isfinite(max_leverage) or max_leverage <= 0.0:
+        raise BacktestParameterError(
+            f"max_leverage must be finite and > 0, got {max_leverage}."
+        )
+    margin_req = specification.execution.margin_requirement
+    if not math.isfinite(margin_req) or margin_req <= 0.0:
+        raise BacktestParameterError(
+            f"margin_requirement must be finite and > 0, got {margin_req}."
+        )
+    maint_margin = specification.execution.maintenance_margin
+    if not math.isfinite(maint_margin) or maint_margin < 0.0:
+        raise BacktestParameterError(
+            f"maintenance_margin must be finite and >= 0, got {maint_margin}."
+        )
+    if specification.execution.leverage_mode not in {"reject", "constrain"}:
+        raise BacktestParameterError(
+            f"leverage_mode must be 'reject' or 'constrain', got {specification.execution.leverage_mode!r}."
+        )
     if specification.price_field not in {"close", "open", "high", "low"}:
         raise BacktestParameterError(
             f"price_field must be one of 'close', 'open', 'high', 'low', "
             f"got {specification.price_field!r}."
+        )
+    if specification.calendar not in {"US", "none"}:
+        raise BacktestParameterError(
+            f"calendar must be 'US' or 'none', got {specification.calendar!r}."
         )
     if not _valid_date(specification.start_date):
         raise BacktestParameterError(
@@ -296,8 +360,26 @@ def _market_view(
 
 def _build_trade(open_trade: OpenTrade, fill: Fill) -> Trade:
     """Close an open trade with the shared trade id and the closing fill."""
+    if open_trade.side == "short":
+        exit_cost = fill.notional + fill.commission
+        pnl = open_trade.entry_cost - exit_cost
+        cost_basis = open_trade.quantity * open_trade.entry_price
+        return Trade(
+            trade_id=open_trade.trade_id,
+            security_id=fill.security_id,
+            entry_date=open_trade.entry_date,
+            exit_date=fill.session_date,
+            entry_price=open_trade.entry_price,
+            exit_price=fill.price,
+            quantity=open_trade.quantity,
+            entry_cost=round(open_trade.entry_cost, 4),
+            exit_proceeds=round(exit_cost, 4),
+            pnl=round(pnl, 4),
+            return_pct=round(pnl / cost_basis if cost_basis > 0 else 0.0, 6),
+        )
     exit_proceeds = -fill.notional - fill.commission
     pnl = exit_proceeds - open_trade.entry_cost
+    cost_basis = open_trade.entry_cost
     return Trade(
         trade_id=open_trade.trade_id,
         security_id=fill.security_id,
@@ -306,10 +388,10 @@ def _build_trade(open_trade: OpenTrade, fill: Fill) -> Trade:
         entry_price=open_trade.entry_price,
         exit_price=fill.price,
         quantity=open_trade.quantity,
-        entry_cost=open_trade.entry_cost,
-        exit_proceeds=exit_proceeds,
-        pnl=pnl,
-        return_pct=pnl / open_trade.entry_cost if open_trade.entry_cost > 0 else 0.0,
+        entry_cost=round(open_trade.entry_cost, 4),
+        exit_proceeds=round(exit_proceeds, 4),
+        pnl=round(pnl, 4),
+        return_pct=round(pnl / cost_basis if cost_basis > 0 else 0.0, 6),
     )
 
 
@@ -375,9 +457,12 @@ def _compute_metrics(calc_input: MetricsCalculationInput) -> BacktestMetrics:
     mean_equity = statistics.mean(equities) if equities else 0.0
     turnover = sum(abs(fill.notional) for fill in fills) / mean_equity if mean_equity > 0.0 else 0.0
 
-    last_row = ledger[-1] if ledger else None
-    gross_exp = last_row.gross_exposure if last_row else 0.0
-    net_exp = last_row.net_exposure if last_row else 0.0
+    gross_exp = (
+        sum(row.gross_exposure for row in ledger) / len(ledger) if ledger else 0.0
+    )
+    net_exp = (
+        sum(row.net_exposure for row in ledger) / len(ledger) if ledger else 0.0
+    )
 
     return BacktestMetrics(
         total_return=round(total_return, 6),
@@ -441,39 +526,68 @@ def _compute_benchmark_curve(
 
 
 def run_backtest(
-    specification: BacktestSpecification, *, bars: Sequence[DailyBar]
+    specification: BacktestSpecification,
+    *,
+    bars: Sequence[DailyBar],
+    corporate_actions: Sequence[CorporateAction] = (),
 ) -> BacktestResult:
     """Run a deterministic next-open Backtest over a multi-Security universe."""
     universe = _validate_specification(specification)
     get_strategy_spec(specification.strategy_name)
 
+    # Validate corporate actions
+    for action in corporate_actions:
+        if action.type not in {"split", "stock_split", "dividend", "delisting", "delist"}:
+            raise BacktestError(f"Unsupported corporate action type: {action.type!r}.")
+        if not math.isfinite(action.value):
+            raise BacktestError(f"Corporate action value must be finite, got {action.value!r}.")
+        if action.type in {"split", "stock_split"} and action.value <= 0.0:
+            raise BacktestError(f"Split factor must be > 0, got {action.value!r}.")
+        if not _valid_date(action.effective_date):
+            raise BacktestError(f"Corporate action effective_date must be YYYY-MM-DD, got {action.effective_date!r}.")
+
+    available_at_by_date: dict[str, datetime] = {}
     for bar in bars:
         if not bar.available_at or not bar.available_at.strip():
             raise BacktestError(
                 "Backtest requires point-in-time availability ('available_at') on every DailyBar."
             )
+        available_at = _parse_available_at(bar.available_at)
+        if bar.security_id not in universe:
+            continue
+        prior_available_at = available_at_by_date.get(bar.session_date)
+        if prior_available_at is None or available_at > prior_available_at:
+            available_at_by_date[bar.session_date] = available_at
 
     # Index bars by symbol and session_date
     bars_by_symbol: dict[str, dict[str, DailyBar]] = {}
     for bar in bars:
         bars_by_symbol.setdefault(bar.security_id, {})[bar.session_date] = bar
 
+    # Index corporate actions by effective_date
+    corp_actions_by_date: dict[str, list[CorporateAction]] = {}
+    for action in corporate_actions:
+        if action.security_id in universe:
+            corp_actions_by_date.setdefault(action.effective_date, []).append(action)
+
     # Determine unique sorted simulation dates in the window [start_date, end_date]
-    universe_and_bench = set(universe)
-    if specification.benchmark_security_id:
-        universe_and_bench.add(specification.benchmark_security_id)
+    if specification.calendar == "US":
+        trading_days = get_trading_days(specification.start_date, specification.end_date, exchange="US")
+        if not trading_days:
+            raise BacktestError("no bars within [start_date, end_date]")
+        sorted_window_dates = trading_days
+    else:
+        window_dates_set: set[str] = set()
+        for sym in universe:
+            if sym in bars_by_symbol:
+                for session_date in bars_by_symbol[sym]:
+                    if specification.start_date <= session_date <= specification.end_date:
+                        window_dates_set.add(session_date)
 
-    window_dates_set: set[str] = set()
-    for sym in universe:
-        if sym in bars_by_symbol:
-            for session_date in bars_by_symbol[sym]:
-                if specification.start_date <= session_date <= specification.end_date:
-                    window_dates_set.add(session_date)
+        if not window_dates_set:
+            raise BacktestError("no bars within [start_date, end_date]")
+        sorted_window_dates = sorted(window_dates_set)
 
-    if not window_dates_set:
-        raise BacktestError("no bars within [start_date, end_date]")
-
-    sorted_window_dates = sorted(window_dates_set)
     sorted_all_bars = sorted(bars, key=lambda b: (b.available_at, b.session_date))
 
     cash = specification.starting_cash
@@ -481,6 +595,8 @@ def run_backtest(
     holding_target_weights: dict[str, float] = {sym: 0.0 for sym in universe}
     pending_targets: dict[str, PendingTarget] = {}
     open_trades: dict[str, OpenTrade] = {}
+    last_known_close_prices: dict[str, float] = {sym: 0.0 for sym in universe}
+    delisted_securities: set[str] = set()
     trade_counter = 0
 
     signals: list[StrategyTarget] = []
@@ -489,69 +605,219 @@ def run_backtest(
     ledger: list[LedgerRow] = []
     warnings: list[str] = []
     rejections: list[ConstraintRejection] = []
+    previous_eligible_at: datetime | None = None
+    cash_interest_periods = 0
+    total_splits_count = 0
+    total_dividends_credited = 0.0
+    delistings_applied: list[str] = []
 
     primary_symbol = universe[0]
 
     for date_str in sorted_window_dates:
         fills_today: list[Fill] = []
+        splits_today: dict[str, float] = {}
+        dividends_today = 0.0
+        delistings_today: list[str] = []
+        cash_interest_today = 0.0
+
+        current_eligible_at = available_at_by_date.get(date_str)
 
         # -------------------------------------------------------------
-        # STEP 1: Reconcile pending targets at today's open price
+        # STEP 0: Apply corporate actions effective on date_str
+        # -------------------------------------------------------------
+        day_actions = corp_actions_by_date.get(date_str, [])
+        for action in day_actions:
+            # Point-in-time check: corporate action must be available at or before today's decision time
+            if action.available_at and current_eligible_at:
+                action_available_at: datetime | None = None
+                with contextlib.suppress(BacktestError):
+                    action_available_at = _parse_available_at(action.available_at)
+
+                if action_available_at is not None and action_available_at > current_eligible_at:
+                    # Skip future corporate action (DATA-008 leakage prevention)
+                    continue
+
+            sym = action.security_id
+            if sym in delisted_securities:
+                continue
+
+            if action.type in {"split", "stock_split"}:
+                factor = action.value
+                curr_s = positions.get(sym, 0.0)
+                positions[sym] = curr_s * factor
+                if sym in open_trades:
+                    open_tr = open_trades[sym]
+                    new_qty = open_tr.quantity * factor
+                    new_entry_p = open_tr.entry_price / factor if factor > 0 else open_tr.entry_price
+                    open_trades[sym] = replace(open_tr, quantity=new_qty, entry_price=new_entry_p)
+                splits_today[sym] = factor
+                total_splits_count += 1
+
+            elif action.type == "dividend":
+                div_val = action.value
+                curr_s = positions.get(sym, 0.0)
+                div_cash = curr_s * div_val
+                cash += div_cash
+                dividends_today += div_cash
+                total_dividends_credited += div_cash
+
+            elif action.type in {"delisting", "delist"}:
+                liq_price = max(0.0, action.value)
+                curr_s = positions.get(sym, 0.0)
+                if abs(curr_s) > EPS:
+                    open_tr = open_trades.get(sym)
+                    if curr_s > EPS:
+                        proceeds = curr_s * liq_price
+                        cash += proceeds
+                        if open_tr is not None:
+                            trade_pnl = proceeds - open_tr.entry_cost
+                            trade_cost_basis = open_tr.entry_cost
+                            trades.append(
+                                Trade(
+                                    trade_id=open_tr.trade_id,
+                                    security_id=sym,
+                                    entry_date=open_tr.entry_date,
+                                    exit_date=date_str,
+                                    entry_price=open_tr.entry_price,
+                                    exit_price=liq_price,
+                                    quantity=open_tr.quantity,
+                                    entry_cost=round(open_tr.entry_cost, 4),
+                                    exit_proceeds=round(proceeds, 4),
+                                    pnl=round(trade_pnl, 4),
+                                    return_pct=round(trade_pnl / trade_cost_basis if trade_cost_basis > 0 else 0.0, 6),
+                                )
+                            )
+                            del open_trades[sym]
+                    else:
+                        cover_cost = abs(curr_s) * liq_price
+                        cash = cash - cover_cost
+                        if open_tr is not None:
+                            trade_pnl = open_tr.entry_cost - cover_cost
+                            trade_cost_basis = open_tr.quantity * open_tr.entry_price
+                            trades.append(
+                                Trade(
+                                    trade_id=open_tr.trade_id,
+                                    security_id=sym,
+                                    entry_date=open_tr.entry_date,
+                                    exit_date=date_str,
+                                    entry_price=open_tr.entry_price,
+                                    exit_price=liq_price,
+                                    quantity=open_tr.quantity,
+                                    entry_cost=round(open_tr.entry_cost, 4),
+                                    exit_proceeds=round(cover_cost, 4),
+                                    pnl=round(trade_pnl, 4),
+                                    return_pct=round(trade_pnl / trade_cost_basis if trade_cost_basis > 0 else 0.0, 6),
+                                )
+                            )
+                            del open_trades[sym]
+                    positions[sym] = 0.0
+                    holding_target_weights[sym] = 0.0
+
+                delisted_securities.add(sym)
+                delistings_today.append(sym)
+                delistings_applied.append(sym)
+                if sym in pending_targets:
+                    del pending_targets[sym]
+                    rejections.append(
+                        ConstraintRejection(
+                            session_date=date_str,
+                            security_id=sym,
+                            rule="delisted_security",
+                            reason=f"Security '{sym}' was delisted on {action.effective_date}.",
+                        )
+                    )
+
+        # -------------------------------------------------------------
+        # STEP 1: Cash Interest
+        # -------------------------------------------------------------
+        if (
+            previous_eligible_at is not None
+            and current_eligible_at is not None
+            and current_eligible_at > previous_eligible_at
+        ):
+            cash_interest_periods += 1
+            cash_interest_today = cash * (
+                specification.execution.cash_interest_rate / TRADING_DAYS_PER_YEAR
+            )
+            cash += cash_interest_today
+        if current_eligible_at is not None:
+            previous_eligible_at = max(
+                previous_eligible_at or current_eligible_at,
+                current_eligible_at,
+            )
+
+        # -------------------------------------------------------------
+        # STEP 2: Reconcile pending targets at today's open price
         # -------------------------------------------------------------
         if pending_targets:
             # Calculate open portfolio value using today's open prices
             open_prices: dict[str, float] = {}
             for sym in universe:
+                if sym in delisted_securities:
+                    open_prices[sym] = 0.0
+                    continue
                 bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
                 if bar_sym is not None:
                     open_prices[sym] = bar_sym.open
+                    last_known_close_prices[sym] = bar_sym.close
                 else:
-                    # If no bar today, fallback to latest close
                     open_prices[sym] = 0.0
 
             curr_positions_val_at_open = sum(
-                positions.get(sym, 0.0) * open_prices.get(sym, 0.0) for sym in universe
+                positions.get(sym, 0.0)
+                * (open_prices.get(sym, 0.0) if open_prices.get(sym, 0.0) > 0.0 else last_known_close_prices.get(sym, 0.0))
+                for sym in universe
             )
             portfolio_val_at_open = cash + curr_positions_val_at_open
 
-            # Compute desired share deltas for each symbol
+            # Compute desired share deltas for symbols with active open prices
             desired_deltas: dict[str, float] = {}
-            for sym in universe:
-                target = pending_targets.get(sym)
-                target_w = target.weight if target is not None else 0.0
-                curr_shares = positions.get(sym, 0.0)
-                open_p = open_prices.get(sym, 0.0)
+            symbols_to_process: list[str] = []
 
-                if open_p <= 0.0 or target_w <= 0.0:
+            for sym, target in list(pending_targets.items()):
+                if sym in delisted_securities:
+                    del pending_targets[sym]
+                    continue
+
+                open_p = open_prices.get(sym, 0.0)
+                if open_p <= 0.0:
+                    # Missing bar on this session: target remains pending for the next session
+                    continue
+
+                symbols_to_process.append(sym)
+                target_w = target.weight
+                curr_shares = positions.get(sym, 0.0)
+
+                if abs(target_w) <= EPS:
                     target_shares = 0.0
                     holding_target_weights[sym] = 0.0
-                elif curr_shares <= EPS:
-                    denom = open_p * (1.0 + specification.execution.slippage_rate)
-                    denom *= 1.0 + specification.execution.commission_rate
-                    if len(universe) == 1:
-                        target_shares = cash / denom if denom > 0.0 else 0.0
-                    else:
-                        target_val = portfolio_val_at_open * target_w
-                        target_shares = target_val / denom if denom > 0.0 else 0.0
-                    holding_target_weights[sym] = target_w
-                else:
-                    # If already holding and target weight hasn't changed, hold current shares
-                    if abs(target_w - holding_target_weights.get(sym, 0.0)) < EPS:
-                        target_shares = curr_shares
-                    else:
+                elif target_w > 0.0:
+                    # Long target
+                    if curr_shares <= EPS or abs(target_w - holding_target_weights.get(sym, 0.0)) > EPS:
                         denom = open_p * (1.0 + specification.execution.slippage_rate)
                         denom *= 1.0 + specification.execution.commission_rate
-                        target_val = portfolio_val_at_open * target_w
+                        target_val = max(0.0, portfolio_val_at_open) * target_w
                         target_shares = target_val / denom if denom > 0.0 else 0.0
                         holding_target_weights[sym] = target_w
+                    else:
+                        target_shares = curr_shares
+                else:
+                    # Short target (target_w < 0.0)
+                    if curr_shares >= -EPS or abs(target_w - holding_target_weights.get(sym, 0.0)) > EPS:
+                        eff_p = open_p * (1.0 - specification.execution.slippage_rate)
+                        target_val_short = abs(target_w) * max(0.0, portfolio_val_at_open)
+                        target_shares = -(target_val_short / eff_p) if eff_p > 0.0 else 0.0
+                        holding_target_weights[sym] = target_w
+                    else:
+                        target_shares = curr_shares
 
                 desired_deltas[sym] = target_shares - curr_shares
 
             # Execution ordering: SELLS execute before BUYS
-            sell_symbols = [s for s in universe if desired_deltas.get(s, 0.0) < -EPS]
-            buy_symbols = [s for s in universe if desired_deltas.get(s, 0.0) > EPS]
+            sell_symbols = [s for s in symbols_to_process if desired_deltas.get(s, 0.0) < -EPS]
+            buy_symbols = [s for s in symbols_to_process if desired_deltas.get(s, 0.0) > EPS]
 
-            # 1a. Process SELLS
+            # 2a. Process SELLS (long exits / short openings)
             for sym in sell_symbols:
                 bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
                 if bar_sym is None:
@@ -559,7 +825,7 @@ def run_backtest(
                 open_p = bar_sym.open
                 delta = desired_deltas[sym]
                 curr_shares = positions.get(sym, 0.0)
-                sell_qty = min(abs(delta), curr_shares)  # Long-only constraint: cannot oversell
+                sell_qty = abs(delta)
 
                 if sell_qty <= EPS:
                     continue
@@ -575,12 +841,16 @@ def run_backtest(
                 slippage_cost = sell_qty * open_p * slippage
 
                 cash += abs(notional) - commission
-                positions[sym] = max(0.0, curr_shares - sell_qty)
+                new_shares = curr_shares - sell_qty
+                positions[sym] = new_shares
 
                 trade_id = ""
                 open_tr = open_trades.get(sym)
                 if open_tr is not None:
                     trade_id = open_tr.trade_id
+                elif new_shares < -EPS:
+                    trade_counter += 1
+                    trade_id = f"trade-{trade_counter}"
 
                 fill = Fill(
                     trade_id=trade_id,
@@ -598,12 +868,49 @@ def run_backtest(
                 fills.append(fill)
                 fills_today.append(fill)
 
-                # Close round trip trade if position closed
-                if positions[sym] <= EPS and open_tr is not None:
-                    trades.append(_build_trade(open_tr, fill))
-                    del open_trades[sym]
+                # Trade lifecycle updates
+                if curr_shares > EPS:
+                    # Closing or reducing long
+                    if open_tr is not None:
+                        long_exit_qty = min(sell_qty, open_tr.quantity)
+                        if long_exit_qty >= open_tr.quantity - EPS:
+                            trades.append(_build_trade(open_tr, fill))
+                            del open_trades[sym]
+                        else:
+                            closed_cost = open_tr.entry_cost * (long_exit_qty / open_tr.quantity)
+                            partial_tr = replace(open_tr, quantity=long_exit_qty, entry_cost=closed_cost)
+                            trades.append(_build_trade(partial_tr, fill))
+                            rem_qty = open_tr.quantity - long_exit_qty
+                            rem_cost = open_tr.entry_cost - closed_cost
+                            open_trades[sym] = replace(open_tr, quantity=rem_qty, entry_cost=rem_cost)
 
-            # 1b. Process BUYS
+                        if new_shares < -EPS:
+                            # Flipped to short
+                            trade_counter += 1
+                            short_trade_id = f"trade-{trade_counter}"
+                            short_qty = abs(new_shares)
+                            open_trades[sym] = OpenTrade(
+                                trade_id=short_trade_id,
+                                security_id=sym,
+                                entry_date=date_str,
+                                entry_price=fill.price,
+                                quantity=short_qty,
+                                entry_cost=short_qty * fill.price - (short_qty / sell_qty) * commission,
+                                side="short",
+                            )
+                elif curr_shares >= -EPS and new_shares < -EPS:
+                    # Opening short from flat
+                    open_trades[sym] = OpenTrade(
+                        trade_id=trade_id,
+                        security_id=sym,
+                        entry_date=date_str,
+                        entry_price=fill.price,
+                        quantity=sell_qty,
+                        entry_cost=abs(notional) - commission,
+                        side="short",
+                    )
+
+            # 2b. Process BUYS (short covers / long openings)
             for sym in buy_symbols:
                 bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
                 if bar_sym is None:
@@ -621,37 +928,74 @@ def run_backtest(
                 decision_time = target.decision_time if target else bar_sym.available_at
                 rationale = target.rationale if target else "Rebalance buy"
 
-                if cash <= EPS:
-                    # Cash limit rejection
-                    rejections.append(
-                        ConstraintRejection(
-                            session_date=date_str,
-                            security_id=sym,
-                            rule="cash_limit",
-                            reason=f"Insufficient cash ({cash:.2f}) to execute buy for {sym}.",
-                            requested_weight=target.weight if target else None,
-                        )
-                    )
-                    warnings.append(f"Insufficient cash to buy {sym} on {date_str}.")
-                    continue
+                cover_shares = min(delta, abs(curr_shares)) if curr_shares < -EPS else 0.0
+                new_long_delta = max(0.0, delta - cover_shares)
+                new_long_cost = new_long_delta * cost_per_share
 
-                if desired_cost > cash:
-                    # Partial fill to available cash
-                    buy_qty = cash / cost_per_share
-                    rejections.append(
-                        ConstraintRejection(
-                            session_date=date_str,
-                            security_id=sym,
-                            rule="partial_fill_cash_limit",
-                            reason=(
-                                f"Partial fill for {sym} ({buy_qty:.4f} of {delta:.4f} shares) "
-                                "due to cash limit."
-                            ),
-                            requested_weight=target.weight if target else None,
-                        )
-                    )
-                else:
-                    buy_qty = delta
+                margin_req = specification.execution.margin_requirement
+                allowed_long_shares = new_long_delta
+
+                if new_long_delta > EPS:
+                    if margin_req < 1.0:
+                        avail_capacity = max(0.0, portfolio_val_at_open) / margin_req
+                        if avail_capacity <= EPS:
+                            rejections.append(
+                                ConstraintRejection(
+                                    session_date=date_str,
+                                    security_id=sym,
+                                    rule="margin_limit",
+                                    reason=(
+                                        f"Insufficient margin equity ({portfolio_val_at_open:.2f}) "
+                                        f"to execute long buy for {sym}."
+                                    ),
+                                    requested_weight=target.weight if target else None,
+                                )
+                            )
+                            warnings.append(f"Insufficient margin to buy {sym} on {date_str}.")
+                            allowed_long_shares = 0.0
+                        elif new_long_cost > avail_capacity:
+                            allowed_long_shares = avail_capacity / cost_per_share
+                            rejections.append(
+                                ConstraintRejection(
+                                    session_date=date_str,
+                                    security_id=sym,
+                                    rule="partial_fill_margin_limit",
+                                    reason=(
+                                        f"Partial fill for {sym} ({cover_shares + allowed_long_shares:.4f} "
+                                        f"of {delta:.4f} shares) due to margin limit."
+                                    ),
+                                    requested_weight=target.weight if target else None,
+                                )
+                            )
+                    else:
+                        if cash <= EPS:
+                            rejections.append(
+                                ConstraintRejection(
+                                    session_date=date_str,
+                                    security_id=sym,
+                                    rule="cash_limit",
+                                    reason=f"Insufficient cash ({cash:.2f}) to execute buy for {sym}.",
+                                    requested_weight=target.weight if target else None,
+                                )
+                            )
+                            warnings.append(f"Insufficient cash to buy {sym} on {date_str}.")
+                            allowed_long_shares = 0.0
+                        elif new_long_cost > cash:
+                            allowed_long_shares = cash / cost_per_share
+                            rejections.append(
+                                ConstraintRejection(
+                                    session_date=date_str,
+                                    security_id=sym,
+                                    rule="partial_fill_cash_limit",
+                                    reason=(
+                                        f"Partial fill for {sym} ({cover_shares + allowed_long_shares:.4f} "
+                                        f"of {delta:.4f} shares) due to cash limit."
+                                    ),
+                                    requested_weight=target.weight if target else None,
+                                )
+                            )
+
+                buy_qty = cover_shares + allowed_long_shares
 
                 if buy_qty <= EPS:
                     continue
@@ -660,12 +1004,21 @@ def run_backtest(
                 commission = notional * specification.execution.commission_rate
                 slippage_cost = buy_qty * open_p * slippage
 
-                cash = max(0.0, cash - notional - commission)
-                was_flat = positions.get(sym, 0.0) <= EPS
-                positions[sym] = curr_shares + buy_qty
+                if margin_req >= 1.0:
+                    cash = max(0.0, cash - notional - commission)
+                else:
+                    cash = cash - notional - commission
+                new_shares = curr_shares + buy_qty
+                positions[sym] = new_shares
 
-                trade_counter += 1
-                trade_id = f"trade-{trade_counter}"
+                trade_id = ""
+                open_tr = open_trades.get(sym)
+                if open_tr is not None:
+                    trade_id = open_tr.trade_id
+                elif new_shares > EPS:
+                    trade_counter += 1
+                    trade_id = f"trade-{trade_counter}"
+
                 fill = Fill(
                     trade_id=trade_id,
                     security_id=sym,
@@ -682,29 +1035,65 @@ def run_backtest(
                 fills.append(fill)
                 fills_today.append(fill)
 
-                if was_flat:
+                # Trade lifecycle updates
+                if curr_shares < -EPS:
+                    # Covering or reducing short
+                    if open_tr is not None:
+                        short_cover_qty = min(buy_qty, open_tr.quantity)
+                        if short_cover_qty >= open_tr.quantity - EPS:
+                            trades.append(_build_trade(open_tr, fill))
+                            del open_trades[sym]
+                        else:
+                            closed_cost = open_tr.entry_cost * (short_cover_qty / open_tr.quantity)
+                            partial_tr = replace(open_tr, quantity=short_cover_qty, entry_cost=closed_cost)
+                            trades.append(_build_trade(partial_tr, fill))
+                            rem_qty = open_tr.quantity - short_cover_qty
+                            rem_cost = open_tr.entry_cost - closed_cost
+                            open_trades[sym] = replace(open_tr, quantity=rem_qty, entry_cost=rem_cost)
+
+                        if new_shares > EPS:
+                            # Flipped to long
+                            trade_counter += 1
+                            long_trade_id = f"trade-{trade_counter}"
+                            long_qty = new_shares
+                            open_trades[sym] = OpenTrade(
+                                trade_id=long_trade_id,
+                                security_id=sym,
+                                entry_date=date_str,
+                                entry_price=fill.price,
+                                quantity=long_qty,
+                                entry_cost=long_qty * fill.price + (long_qty / buy_qty) * commission,
+                                side="long",
+                            )
+                elif curr_shares <= EPS and new_shares > EPS:
+                    # Opening long from flat
                     open_trades[sym] = OpenTrade(
                         trade_id=trade_id,
                         security_id=sym,
                         entry_date=date_str,
                         entry_price=fill.price,
-                        quantity=fill.quantity,
-                        entry_cost=fill.notional + fill.commission,
+                        quantity=buy_qty,
+                        entry_cost=notional + commission,
+                        side="long",
                     )
 
-        pending_targets.clear()
+            # Clear processed pending targets
+            for sym in symbols_to_process:
+                pending_targets.pop(sym, None)
 
         # -------------------------------------------------------------
-        # STEP 2: Evaluate Strategy on today's close for each security
+        # STEP 3: Evaluate Strategy on today's close for each security
         # -------------------------------------------------------------
-        today_signal_weights: dict[str, float] = {}
-        primary_target: StrategyTarget | None = None
-        universe_k = len(universe)
+        candidate_targets: list[tuple[str, StrategyTarget, float, DailyBar]] = []
+        active_universe = [s for s in universe if s not in delisted_securities]
+        universe_size = len(active_universe)
 
-        for sym in universe:
+        for sym in active_universe:
             bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
             if bar_sym is None:
                 continue
+
+            last_known_close_prices[sym] = _price_value(bar_sym, specification.price_field)
 
             view = _market_view(
                 sym, sorted_all_bars, bar_sym.available_at, specification.price_field
@@ -718,25 +1107,120 @@ def run_backtest(
 
             # In multi-security universe, normalize allocation by universe size
             for raw_t in evaluation.targets:
-                norm_weight = raw_t.weight / universe_k if universe_k > 0 else 0.0
+                norm_weight = raw_t.weight / universe_size if universe_size > 0 else 0.0
 
-                # Long-only constraint check: negative weights are rejected
+                # Shorting & Borrow availability checks
                 if norm_weight < 0.0:
-                    rejections.append(
-                        ConstraintRejection(
-                            session_date=date_str,
-                            security_id=sym,
-                            rule="long_only_no_short",
-                            reason=(
-                                f"Negative target weight ({norm_weight}) rejected in "
-                                "long-only mode."
-                            ),
-                            requested_weight=norm_weight,
+                    if not specification.execution.allow_shorting:
+                        rejections.append(
+                            ConstraintRejection(
+                                session_date=date_str,
+                                security_id=sym,
+                                rule="short_disabled",
+                                reason=(
+                                    f"Negative target weight ({norm_weight}) rejected: "
+                                    "short positions are disabled in execution assumptions."
+                                ),
+                                requested_weight=round(norm_weight, 6),
+                            )
                         )
-                    )
-                    norm_weight = 0.0
+                        warnings.append(
+                            f"Short target for {sym} on {date_str} rejected (shorting disabled)."
+                        )
+                        norm_weight = 0.0
+                    elif sym in specification.execution.unavailable_borrow:
+                        rejections.append(
+                            ConstraintRejection(
+                                session_date=date_str,
+                                security_id=sym,
+                                rule="borrow_unavailable",
+                                reason=(
+                                    f"Borrow unavailable for '{sym}' "
+                                    "(hard-to-borrow constraint)."
+                                ),
+                                requested_weight=round(norm_weight, 6),
+                            )
+                        )
+                        warnings.append(
+                            f"Borrow unavailable for {sym} on {date_str}; short target rejected."
+                        )
+                        norm_weight = 0.0
 
-                target = replace(raw_t, weight=round(norm_weight, 6))
+                candidate_targets.append((sym, raw_t, norm_weight, bar_sym))
+
+        # Leverage limit evaluation across portfolio target gross exposure
+        total_target_gross = sum(abs(norm_w) for _, _, norm_w, _ in candidate_targets)
+        max_lev = specification.execution.max_leverage
+        is_leverage_breached = total_target_gross > max_lev + EPS
+
+        today_signal_weights: dict[str, float] = {}
+        primary_target: StrategyTarget | None = None
+
+        if is_leverage_breached:
+            if specification.execution.leverage_mode == "reject":
+                for sym, raw_t, norm_w, bar_sym in candidate_targets:
+                    prior_w = holding_target_weights.get(sym, 0.0)
+                    if abs(norm_w) > EPS:
+                        rejections.append(
+                            ConstraintRejection(
+                                session_date=date_str,
+                                security_id=sym,
+                                rule="leverage_limit",
+                                reason=(
+                                    f"Target gross exposure ({total_target_gross:.2f}) exceeds "
+                                    f"maximum leverage limit of {max_lev:.2f}."
+                                ),
+                                requested_weight=round(norm_w, 6),
+                            )
+                        )
+                        warnings.append(
+                            f"Target for {sym} on {date_str} (weight {norm_w:.4f}) rejected: "
+                            f"portfolio gross exposure ({total_target_gross:.2f}) exceeds max leverage {max_lev:.2f}."
+                        )
+                    target = replace(raw_t, weight=prior_w)
+                    signals.append(target)
+                    today_signal_weights[sym] = prior_w
+                    pending_targets[sym] = PendingTarget(
+                        security_id=sym,
+                        weight=prior_w,
+                        decision_time=bar_sym.available_at,
+                        rationale=target.rationale,
+                    )
+                    if sym == primary_symbol:
+                        primary_target = target
+            else:
+                scale_factor = max_lev / total_target_gross if total_target_gross > 0 else 1.0
+                for sym, raw_t, norm_w, bar_sym in candidate_targets:
+                    if abs(norm_w) > EPS:
+                        scaled_w = round(norm_w * scale_factor, 6)
+                        rejections.append(
+                            ConstraintRejection(
+                                session_date=date_str,
+                                security_id=sym,
+                                rule="leverage_constrained",
+                                reason=(
+                                    f"Target weight {norm_w:.4f} scaled to {scaled_w:.4f} "
+                                    f"(scale factor {scale_factor:.4f}) to satisfy maximum leverage limit of {max_lev:.2f}."
+                                ),
+                                requested_weight=round(norm_w, 6),
+                            )
+                        )
+                    else:
+                        scaled_w = 0.0
+                    target = replace(raw_t, weight=scaled_w)
+                    signals.append(target)
+                    today_signal_weights[sym] = scaled_w
+                    pending_targets[sym] = PendingTarget(
+                        security_id=sym,
+                        weight=scaled_w,
+                        decision_time=bar_sym.available_at,
+                        rationale=target.rationale,
+                    )
+                    if sym == primary_symbol:
+                        primary_target = target
+        else:
+            for sym, raw_t, norm_w, bar_sym in candidate_targets:
+                target = replace(raw_t, weight=round(norm_w, 6))
                 signals.append(target)
                 today_signal_weights[sym] = target.weight
                 pending_targets[sym] = PendingTarget(
@@ -749,28 +1233,58 @@ def run_backtest(
                     primary_target = target
 
         # -------------------------------------------------------------
-        # STEP 3: Mark-to-market at today's close
+        # STEP 4: Mark-to-market and borrow cost accounting at close
         # -------------------------------------------------------------
+        borrow_fee_today = 0.0
+        for sym in universe:
+            shares_sym = positions.get(sym, 0.0)
+            if shares_sym < -EPS:
+                bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
+                close_p = _price_value(bar_sym, specification.price_field) if bar_sym else last_known_close_prices.get(sym, 0.0)
+                short_val = abs(shares_sym) * close_p
+                borrow_rate = specification.execution.hard_to_borrow_rates.get(
+                    sym, specification.execution.borrow_fee_rate
+                )
+                if borrow_rate > 0.0:
+                    daily_fee = short_val * (borrow_rate / 252.0)
+                    borrow_fee_today += daily_fee
+
+        cash = max(0.0, cash - borrow_fee_today)
+
         position_snapshots: dict[str, PositionSnapshot] = {}
         total_pos_val = 0.0
+        gross_pos_val = 0.0
         primary_close = 0.0
         primary_shares = positions.get(primary_symbol, 0.0)
 
         for sym in universe:
-            bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
-            close_p = _price_value(bar_sym, specification.price_field) if bar_sym else 0.0
+            if sym in delisted_securities:
+                close_p = 0.0
+            else:
+                bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
+                if bar_sym is not None:
+                    close_p = _price_value(bar_sym, specification.price_field)
+                    last_known_close_prices[sym] = close_p
+                else:
+                    close_p = last_known_close_prices.get(sym, 0.0)
+
             if sym == primary_symbol:
                 primary_close = close_p
 
             shares_sym = positions.get(sym, 0.0)
             val_sym = shares_sym * close_p
             total_pos_val += val_sym
+            gross_pos_val += abs(val_sym)
 
         portfolio_val = cash + total_pos_val
 
         for sym in universe:
-            bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
-            close_p = _price_value(bar_sym, specification.price_field) if bar_sym else 0.0
+            if sym in delisted_securities:
+                close_p = 0.0
+            else:
+                bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
+                close_p = _price_value(bar_sym, specification.price_field) if bar_sym else last_known_close_prices.get(sym, 0.0)
+
             shares_sym = positions.get(sym, 0.0)
             val_sym = shares_sym * close_p
             w_sym = (val_sym / portfolio_val) if portfolio_val > 0.0 else 0.0
@@ -782,8 +1296,32 @@ def run_backtest(
                 weight=round(w_sym, 6),
             )
 
-        gross_exp = (total_pos_val / portfolio_val) if portfolio_val > 0.0 else 0.0
-        net_exp = gross_exp  # Long-only
+        gross_exp = (gross_pos_val / portfolio_val) if portfolio_val > 0.0 else 0.0
+        net_exp = (total_pos_val / portfolio_val) if portfolio_val > 0.0 else 0.0
+
+        # Maintenance margin threshold check at session close
+        if gross_pos_val > EPS and portfolio_val > 0:
+            maint_req = gross_pos_val * specification.execution.maintenance_margin
+            if portfolio_val < maint_req:
+                maint_warning = (
+                    f"Margin call on {date_str}: Portfolio value (${portfolio_val:,.2f}) fell "
+                    f"below maintenance margin requirement (${maint_req:,.2f}, "
+                    f"{specification.execution.maintenance_margin * 100:.1f}% of gross position value ${gross_pos_val:,.2f})."
+                )
+                warnings.append(maint_warning)
+                for sym in universe:
+                    if abs(positions.get(sym, 0.0)) > EPS:
+                        rejections.append(
+                            ConstraintRejection(
+                                session_date=date_str,
+                                security_id=sym,
+                                rule="maintenance_margin_call",
+                                reason=maint_warning,
+                                requested_weight=position_snapshots.get(
+                                    sym, PositionSnapshot(0.0, 0.0, 0.0, 0.0)
+                                ).weight,
+                            )
+                        )
 
         ledger.append(
             LedgerRow(
@@ -800,6 +1338,11 @@ def run_backtest(
                 signal_weights=today_signal_weights,
                 gross_exposure=round(gross_exp, 6),
                 net_exposure=round(net_exp, 6),
+                borrow_fees=round(borrow_fee_today, 4),
+                cash_interest=round(cash_interest_today, 4),
+                dividends=round(dividends_today, 4),
+                splits=splits_today,
+                delistings=tuple(delistings_today),
             )
         )
 
@@ -856,6 +1399,16 @@ def run_backtest(
         )
     )
 
+    total_commission = round(sum(fill.commission for fill in fills), 4)
+    total_slippage = round(sum(fill.slippage_cost for fill in fills), 4)
+    total_borrow_fees = round(sum(row.borrow_fees for row in ledger), 4)
+    total_cash_interest = round(sum(row.cash_interest for row in ledger), 4)
+    total_dividends = round(sum(row.dividends for row in ledger), 4)
+    total_costs = round(
+        total_commission + total_slippage + total_borrow_fees - total_cash_interest,
+        4,
+    )
+
     manifest: dict[str, JsonValue] = {
         "kind": "backtest",
         "strategy_name": specification.strategy_name,
@@ -874,15 +1427,43 @@ def run_backtest(
             "fill_price": "next_open",
             "commission_rate": specification.execution.commission_rate,
             "slippage_rate": specification.execution.slippage_rate,
+            "allow_shorting": specification.execution.allow_shorting,
+            "borrow_fee_rate": specification.execution.borrow_fee_rate,
+            "cash_interest_rate": specification.execution.cash_interest_rate,
+            "unavailable_borrow": list(specification.execution.unavailable_borrow),
+            "max_leverage": specification.execution.max_leverage,
+            "margin_requirement": specification.execution.margin_requirement,
+            "maintenance_margin": specification.execution.maintenance_margin,
+            "leverage_mode": specification.execution.leverage_mode,
         },
         "signal_count": len(signals),
         "fill_count": len(fills),
         "trade_count": len(trades),
         "rejection_count": len(rejections),
+        "cash_interest_periods": cash_interest_periods,
+        "corporate_actions": {
+            "total_dividends": total_dividends,
+            "total_splits": total_splits_count,
+            "delistings": delistings_applied,
+        },
         "costs": {
-            "total_commission": round(sum(fill.commission for fill in fills), 4),
-            "total_slippage": round(sum(fill.slippage_cost for fill in fills), 4),
-            "total_costs": round(sum(fill.commission + fill.slippage_cost for fill in fills), 4),
+            "total_commission": total_commission,
+            "total_slippage": total_slippage,
+            "total_borrow_fees": total_borrow_fees,
+            "total_cash_interest": total_cash_interest,
+            "total_dividends": total_dividends,
+            "total_costs": total_costs,
+            "portfolio_impact": {
+                "commission": round(-total_commission, 4),
+                "slippage": round(-total_slippage, 4),
+                "borrow_fees": round(-total_borrow_fees, 4),
+                "cash_interest": total_cash_interest,
+                "dividends": total_dividends,
+                "net": round(
+                    -total_commission - total_slippage - total_borrow_fees + total_cash_interest + total_dividends,
+                    4,
+                ),
+            },
         },
     }
 

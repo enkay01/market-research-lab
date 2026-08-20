@@ -47,33 +47,25 @@ def make_bar(symbol: str, session_date: str, open_price: float, close_price: flo
 
 def make_multi_spec(
     universe: tuple[str, ...],
-    start_date: str,
-    end_date: str,
-    starting_cash: float = 100000.0,
+    dates: list[str],
     *,
-    benchmark_security_id: str | None = None,
-    commission_rate: float = 0.0,
-    slippage_rate: float = 0.0,
-    strategy_name: str = "long_flat_moving_average",
+    benchmark: str | None = None,
+    cash: float = 100000.0,
 ) -> BacktestSpecification:
     """Build a BacktestSpecification for a multi-Security universe."""
     return BacktestSpecification(
-        strategy_name=strategy_name,
+        strategy_name="long_flat_moving_average",
         strategy_revision="v1",
         dataset_version_id="ds-multi",
         security_id=universe[0] if universe else "AAPL",
         universe=universe,
-        start_date=start_date,
-        end_date=end_date,
-        starting_cash=starting_cash,
+        start_date=dates[0],
+        end_date=dates[-1],
+        starting_cash=cash,
         parameters={"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
         price_field="close",
-        execution=ExecutionModelAssumptions(
-            schedule="daily",
-            commission_rate=commission_rate,
-            slippage_rate=slippage_rate,
-        ),
-        benchmark_security_id=benchmark_security_id,
+        execution=ExecutionModelAssumptions(schedule="daily"),
+        benchmark_security_id=benchmark,
     )
 
 
@@ -92,9 +84,8 @@ def test_multi_security_maintains_cash_and_positions_across_universe():
 
     spec = make_multi_spec(
         universe=("AAPL", "MSFT"),
-        start_date=dates[0],
-        end_date=dates[-1],
-        starting_cash=100000.0,
+        dates=dates,
+        cash=100000.0,
     )
 
     result = run_backtest(spec, bars=bars)
@@ -135,9 +126,8 @@ def test_sells_execute_before_buys_to_free_cash():
 
     spec = make_multi_spec(
         universe=("AAPL", "MSFT"),
-        start_date=dates[0],
-        end_date=dates[-1],
-        starting_cash=100000.0,
+        dates=dates,
+        cash=100000.0,
     )
 
     result = run_backtest(spec, bars=bars)
@@ -160,9 +150,8 @@ def test_long_only_prevents_negative_positions_and_rejects_negative_weights():
 
     spec = make_multi_spec(
         universe=("AAPL", "MSFT"),
-        start_date=dates[0],
-        end_date=dates[-1],
-        starting_cash=100000.0,
+        dates=dates,
+        cash=100000.0,
     )
 
     result = run_backtest(spec, bars=bars)
@@ -189,10 +178,9 @@ def test_benchmark_comparison_calculates_curve_and_relative_return():
 
     spec = make_multi_spec(
         universe=("AAPL",),
-        benchmark_security_id="SPY",
-        start_date=dates[0],
-        end_date=dates[-1],
-        starting_cash=100000.0,
+        dates=dates,
+        benchmark="SPY",
+        cash=100000.0,
     )
 
     result = run_backtest(spec, bars=bars)
@@ -224,10 +212,8 @@ def test_multi_security_deterministic_replay_is_identical():
 
     spec = make_multi_spec(
         universe=("AAPL", "MSFT"),
-        benchmark_security_id=None,
-        start_date=dates[0],
-        end_date=dates[-1],
-        starting_cash=100000.0,
+        dates=dates,
+        cash=100000.0,
     )
 
     run1 = run_backtest(spec, bars=bars)
@@ -249,9 +235,8 @@ def test_multi_security_future_data_leakage_invariant():
 
     spec = make_multi_spec(
         universe=("AAPL", "MSFT"),
-        start_date=dates[0],
-        end_date=dates[-1],
-        starting_cash=100000.0,
+        dates=dates,
+        cash=100000.0,
     )
 
     base_run = run_backtest(spec, bars=bars)

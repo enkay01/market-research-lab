@@ -57,6 +57,7 @@ from .indicators import (
 )
 from .json_types import JsonValue
 from .market_data import (
+    DATASET_TYPE_CORPORATE_ACTIONS,
     CoverageReport,
     InadequateTemporalProvenanceError,
     IngestionRequest,
@@ -67,11 +68,13 @@ from .predictive_models import (
     PredictiveModelCalculation,
     PredictiveModelCalculationError,
     PredictiveModelDataError,
+    PredictiveModelFold,
+    PredictiveModelForecast,
     PredictiveModelMetadata,
     PredictiveModelNotFoundError,
+    PredictiveModelOutput,
     PredictiveModelParameter,
     PredictiveModelParameterError,
-    PredictiveModelPrediction,
     get_predictive_model_spec,
     list_predictive_models,
     run_predictive_model,
@@ -107,6 +110,7 @@ from .strategies import (
     evaluate_strategy,
     get_strategy_spec,
     list_strategies,
+    validate_model_eligibility_for_strategy,
 )
 from .valuation import (
     ComparableCompanyInput,
@@ -645,13 +649,69 @@ class PredictiveModelArtifactResponse(BaseModel):
     parameters: dict[str, JsonValue]
     seed: int | None
     training_metrics: dict[str, float]
+    feature_definition: dict[str, JsonValue] = Field(default_factory=dict)
+    preprocessing: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class PredictiveModelSplitResponse(BaseModel):
+    period: Literal["training", "validation", "test"]
+    start: str
+    end: str
+    feature_start: str
+    feature_end: str
+    observations: int
+    labelled_observations: int
+    fit_scope: str
+
+
+class PredictiveModelPeriodMetricsResponse(BaseModel):
+    period: Literal["training", "validation", "test"]
+    observations: int
+    metrics: dict[str, float]
+    benchmark_metrics: dict[str, float] = Field(default_factory=dict)
+    comparison: dict[str, JsonValue] = Field(default_factory=dict)
+    sample_scope: Literal["in_sample", "validation", "out_of_sample"]
+
+
+class NaiveBenchmarkEvaluationResponse(BaseModel):
+    name: str
+    display_name: str
+    description: str
+    period_metrics: dict[str, dict[str, float]]
+    out_of_sample_comparison: dict[str, JsonValue]
+    completed: bool = False
 
 
 class PredictiveModelPredictionResponse(BaseModel):
     session_date: str
     feature_value: float
     predicted_value: float
-    actual_target: float | None
+    actual_target: float
+    target_date: str | None = None
+    period: Literal["training", "validation", "test"] | None = None
+
+
+class PredictiveModelForecastResponse(BaseModel):
+    session_date: str
+    feature_value: float
+    predicted_value: float
+    actual_target: None = None
+    target_date: None = None
+    period: None = None
+
+
+class PredictiveModelFoldResponse(BaseModel):
+    fold_index: int
+    period: Literal["validation", "test"]
+    prediction_session_date: str
+    target_date: str | None
+    training_start: str
+    training_end: str
+    training_observations: int
+    fit_scope: str
+    artifact: PredictiveModelArtifactResponse
+    prediction: PredictiveModelPredictionResponse | PredictiveModelForecastResponse
+    metrics: dict[str, float]
 
 
 class PredictiveModelRunResponse(BaseModel):
@@ -673,13 +733,28 @@ class PredictiveModelRunResponse(BaseModel):
     output_meaning: str
     outputs: list[str]
     artifact: PredictiveModelArtifactResponse
-    predictions: list[PredictiveModelPredictionResponse]
+    predictions: list[PredictiveModelPredictionResponse | PredictiveModelForecastResponse]
     metrics: dict[str, float]
     training_start: str
     training_end: str
     completed_at: str | None = None
     as_of: datetime | None = None
     out_of_sample_status: str
+    evaluation_mode: Literal["holdout", "expanding", "rolling"] = "holdout"
+    splits: list[PredictiveModelSplitResponse] = Field(default_factory=list)
+    period_metrics: list[PredictiveModelPeriodMetricsResponse] = Field(default_factory=list)
+    fold_artifacts: list[PredictiveModelArtifactResponse] = Field(default_factory=list)
+    folds: list[PredictiveModelFoldResponse] = Field(default_factory=list)
+    benchmark: NaiveBenchmarkEvaluationResponse | None = None
+    assumptions: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    unsupported_claims: list[str] = Field(default_factory=list)
+    is_eligible_for_strategy: bool = False
+    eligibility_reason: str = (
+        "Predictive Model is not eligible for a Strategy until the naive benchmark "
+        "comparison is complete."
+    )
 
 
 @dataclass(frozen=True)
@@ -798,6 +873,14 @@ class ExecutionModelAssumptionsRequest(BaseModel):
     schedule: Literal["daily"] = "daily"
     commission_rate: float = Field(default=0.0, ge=0)
     slippage_rate: float = Field(default=0.0, ge=0, lt=1)
+    allow_shorting: bool = True
+    borrow_fee_rate: float = Field(default=0.0, ge=0)
+    cash_interest_rate: float = Field(default=0.0, allow_inf_nan=False)
+    unavailable_borrow: list[str] = Field(default_factory=list)
+    max_leverage: float = Field(default=1.0, gt=0)
+    margin_requirement: float = Field(default=1.0, gt=0)
+    maintenance_margin: float = Field(default=0.25, ge=0)
+    leverage_mode: Literal["reject", "constrain"] = "reject"
 
 
 class BacktestRunRequest(BaseModel):
@@ -812,6 +895,7 @@ class BacktestRunRequest(BaseModel):
     starting_cash: float = Field(gt=0)
     parameters: dict[str, JsonValue] = Field(default_factory=dict)
     price_field: Literal["close", "open", "high", "low"] = "close"
+    calendar: Literal["US", "none"] = "none"
     execution: ExecutionModelAssumptionsRequest = Field(
         default_factory=ExecutionModelAssumptionsRequest
     )
@@ -868,6 +952,11 @@ class LedgerRowResponse(BaseModel):
     signal_weights: dict[str, float] = Field(default_factory=dict)
     gross_exposure: float = 0.0
     net_exposure: float = 0.0
+    borrow_fees: float = 0.0
+    cash_interest: float = 0.0
+    dividends: float = 0.0
+    splits: dict[str, float] = Field(default_factory=dict)
+    delistings: list[str] = Field(default_factory=list)
 
 
 class TradeResponse(BaseModel):
@@ -890,6 +979,38 @@ class EquityPointResponse(BaseModel):
     drawdown: float
 
 
+class ExecutionModelAssumptionsResponse(BaseModel):
+    schedule: str = "daily"
+    commission_rate: float = 0.0
+    slippage_rate: float = 0.0
+    allow_shorting: bool = True
+    borrow_fee_rate: float = 0.0
+    cash_interest_rate: float = 0.0
+    unavailable_borrow: list[str] = Field(default_factory=list)
+    max_leverage: float = 1.0
+    margin_requirement: float = 1.0
+    maintenance_margin: float = 0.25
+    leverage_mode: str = "reject"
+
+
+class BacktestSpecificationResponse(BaseModel):
+    strategy_name: str
+    strategy_revision: str
+    dataset_version_id: str
+    security_id: str = ""
+    start_date: str = ""
+    end_date: str = ""
+    starting_cash: float = 100000.0
+    parameters: dict[str, JsonValue] = Field(default_factory=dict)
+    price_field: str = "close"
+    calendar: str = "none"
+    execution: ExecutionModelAssumptionsResponse = Field(
+        default_factory=ExecutionModelAssumptionsResponse
+    )
+    universe: list[str] = Field(default_factory=list)
+    benchmark_security_id: str | None = None
+
+
 class BacktestMetricsResponse(BaseModel):
     total_return: float
     annualized_return: float
@@ -910,7 +1031,7 @@ class BacktestMetricsResponse(BaseModel):
 class BacktestResultResponse(BaseModel):
     run_id: str | None = None
     strategy_revision: str | None = None
-    specification: dict[str, JsonValue]
+    specification: BacktestSpecificationResponse
     signals: list[StrategyTargetResponse]
     fills: list[FillResponse]
     trades: list[TradeResponse]
@@ -1037,17 +1158,46 @@ def _predictive_artifact_response(
         parameters=artifact.parameters,
         seed=artifact.seed,
         training_metrics=metrics,
+        feature_definition=artifact.feature_definition,
+        preprocessing=artifact.preprocessing,
     )
 
 
 def _predictive_prediction_response(
-    prediction: PredictiveModelPrediction,
-) -> PredictiveModelPredictionResponse:
+    prediction: PredictiveModelOutput,
+) -> PredictiveModelPredictionResponse | PredictiveModelForecastResponse:
+    if isinstance(prediction, PredictiveModelForecast):
+        return PredictiveModelForecastResponse(
+            session_date=prediction.session_date,
+            feature_value=prediction.feature_value,
+            predicted_value=prediction.predicted_value,
+            actual_target=prediction.actual_target,
+            target_date=prediction.target_date,
+            period=prediction.period,
+        )
     return PredictiveModelPredictionResponse(
         session_date=prediction.session_date,
         feature_value=prediction.feature_value,
         predicted_value=prediction.predicted_value,
         actual_target=prediction.actual_target,
+        target_date=prediction.target_date,
+        period=prediction.period,
+    )
+
+
+def _predictive_fold_response(fold: PredictiveModelFold) -> PredictiveModelFoldResponse:
+    return PredictiveModelFoldResponse(
+        fold_index=fold.fold_index,
+        period=fold.period,
+        prediction_session_date=fold.prediction_session_date,
+        target_date=fold.target_date,
+        training_start=fold.training_start,
+        training_end=fold.training_end,
+        training_observations=fold.training_observations,
+        fit_scope=fold.fit_scope,
+        artifact=_predictive_artifact_response(fold.artifact),
+        prediction=_predictive_prediction_response(fold.prediction),
+        metrics=fold.metrics,
     )
 
 
@@ -1082,7 +1232,87 @@ def _predictive_run_response(
         completed_at=context.completed_at,
         as_of=context.as_of,
         out_of_sample_status=calculation.out_of_sample_status,
+        evaluation_mode=calculation.evaluation.mode,
+        splits=[
+            PredictiveModelSplitResponse(
+                period=split.period,
+                start=split.start,
+                end=split.end,
+                feature_start=split.feature_start,
+                feature_end=split.feature_end,
+                observations=split.observations,
+                labelled_observations=split.labelled_observations,
+                fit_scope=split.fit_scope,
+            )
+            for split in calculation.evaluation.splits
+        ],
+        period_metrics=[
+            PredictiveModelPeriodMetricsResponse(
+                period=period_metrics.period,
+                observations=period_metrics.observations,
+                metrics=period_metrics.metrics,
+                benchmark_metrics=period_metrics.benchmark_metrics,
+                comparison=period_metrics.comparison,
+                sample_scope=period_metrics.sample_scope,
+            )
+            for period_metrics in calculation.evaluation.period_metrics
+        ],
+        fold_artifacts=[
+            _predictive_artifact_response(fold_artifact)
+            for fold_artifact in calculation.fold_artifacts
+        ],
+        folds=[_predictive_fold_response(fold) for fold in calculation.evaluation.folds],
+        benchmark=(
+            NaiveBenchmarkEvaluationResponse(
+                name=calculation.evaluation.benchmark.name,
+                display_name=calculation.evaluation.benchmark.display_name,
+                description=calculation.evaluation.benchmark.description,
+                period_metrics=calculation.evaluation.benchmark.period_metrics,
+                out_of_sample_comparison=(
+                    calculation.evaluation.benchmark.out_of_sample_comparison
+                ),
+                completed=calculation.evaluation.benchmark.completed,
+            )
+            if calculation.evaluation.benchmark
+            else None
+        ),
+        assumptions=list(calculation.evaluation.assumptions),
+        warnings=list(calculation.evaluation.warnings),
+        limitations=list(calculation.evaluation.limitations),
+        unsupported_claims=list(calculation.evaluation.unsupported_claims),
+        is_eligible_for_strategy=calculation.evaluation.is_eligible_for_strategy,
+        eligibility_reason=calculation.evaluation.eligibility_reason,
     )
+
+
+def _normalize_predictive_model_result(
+    result: dict[str, JsonValue],
+) -> dict[str, JsonValue]:
+    """Fill period scope for legacy Runs without changing persisted artifacts."""
+    raw_period_metrics = result.get("period_metrics")
+    if not isinstance(raw_period_metrics, list):
+        return result
+
+    scopes = {
+        "training": "in_sample",
+        "validation": "validation",
+        "test": "out_of_sample",
+    }
+    normalized = dict(result)
+    normalized_period_metrics: list[JsonValue] = []
+    for raw_metric in raw_period_metrics:
+        if not isinstance(raw_metric, dict):
+            normalized_period_metrics.append(raw_metric)
+            continue
+        metric = dict(raw_metric)
+        if "sample_scope" not in metric:
+            period = metric.get("period")
+            scope = scopes.get(period) if isinstance(period, str) else None
+            if scope is not None:
+                metric["sample_scope"] = scope
+        normalized_period_metrics.append(metric)
+    normalized["period_metrics"] = normalized_period_metrics
+    return normalized
 
 
 def _predictive_model_calculation(
@@ -2348,6 +2578,25 @@ def create_app(
                 )
                 all_bars.extend(bench_bars)
 
+            all_corp_actions = []
+            for sec in resolved_securities:
+                actions_sec = market_store.corporate_actions(
+                    request.dataset_version_id, symbol=sec.security_id
+                )
+                if isinstance(actions_sec, list):
+                    all_corp_actions.extend(actions_sec)
+
+            for ver_cov in market_store.list_dataset_versions():
+                if ver_cov.id != request.dataset_version_id and (
+                    ver_cov.dataset_type == DATASET_TYPE_CORPORATE_ACTIONS or ver_cov.is_corporate_actions
+                ):
+                    for sec in resolved_securities:
+                        actions_sec = market_store.corporate_actions(
+                            ver_cov.id, symbol=sec.security_id
+                        )
+                        if isinstance(actions_sec, list):
+                            all_corp_actions.extend(actions_sec)
+
             universe_ids = tuple(sec.security_id for sec in resolved_securities)
             spec = BacktestSpecification(
                 strategy_name=request.strategy_name,
@@ -2360,14 +2609,23 @@ def create_app(
                 starting_cash=request.starting_cash,
                 parameters=request.parameters,
                 price_field=request.price_field,
+                calendar=request.calendar,
                 execution=ExecutionModelAssumptions(
                     schedule=request.execution.schedule,
                     commission_rate=request.execution.commission_rate,
                     slippage_rate=request.execution.slippage_rate,
+                    allow_shorting=request.execution.allow_shorting,
+                    borrow_fee_rate=request.execution.borrow_fee_rate,
+                    cash_interest_rate=request.execution.cash_interest_rate,
+                    unavailable_borrow=tuple(request.execution.unavailable_borrow),
+                    max_leverage=request.execution.max_leverage,
+                    margin_requirement=request.execution.margin_requirement,
+                    maintenance_margin=request.execution.maintenance_margin,
+                    leverage_mode=request.execution.leverage_mode,
                 ),
                 benchmark_security_id=bench_sec.security_id if bench_sec else None,
             )
-            result = run_backtest(spec, bars=all_bars)
+            result = run_backtest(spec, bars=all_bars, corporate_actions=all_corp_actions)
         except Exception as error:
             store.create_failed_backtest_run(
                 str(project_id),
@@ -2891,6 +3149,11 @@ def create_app(
                 artifact=calculation.artifact.to_json(),
                 predictions=[prediction.to_json() for prediction in calculation.predictions],
                 result=base_response.model_dump(mode="json"),
+                evaluation=calculation.evaluation.to_json(),
+                fold_artifacts=[
+                    fold_artifact.to_json() for fold_artifact in calculation.fold_artifacts
+                ],
+                folds=[fold.to_json() for fold in calculation.evaluation.folds],
             ),
         )
         return base_response.model_copy(update={"run_id": run_id})
@@ -2908,10 +3171,11 @@ def create_app(
             result = item.get("result")
             if not isinstance(result, dict):
                 continue
+            normalized_result = _normalize_predictive_model_result(result)
             responses.append(
                 PredictiveModelRunResponse.model_validate(
                     {
-                        **result,
+                        **normalized_result,
                         "run_id": item.get("run_id"),
                         "model_revision": item.get("model_revision"),
                         "status": "completed",
@@ -2943,11 +3207,64 @@ def create_app(
             )
         return PredictiveModelRunResponse.model_validate(
             {
-                **result,
+                **_normalize_predictive_model_result(result),
                 "run_id": item.get("run_id"),
                 "model_revision": item.get("model_revision"),
                 "status": "completed",
             }
+        )
+
+    @app.get(
+        "/api/projects/{project_id}/predictive-models/runs/{run_id}/export/{format_type}",
+        tags=["predictive-models"],
+        responses={
+            200: {
+                "content": {
+                    "text/html": {"schema": {"type": "string"}},
+                    "text/csv": {"schema": {"type": "string"}},
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "manifest": {
+                                    "type": "object",
+                                    "additionalProperties": True,
+                                },
+                                "predictive_model": {
+                                    "type": "object",
+                                    "additionalProperties": True,
+                                },
+                            },
+                            "required": ["manifest", "predictive_model"],
+                        }
+                    },
+                }
+            }
+        },
+    )
+    def export_predictive_model(
+        project_id: UUID,
+        run_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
+        format_type: Literal["html", "csv", "json"] = FastAPIPath(),
+    ) -> Response:
+        try:
+            artifact = store.get_predictive_model_export(
+                str(project_id), run_id, format_type
+            )
+        except FileNotFoundError as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(error),
+            ) from error
+        except ValueError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(error),
+            ) from error
+        return Response(
+            content=artifact.content,
+            media_type=artifact.media_type,
+            headers={"Content-Disposition": f'attachment; filename="{artifact.filename}"'},
         )
 
     @app.get(
@@ -2976,6 +3293,14 @@ def create_app(
     def evaluate_strategy_endpoint(
         request: StrategyEvaluateRequest,
     ) -> StrategyEvaluationResponse:
+        if {
+            "predictive_model_run_id",
+            "predictive_model_evaluation",
+        }.intersection(request.parameters):
+            raise StrategyEvaluationError(
+                "A saved Predictive Model Run reference is required before a "
+                "Strategy can use model output (MOD-009)."
+            )
         context = _strategy_market_view(market_store, request)
         evaluation = evaluate_strategy(
             name=request.name,
@@ -2998,6 +3323,28 @@ def create_app(
     def save_strategy_evaluation(
         project_id: UUID, request: StrategyEvaluateRequest
     ) -> SavedStrategyEvaluationResponse:
+        model_run_id = request.parameters.get("predictive_model_run_id")
+        evaluation_payload_present = "predictive_model_evaluation" in request.parameters
+        if evaluation_payload_present:
+            raise StrategyEvaluationError(
+                "Caller-supplied Predictive Model evaluations are not accepted. "
+                "Use a persisted Predictive Model Run reference (MOD-009)."
+            )
+        if model_run_id is not None:
+            if not isinstance(model_run_id, str) or not model_run_id.strip():
+                raise StrategyEvaluationError(
+                    "Predictive Model Run reference must be a non-empty saved Run ID "
+                    "(MOD-009)."
+                )
+            model_record = store.get_predictive_model_result(str(project_id), model_run_id)
+            if model_record is None:
+                raise StrategyEvaluationError(
+                    "Predictive Model Run not found. A saved, benchmark-verified Run "
+                    "is required before a Strategy can use model output (MOD-009)."
+                )
+            validate_model_eligibility_for_strategy(
+                model_record, require_persisted_run=True
+            )
         context = _strategy_market_view(market_store, request)
         evaluation = evaluate_strategy(
             name=request.name,

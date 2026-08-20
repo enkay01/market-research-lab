@@ -642,6 +642,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/predictive-models/runs/{run_id}/export/{format_type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Predictive Model */
+        get: operations["export_predictive_model_api_projects__project_id__predictive_models_runs__run_id__export__format_type__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/strategies": {
         parameters: {
             query?: never;
@@ -853,10 +870,7 @@ export interface components {
             run_id?: string | null;
             /** Strategy Revision */
             strategy_revision?: string | null;
-            /** Specification */
-            specification: {
-                [key: string]: components["schemas"]["JsonValue-Output"];
-            };
+            specification: components["schemas"]["BacktestSpecificationResponse"];
             /** Signals */
             signals: components["schemas"]["StrategyTargetResponse"][];
             /** Fills */
@@ -911,7 +925,61 @@ export interface components {
              * @enum {string}
              */
             price_field: "close" | "open" | "high" | "low";
+            /**
+             * Calendar
+             * @default none
+             * @enum {string}
+             */
+            calendar: "US" | "none";
             execution?: components["schemas"]["ExecutionModelAssumptionsRequest"];
+        };
+        /** BacktestSpecificationResponse */
+        BacktestSpecificationResponse: {
+            /** Strategy Name */
+            strategy_name: string;
+            /** Strategy Revision */
+            strategy_revision: string;
+            /** Dataset Version Id */
+            dataset_version_id: string;
+            /**
+             * Security Id
+             * @default
+             */
+            security_id: string;
+            /**
+             * Start Date
+             * @default
+             */
+            start_date: string;
+            /**
+             * End Date
+             * @default
+             */
+            end_date: string;
+            /**
+             * Starting Cash
+             * @default 100000
+             */
+            starting_cash: number;
+            /** Parameters */
+            parameters?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /**
+             * Price Field
+             * @default close
+             */
+            price_field: string;
+            /**
+             * Calendar
+             * @default none
+             */
+            calendar: string;
+            execution?: components["schemas"]["ExecutionModelAssumptionsResponse"];
+            /** Universe */
+            universe?: string[];
+            /** Benchmark Security Id */
+            benchmark_security_id?: string | null;
         };
         /** Body_import_dataset_api_datasets_post */
         Body_import_dataset_api_datasets_post: {
@@ -1244,6 +1312,99 @@ export interface components {
              * @default 0
              */
             slippage_rate: number;
+            /**
+             * Allow Shorting
+             * @default true
+             */
+            allow_shorting: boolean;
+            /**
+             * Borrow Fee Rate
+             * @default 0
+             */
+            borrow_fee_rate: number;
+            /**
+             * Cash Interest Rate
+             * @default 0
+             */
+            cash_interest_rate: number;
+            /** Unavailable Borrow */
+            unavailable_borrow?: string[];
+            /**
+             * Max Leverage
+             * @default 1
+             */
+            max_leverage: number;
+            /**
+             * Margin Requirement
+             * @default 1
+             */
+            margin_requirement: number;
+            /**
+             * Maintenance Margin
+             * @default 0.25
+             */
+            maintenance_margin: number;
+            /**
+             * Leverage Mode
+             * @default reject
+             * @enum {string}
+             */
+            leverage_mode: "reject" | "constrain";
+        };
+        /** ExecutionModelAssumptionsResponse */
+        ExecutionModelAssumptionsResponse: {
+            /**
+             * Schedule
+             * @default daily
+             */
+            schedule: string;
+            /**
+             * Commission Rate
+             * @default 0
+             */
+            commission_rate: number;
+            /**
+             * Slippage Rate
+             * @default 0
+             */
+            slippage_rate: number;
+            /**
+             * Allow Shorting
+             * @default true
+             */
+            allow_shorting: boolean;
+            /**
+             * Borrow Fee Rate
+             * @default 0
+             */
+            borrow_fee_rate: number;
+            /**
+             * Cash Interest Rate
+             * @default 0
+             */
+            cash_interest_rate: number;
+            /** Unavailable Borrow */
+            unavailable_borrow?: string[];
+            /**
+             * Max Leverage
+             * @default 1
+             */
+            max_leverage: number;
+            /**
+             * Margin Requirement
+             * @default 1
+             */
+            margin_requirement: number;
+            /**
+             * Maintenance Margin
+             * @default 0.25
+             */
+            maintenance_margin: number;
+            /**
+             * Leverage Mode
+             * @default reject
+             */
+            leverage_mode: string;
         };
         /** FCFFDCFInputResponse */
         FCFFDCFInputResponse: {
@@ -1675,6 +1836,51 @@ export interface components {
              * @default 0
              */
             net_exposure: number;
+            /**
+             * Borrow Fees
+             * @default 0
+             */
+            borrow_fees: number;
+            /**
+             * Cash Interest
+             * @default 0
+             */
+            cash_interest: number;
+            /**
+             * Dividends
+             * @default 0
+             */
+            dividends: number;
+            /** Splits */
+            splits?: {
+                [key: string]: number;
+            };
+            /** Delistings */
+            delistings?: string[];
+        };
+        /** NaiveBenchmarkEvaluationResponse */
+        NaiveBenchmarkEvaluationResponse: {
+            /** Name */
+            name: string;
+            /** Display Name */
+            display_name: string;
+            /** Description */
+            description: string;
+            /** Period Metrics */
+            period_metrics: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+            /** Out Of Sample Comparison */
+            out_of_sample_comparison: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /**
+             * Completed
+             * @default false
+             */
+            completed: boolean;
         };
         /** PositionSnapshotResponse */
         PositionSnapshotResponse: {
@@ -1717,6 +1923,58 @@ export interface components {
             training_metrics: {
                 [key: string]: number;
             };
+            /** Feature Definition */
+            feature_definition?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Preprocessing */
+            preprocessing?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+        };
+        /** PredictiveModelFoldResponse */
+        PredictiveModelFoldResponse: {
+            /** Fold Index */
+            fold_index: number;
+            /**
+             * Period
+             * @enum {string}
+             */
+            period: "validation" | "test";
+            /** Prediction Session Date */
+            prediction_session_date: string;
+            /** Target Date */
+            target_date: string | null;
+            /** Training Start */
+            training_start: string;
+            /** Training End */
+            training_end: string;
+            /** Training Observations */
+            training_observations: number;
+            /** Fit Scope */
+            fit_scope: string;
+            artifact: components["schemas"]["PredictiveModelArtifactResponse"];
+            /** Prediction */
+            prediction: components["schemas"]["PredictiveModelPredictionResponse"] | components["schemas"]["PredictiveModelForecastResponse"];
+            /** Metrics */
+            metrics: {
+                [key: string]: number;
+            };
+        };
+        /** PredictiveModelForecastResponse */
+        PredictiveModelForecastResponse: {
+            /** Session Date */
+            session_date: string;
+            /** Feature Value */
+            feature_value: number;
+            /** Predicted Value */
+            predicted_value: number;
+            /** Actual Target */
+            actual_target?: null;
+            /** Target Date */
+            target_date?: null;
+            /** Period */
+            period?: null;
         };
         /** PredictiveModelMetadataResponse */
         PredictiveModelMetadataResponse: {
@@ -1757,6 +2015,33 @@ export interface components {
             /** Options */
             options?: string[] | null;
         };
+        /** PredictiveModelPeriodMetricsResponse */
+        PredictiveModelPeriodMetricsResponse: {
+            /**
+             * Period
+             * @enum {string}
+             */
+            period: "training" | "validation" | "test";
+            /** Observations */
+            observations: number;
+            /** Metrics */
+            metrics: {
+                [key: string]: number;
+            };
+            /** Benchmark Metrics */
+            benchmark_metrics?: {
+                [key: string]: number;
+            };
+            /** Comparison */
+            comparison?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /**
+             * Sample Scope
+             * @enum {string}
+             */
+            sample_scope: "in_sample" | "validation" | "out_of_sample";
+        };
         /** PredictiveModelPredictionResponse */
         PredictiveModelPredictionResponse: {
             /** Session Date */
@@ -1766,7 +2051,11 @@ export interface components {
             /** Predicted Value */
             predicted_value: number;
             /** Actual Target */
-            actual_target: number | null;
+            actual_target: number;
+            /** Target Date */
+            target_date?: string | null;
+            /** Period */
+            period?: ("training" | "validation" | "test") | null;
         };
         /** PredictiveModelRunRequest */
         PredictiveModelRunRequest: {
@@ -1829,7 +2118,7 @@ export interface components {
             outputs: string[];
             artifact: components["schemas"]["PredictiveModelArtifactResponse"];
             /** Predictions */
-            predictions: components["schemas"]["PredictiveModelPredictionResponse"][];
+            predictions: (components["schemas"]["PredictiveModelPredictionResponse"] | components["schemas"]["PredictiveModelForecastResponse"])[];
             /** Metrics */
             metrics: {
                 [key: string]: number;
@@ -1844,6 +2133,61 @@ export interface components {
             as_of?: string | null;
             /** Out Of Sample Status */
             out_of_sample_status: string;
+            /**
+             * Evaluation Mode
+             * @default holdout
+             * @enum {string}
+             */
+            evaluation_mode: "holdout" | "expanding" | "rolling";
+            /** Splits */
+            splits?: components["schemas"]["PredictiveModelSplitResponse"][];
+            /** Period Metrics */
+            period_metrics?: components["schemas"]["PredictiveModelPeriodMetricsResponse"][];
+            /** Fold Artifacts */
+            fold_artifacts?: components["schemas"]["PredictiveModelArtifactResponse"][];
+            /** Folds */
+            folds?: components["schemas"]["PredictiveModelFoldResponse"][];
+            benchmark?: components["schemas"]["NaiveBenchmarkEvaluationResponse"] | null;
+            /** Assumptions */
+            assumptions?: string[];
+            /** Warnings */
+            warnings?: string[];
+            /** Limitations */
+            limitations?: string[];
+            /** Unsupported Claims */
+            unsupported_claims?: string[];
+            /**
+             * Is Eligible For Strategy
+             * @default false
+             */
+            is_eligible_for_strategy: boolean;
+            /**
+             * Eligibility Reason
+             * @default Predictive Model is not eligible for a Strategy until the naive benchmark comparison is complete.
+             */
+            eligibility_reason: string;
+        };
+        /** PredictiveModelSplitResponse */
+        PredictiveModelSplitResponse: {
+            /**
+             * Period
+             * @enum {string}
+             */
+            period: "training" | "validation" | "test";
+            /** Start */
+            start: string;
+            /** End */
+            end: string;
+            /** Feature Start */
+            feature_start: string;
+            /** Feature End */
+            feature_end: string;
+            /** Observations */
+            observations: number;
+            /** Labelled Observations */
+            labelled_observations: number;
+            /** Fit Scope */
+            fit_scope: string;
         };
         /** ProjectCreateRequest */
         ProjectCreateRequest: {
@@ -3798,6 +4142,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PredictiveModelRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_predictive_model_api_projects__project_id__predictive_models_runs__run_id__export__format_type__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                run_id: string;
+                format_type: "html" | "csv" | "json";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        manifest: {
+                            [key: string]: unknown;
+                        };
+                        predictive_model: {
+                            [key: string]: unknown;
+                        };
+                    };
+                    "text/html": string;
+                    "text/csv": string;
                 };
             };
             /** @description Validation Error */

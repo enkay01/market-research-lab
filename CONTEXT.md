@@ -48,6 +48,10 @@ _Avoid_: Signal, metric
 A fitted analytical definition that emits time-stamped forecasts or scores for a stated target and horizon without deciding portfolio positions.
 _Avoid_: Strategy, model, indicator
 
+**Naive Benchmark**:
+An explicit simple forecast rule that is evaluated over the same eligible periods as a Predictive Model for comparison.
+_Avoid_: Hidden baseline, hindsight benchmark
+
 **Strategy**:
 Explicit decision and position rules that transform only information available at a simulated or evaluation time into intended actions.
 _Avoid_: Algorithm, indicator, model
@@ -59,6 +63,14 @@ _Avoid_: Account, book, watchlist
 **Execution Model**:
 The explicit assumptions and constraints that translate desired portfolio changes into simulated orders, fills, costs, and rejections.
 _Avoid_: Strategy, broker, execution engine
+
+**Cash Interest**:
+A signed annualized Execution Model assumption applied to eligible cash-holding periods. A positive rate credits the Portfolio's cash. A negative rate charges it.
+_Avoid_: Cash yield, funding cost
+
+**Cost Attribution**:
+A Backtest Run breakdown of commissions, slippage, borrow fees, and cash interest, with the Portfolio impact of each category and the net result.
+_Avoid_: Total costs without categories
 
 **Signal**:
 A time-stamped Strategy output that identifies an intended action or state without executing an order.

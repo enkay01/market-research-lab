@@ -209,6 +209,10 @@ def test_ledger_arithmetic_holds_every_row():
 
 def test_deterministic_replay_is_identical():
     spec = make_spec("2024-01-02", "2024-01-14", 100000.0)
+    spec = dataclasses.replace(
+        spec,
+        execution=dataclasses.replace(spec.execution, cash_interest_rate=0.252),
+    )
     bars = make_round_trip_bars()
 
     first = run_backtest(spec, bars=bars)
@@ -239,10 +243,122 @@ def test_commission_and_slippage_applied():
     assert buy.price == pytest.approx(bars[4].open * (1 + 0.001))
     assert buy.commission == pytest.approx(abs(buy.notional) * 0.01)
     assert buy.slippage_cost == pytest.approx(abs(buy.quantity) * bars[4].open * 0.001)
+    buy_ledger_row = next(row for row in result.ledger if row.session_date == buy.session_date)
+    assert buy_ledger_row.cash == pytest.approx(
+        100000.0 - buy.notional - buy.commission, abs=0.01
+    )
 
     sell = result.fills[1]
     assert sell.price == pytest.approx(bars[9].open * (1 - 0.001))
     assert sell.commission == pytest.approx(abs(sell.notional) * 0.01)
+
+
+def test_cash_interest_is_signed_and_starts_after_the_first_eligible_bar():
+    closes = [10.0] * 5
+    bars = [make_bar(d, close, close) for d, close in zip(make_dates(len(closes)), closes)]
+    daily_rate = 0.252
+    spec = make_spec(bars[0].session_date, bars[-1].session_date, 1000.0)
+    spec = dataclasses.replace(
+        spec,
+        execution=dataclasses.replace(
+            spec.execution,
+            cash_interest_rate=daily_rate,
+        ),
+    )
+
+    positive = run_backtest(spec, bars=bars)
+    positive_interest = [row.cash_interest for row in positive.ledger]
+    assert positive_interest[0] == 0.0
+    assert positive_interest[1] == pytest.approx(1.0)
+    assert positive.ledger[-1].cash == pytest.approx(
+        1000.0 * (1.0 + daily_rate / 252.0) ** 4
+    )
+    assert positive.manifest["cash_interest_periods"] == 4
+    assert positive.manifest["costs"]["total_cash_interest"] == pytest.approx(
+        sum(positive_interest), abs=0.0001
+    )
+
+    negative_spec = dataclasses.replace(
+        spec,
+        execution=dataclasses.replace(
+            spec.execution,
+            cash_interest_rate=-daily_rate,
+        ),
+    )
+    negative = run_backtest(negative_spec, bars=bars)
+    assert negative.ledger[0].cash_interest == 0.0
+    assert negative.ledger[1].cash_interest == pytest.approx(-1.0)
+    assert negative.ledger[-1].cash < 1000.0
+
+
+def test_cash_interest_does_not_accrue_before_the_simulation_window():
+    bars = [make_bar(d, 10.0, 10.0) for d in make_dates(5)]
+    spec = make_spec(bars[2].session_date, bars[-1].session_date, 1000.0)
+    spec = dataclasses.replace(
+        spec,
+        execution=dataclasses.replace(spec.execution, cash_interest_rate=0.252),
+    )
+
+    result = run_backtest(spec, bars=bars)
+
+    assert len(result.ledger) == 3
+    assert result.ledger[0].cash_interest == 0.0
+    assert result.manifest["cash_interest_periods"] == 2
+
+
+def test_cash_interest_ignores_benchmark_eligibility_timestamps():
+    portfolio_bars = [
+        dataclasses.replace(
+            make_bar(d, 10.0, 10.0),
+            available_at="2024-01-10T21:00:00Z",
+        )
+        for d in make_dates(3)
+    ]
+    benchmark_bar = dataclasses.replace(
+        portfolio_bars[1],
+        security_id="SPY",
+        available_at="2024-01-11T21:00:00Z",
+    )
+    spec = make_spec(portfolio_bars[0].session_date, portfolio_bars[-1].session_date, 1000.0)
+    spec = dataclasses.replace(
+        spec,
+        benchmark_security_id="SPY",
+        execution=dataclasses.replace(spec.execution, cash_interest_rate=0.252),
+    )
+
+    result = run_backtest(spec, bars=[*portfolio_bars, benchmark_bar])
+
+    assert result.manifest["cash_interest_periods"] == 0
+    assert all(row.cash_interest == 0.0 for row in result.ledger)
+
+
+def test_cost_manifest_reports_each_category_and_signed_portfolio_impact():
+    spec = make_spec("2024-01-02", "2024-01-14", 100000.0)
+    spec = dataclasses.replace(
+        spec,
+        execution=dataclasses.replace(
+            spec.execution,
+            commission_rate=0.01,
+            slippage_rate=0.001,
+            cash_interest_rate=0.252,
+        ),
+    )
+
+    result = run_backtest(spec, bars=make_round_trip_bars())
+    costs = result.manifest["costs"]
+
+    assert costs["total_commission"] > 0.0
+    assert costs["total_slippage"] > 0.0
+    assert costs["total_cash_interest"] > 0.0
+    assert costs["total_costs"] == pytest.approx(
+        costs["total_commission"]
+        + costs["total_slippage"]
+        + costs["total_borrow_fees"]
+        - costs["total_cash_interest"],
+        abs=0.0001,
+    )
+    assert costs["portfolio_impact"]["cash_interest"] == costs["total_cash_interest"]
+    assert costs["portfolio_impact"]["net"] == pytest.approx(-costs["total_costs"])
 
 
 def test_next_bar_fill_uses_open_not_close():
@@ -310,6 +426,8 @@ def test_backtest_html_report_and_csv_generation():
     assert "Out-of-sample (Point-in-time sequential simulation)" in html_report
     assert "Performance Overview" in html_report
     assert "Execution Model &amp; Strategy Assumptions" in html_report or "Execution Model & Strategy Assumptions" in html_report
+    assert "Cash Interest Rate" in html_report
+    assert "Cost Attribution" in html_report
     assert "Closed Trades" in html_report
     assert "Simulated Execution Fills" in html_report
     assert "Daily Mark-to-Market Ledger" in html_report
@@ -320,6 +438,8 @@ def test_backtest_html_report_and_csv_generation():
     assert "Closed Trades" in csv_report
     assert "Simulated Fills" in csv_report
     assert "Daily Portfolio Ledger" in csv_report
+    assert "Cash Interest" in csv_report
+    assert "Portfolio Impact - Cash Interest" in csv_report
     assert "AAPL" in csv_report
 
     # Test report and CSV with explicit warnings

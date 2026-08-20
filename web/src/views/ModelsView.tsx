@@ -47,6 +47,44 @@ interface ModelsViewProps {
   project?: Project;
 }
 
+type CompletedBenchmark = NonNullable<PredictiveModelRun["benchmark"]>;
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
+function isCompleteBenchmark(
+  benchmark: PredictiveModelRun["benchmark"],
+): benchmark is CompletedBenchmark {
+  const comparison = benchmark?.out_of_sample_comparison;
+  if (!benchmark || !comparison || benchmark.completed !== true) {
+    return false;
+  }
+  const comparisonMetricNames = [
+    "model_rmse",
+    "benchmark_rmse",
+    "rmse_improvement",
+    "model_mae",
+    "benchmark_mae",
+    "mae_improvement",
+    "model_r2",
+    "benchmark_r2",
+  ];
+  const testMetrics = benchmark.period_metrics.test;
+  return (
+    comparison.benchmark_name === benchmark.name &&
+    comparison.period === "test" &&
+    comparison.sample_scope === "out_of_sample" &&
+    comparison.status === "evaluated" &&
+    isFiniteNumber(comparison.observations) &&
+    comparison.observations > 0 &&
+    comparison.same_eligible_periods === true &&
+    comparison.comparison_complete === true &&
+    typeof comparison.outperforms_benchmark === "boolean" &&
+    testMetrics !== undefined &&
+    ["mae", "rmse", "r2"].every((name) => isFiniteNumber(testMetrics[name])) &&
+    comparisonMetricNames.every((name) => isFiniteNumber(comparison[name]))
+  );
+}
+
 export function ModelsView({ project }: ModelsViewProps) {
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"indicators" | "predictive" | "strategies">("indicators");
 
@@ -217,7 +255,7 @@ export function ModelsView({ project }: ModelsViewProps) {
     for (const p of currentStrategy.parameters) {
       defaults[p.name] = (p.default as string | number) ?? (p.param_type === "int" ? 20 : "sma");
     }
-    setStrategyParams((prev) => ({ ...defaults, ...prev }));
+    setStrategyParams(defaults);
   }, [currentStrategy]);
 
   useEffect(() => {
@@ -228,7 +266,7 @@ export function ModelsView({ project }: ModelsViewProps) {
         defaults[parameter.name] = parameter.default;
       }
     }
-    setPredictiveParams((previous) => ({ ...defaults, ...previous }));
+    setPredictiveParams(defaults);
   }, [currentPredictiveModel]);
 
   async function handleCalculate() {
@@ -510,6 +548,11 @@ export function ModelsView({ project }: ModelsViewProps) {
   }, [series]);
 
   const activeHoveredPoint = hoveredIndex !== null && series ? series.points[hoveredIndex] : null;
+  const benchmarkComplete = isCompleteBenchmark(predictiveResult?.benchmark);
+  const benchmarkComparison = predictiveResult?.benchmark?.out_of_sample_comparison;
+  const rmseTie =
+    benchmarkComplete &&
+    benchmarkComparison?.model_rmse === benchmarkComparison?.benchmark_rmse;
 
   return (
     <Layout
@@ -1074,9 +1117,103 @@ export function ModelsView({ project }: ModelsViewProps) {
                           label={`In-Sample R² ${predictiveResult.metrics.in_sample_r2.toFixed(3)}`}
                           color="green"
                         />
-                        <Token label="OOS Pending Issue #33" color="orange" />
+                        <Token
+                          label={`Chronological ${predictiveResult.evaluation_mode} evaluation`}
+                          color="orange"
+                        />
+                        {predictiveResult.benchmark && (
+                          <Token
+                            label={
+                              benchmarkComplete
+                                ? predictiveResult.benchmark.display_name
+                                : "Benchmark Not Evaluated"
+                            }
+                            color={benchmarkComplete ? "purple" : "orange"}
+                          />
+                        )}
+                        {benchmarkComplete && benchmarkComparison && (
+                          <Token
+                            label={
+                              benchmarkComparison.outperforms_benchmark
+                                ? "Outperforms Benchmark"
+                                : rmseTie
+                                  ? "Matches Benchmark"
+                                  : "Underperforms Benchmark"
+                            }
+                            color={
+                              benchmarkComparison.outperforms_benchmark
+                                ? "green"
+                                : rmseTie
+                                  ? "purple"
+                                  : "orange"
+                            }
+                          />
+                        )}
                       </HStack>
                     </HStack>
+
+                    {predictiveResult.benchmark && (
+                      <Card padding={4}>
+                        <VStack gap={3}>
+                          <HStack justify="between" align="center" style={{ flexWrap: "wrap" }}>
+                            <Heading level={4}>Naive Benchmark Comparison</Heading>
+                            <Token
+                              label={
+                                benchmarkComplete && predictiveResult.is_eligible_for_strategy
+                                  ? "Strategy Feeding: Eligible (MOD-009)"
+                                  : "Strategy Feeding: Ineligible"
+                              }
+                              color={benchmarkComplete && predictiveResult.is_eligible_for_strategy ? "green" : "red"}
+                            />
+                          </HStack>
+                          <Text>
+                            {benchmarkComplete
+                              ? predictiveResult.benchmark.description
+                              : "Not evaluated. Complete the out-of-sample benchmark comparison before this model can feed a Strategy."}
+                          </Text>
+                          {benchmarkComplete && benchmarkComparison ? (
+                            <HStack gap={4} style={{ flexWrap: "wrap" }}>
+                            <VStack gap={0}>
+                              <Text type="supporting">Out-of-Sample Model RMSE</Text>
+                              <Text weight="bold">
+                                {typeof benchmarkComparison.model_rmse === "number"
+                                  ? benchmarkComparison.model_rmse.toFixed(6)
+                                  : "—"}
+                              </Text>
+                            </VStack>
+                            <VStack gap={0}>
+                              <Text type="supporting">Benchmark RMSE</Text>
+                              <Text weight="bold">
+                                {typeof benchmarkComparison.benchmark_rmse === "number"
+                                  ? benchmarkComparison.benchmark_rmse.toFixed(6)
+                                  : "—"}
+                              </Text>
+                            </VStack>
+                            <VStack gap={0}>
+                              <Text type="supporting">RMSE Improvement</Text>
+                              <Text weight="bold">
+                                {typeof benchmarkComparison.rmse_improvement === "number"
+                                  ? `${(benchmarkComparison.rmse_improvement * 100).toFixed(2)}%`
+                                  : "—"}
+                              </Text>
+                            </VStack>
+                            <VStack gap={0}>
+                              <Text type="supporting">Outperformance Status</Text>
+                              <Text weight="bold">
+                                {benchmarkComparison.outperforms_benchmark
+                                  ? "Yes (Lower RMSE)"
+                                  : rmseTie
+                                    ? "Matches Benchmark"
+                                    : "No (Higher RMSE)"}
+                              </Text>
+                            </VStack>
+                            </HStack>
+                          ) : (
+                            <Text type="supporting">Benchmark metrics are unavailable for this Run.</Text>
+                          )}
+                        </VStack>
+                      </Card>
+                    )}
 
                     <Card padding={4}>
                       <VStack gap={3}>
@@ -1094,12 +1231,144 @@ export function ModelsView({ project }: ModelsViewProps) {
                       </VStack>
                     </Card>
 
+                    <VStack gap={3}>
+                      <Heading level={4}>Chronological Evaluation</Heading>
+                      <Text type="supporting">
+                        The initial fit uses training observations only. Each later fold uses only data available before its decision session. Metric scope: training is in-sample; validation and out-of-sample test are held out.
+                      </Text>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHeaderCell>Period</TableHeaderCell>
+                            <TableHeaderCell>Target Dates</TableHeaderCell>
+                            <TableHeaderCell>Feature Dates</TableHeaderCell>
+                            <TableHeaderCell>Observations</TableHeaderCell>
+                            <TableHeaderCell>Model RMSE</TableHeaderCell>
+                            <TableHeaderCell>Benchmark RMSE</TableHeaderCell>
+                            <TableHeaderCell>RMSE Improvement</TableHeaderCell>
+                            <TableHeaderCell>Model R²</TableHeaderCell>
+                            <TableHeaderCell>Benchmark R²</TableHeaderCell>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {(predictiveResult.splits ?? []).map((split) => {
+                            const periodItem = (predictiveResult.period_metrics ?? []).find(
+                              (item) => item.period === split.period,
+                            );
+                            const metrics = periodItem?.metrics;
+                            const benchMetrics = periodItem?.benchmark_metrics;
+                            const comp = periodItem?.comparison;
+                            const rmseImpr = typeof comp?.rmse_improvement === "number"
+                              ? `${(comp.rmse_improvement * 100).toFixed(2)}%`
+                              : "—";
+                            return (
+                              <TableRow key={split.period}>
+                                <TableCell>{split.period === "test" ? "out-of-sample (test)" : split.period}</TableCell>
+                                <TableCell>{split.start} to {split.end}</TableCell>
+                                <TableCell>{split.feature_start} to {split.feature_end}</TableCell>
+                                <TableCell>{split.observations}</TableCell>
+                                <TableCell>{metrics?.rmse?.toFixed(6) ?? "—"}</TableCell>
+                                <TableCell>{benchMetrics?.rmse?.toFixed(6) ?? "—"}</TableCell>
+                                <TableCell>{rmseImpr}</TableCell>
+                                <TableCell>{metrics?.r2?.toFixed(3) ?? "—"}</TableCell>
+                                <TableCell>{benchMetrics?.r2?.toFixed(3) ?? "—"}</TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </VStack>
+
+                    {/* Preserved Assumptions, Warnings, Limitations, and Claims (REP-006) */}
+                    <HStack gap={4} style={{ flexWrap: "wrap", alignItems: "stretch" }}>
+                      {predictiveResult.assumptions && predictiveResult.assumptions.length > 0 && (
+                        <Card padding={3} style={{ flex: "1 1 280px" }}>
+                          <VStack gap={2}>
+                            <Text weight="bold">Assumptions</Text>
+                            {predictiveResult.assumptions.map((a, i) => (
+                              <Text type="supporting" key={i}>• {a}</Text>
+                            ))}
+                          </VStack>
+                        </Card>
+                      )}
+                      {predictiveResult.warnings && predictiveResult.warnings.length > 0 && (
+                        <Card padding={3} style={{ flex: "1 1 280px" }}>
+                          <VStack gap={2}>
+                            <Text weight="bold">Warnings</Text>
+                            {predictiveResult.warnings.map((w, i) => (
+                              <Text type="supporting" key={i}>• {w}</Text>
+                            ))}
+                          </VStack>
+                        </Card>
+                      )}
+                      {predictiveResult.limitations && predictiveResult.limitations.length > 0 && (
+                        <Card padding={3} style={{ flex: "1 1 280px" }}>
+                          <VStack gap={2}>
+                            <Text weight="bold">Limitations</Text>
+                            {predictiveResult.limitations.map((l, i) => (
+                              <Text type="supporting" key={i}>• {l}</Text>
+                            ))}
+                          </VStack>
+                        </Card>
+                      )}
+                      {predictiveResult.unsupported_claims && predictiveResult.unsupported_claims.length > 0 && (
+                        <Card padding={3} style={{ flex: "1 1 280px" }}>
+                          <VStack gap={2}>
+                            <Text weight="bold">Unsupported Claims</Text>
+                            {predictiveResult.unsupported_claims.map((c, i) => (
+                              <Text type="supporting" key={i}>• {c}</Text>
+                            ))}
+                          </VStack>
+                        </Card>
+                      )}
+                    </HStack>
+
+                    {(predictiveResult.folds ?? []).length > 0 && (
+                      <VStack gap={3}>
+                        <Heading level={4}>Walk-forward Folds</Heading>
+                        <Text type="supporting">
+                          Each fold stores the fitted artifact, the prediction it produced, and the
+                          training observations eligible before that prediction session.
+                        </Text>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHeaderCell>Fold</TableHeaderCell>
+                              <TableHeaderCell>Period</TableHeaderCell>
+                              <TableHeaderCell>Prediction Session</TableHeaderCell>
+                              <TableHeaderCell>Target Date</TableHeaderCell>
+                              <TableHeaderCell>Training Range</TableHeaderCell>
+                              <TableHeaderCell>Observations</TableHeaderCell>
+                              <TableHeaderCell>MAE</TableHeaderCell>
+                              <TableHeaderCell>RMSE</TableHeaderCell>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {predictiveResult.folds.map((fold) => (
+                              <TableRow key={fold.fold_index}>
+                                <TableCell>{fold.fold_index}</TableCell>
+                                <TableCell>{fold.period === "test" ? "out-of-sample" : fold.period}</TableCell>
+                                <TableCell>{fold.prediction_session_date}</TableCell>
+                                <TableCell>{fold.target_date ?? "Not available"}</TableCell>
+                                <TableCell>{fold.training_start} to {fold.training_end}</TableCell>
+                                <TableCell>{fold.training_observations}</TableCell>
+                                <TableCell>{fold.metrics["mae"]?.toFixed(6) ?? "Not available"}</TableCell>
+                                <TableCell>{fold.metrics["rmse"]?.toFixed(6) ?? "Not available"}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </VStack>
+                    )}
+
                     <VStack gap={2}>
                       <Heading level={4}>Timestamped Model Output</Heading>
                       <Table>
                         <TableHeader>
                           <TableRow>
                             <TableHeaderCell>Session Date</TableHeaderCell>
+                            <TableHeaderCell>Period</TableHeaderCell>
+                            <TableHeaderCell>Target Date</TableHeaderCell>
                             <TableHeaderCell>Momentum Feature</TableHeaderCell>
                             <TableHeaderCell>Predicted Next Return</TableHeaderCell>
                             <TableHeaderCell>Actual Next Return</TableHeaderCell>
@@ -1109,12 +1378,18 @@ export function ModelsView({ project }: ModelsViewProps) {
                           {predictiveResult.predictions.map((prediction) => (
                             <TableRow key={prediction.session_date}>
                               <TableCell>{prediction.session_date}</TableCell>
+                              <TableCell>
+                                {prediction.period === "test"
+                                  ? "out-of-sample"
+                                  : prediction.period ?? "Not labelled"}
+                              </TableCell>
+                              <TableCell>{prediction.target_date ?? "Not available"}</TableCell>
                               <TableCell>{prediction.feature_value.toFixed(6)}</TableCell>
                               <TableCell>
                                 <Token label={prediction.predicted_value.toFixed(6)} color="blue" />
                               </TableCell>
                               <TableCell>
-                                {prediction.actual_target === null
+                                {prediction.actual_target == null
                                   ? "Not available yet"
                                   : prediction.actual_target.toFixed(6)}
                               </TableCell>
@@ -1283,29 +1558,58 @@ export function ModelsView({ project }: ModelsViewProps) {
                 {currentPredictiveModel && (
                   <VStack gap={3}>
                     <Heading level={4}>Typed Parameters</Heading>
-                    {currentPredictiveModel.parameters.map((parameter) => (
-                      <VStack gap={1} key={parameter.name}>
-                        <TextInput
-                          label={`${parameter.name} (${parameter.param_type})`}
-                          value={String(predictiveParams[parameter.name] ?? parameter.default ?? "")}
-                          onChange={(val) =>
-                            setPredictiveParams((previous) => ({
-                              ...previous,
-                              [parameter.name]: typeof val === "string" ? val : "",
-                            }))
-                          }
-                        />
-                        <Text type="supporting">
-                          {parameter.description}
-                          {parameter.min_value !== null ? ` (min: ${parameter.min_value}` : ""}
-                          {parameter.max_value !== null
-                            ? `, max: ${parameter.max_value})`
-                            : parameter.min_value !== null
-                              ? ")"
-                              : ""}
-                        </Text>
-                      </VStack>
-                    ))}
+                    {currentPredictiveModel.parameters.map((parameter) => {
+                      if (parameter.options && parameter.options.length > 0) {
+                        return (
+                          <VStack gap={1} key={parameter.name}>
+                            <Text weight="medium">{parameter.name}</Text>
+                            <SegmentedControl
+                              label={parameter.name}
+                              value={String(predictiveParams[parameter.name] ?? parameter.default)}
+                              onChange={(val) =>
+                                setPredictiveParams((previous) => ({
+                                  ...previous,
+                                  [parameter.name]: val,
+                                }))
+                              }
+                            >
+                              {parameter.options.map((option) => (
+                                <SegmentedControlItem
+                                  key={option}
+                                  value={option}
+                                  label={option.toUpperCase()}
+                                />
+                              ))}
+                            </SegmentedControl>
+                            <Text type="supporting">{parameter.description}</Text>
+                          </VStack>
+                        );
+                      }
+
+                      return (
+                        <VStack gap={1} key={parameter.name}>
+                          <TextInput
+                            label={`${parameter.name} (${parameter.param_type})`}
+                            value={String(predictiveParams[parameter.name] ?? parameter.default ?? "")}
+                            onChange={(val) =>
+                              setPredictiveParams((previous) => ({
+                                ...previous,
+                                [parameter.name]: typeof val === "string" ? val : "",
+                              }))
+                            }
+                          />
+                          <Text type="supporting">
+                            {parameter.description}
+                            {parameter.min_value !== null ? ` (min: ${parameter.min_value}` : ""}
+                            {parameter.max_value !== null
+                              ? `, max: ${parameter.max_value})`
+                              : parameter.min_value !== null
+                                ? ")"
+                                : ""}
+                          </Text>
+                        </VStack>
+                      );
+                    })}
                   </VStack>
                 )}
 

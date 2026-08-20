@@ -8,7 +8,7 @@ import os
 import re
 import shutil
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -93,6 +93,9 @@ class PredictiveModelRunRecord:
     artifact: dict[str, JsonValue]
     predictions: list[dict[str, JsonValue]]
     result: dict[str, JsonValue]
+    evaluation: dict[str, JsonValue] = field(default_factory=dict)
+    fold_artifacts: list[dict[str, JsonValue]] = field(default_factory=list)
+    folds: list[dict[str, JsonValue]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -546,8 +549,12 @@ class ProjectStore:
         record: PredictiveModelRunRecord,
     ) -> str:
         """Persist a completed Predictive Model Run and its reproducibility artifacts."""
+        from .reporting import generate_predictive_model_csv, generate_predictive_model_html_report
+
         run_id = self.create_run(project_id)
         run_directory = self._directory(project_id) / "runs" / run_id
+        evaluation_summary = dict(record.evaluation)
+        evaluation_summary.pop("folds", None)
         manifest = {
             "id": run_id,
             "kind": "predictive_model",
@@ -556,6 +563,7 @@ class ProjectStore:
             "parameters": record.parameters,
             "as_of": record.as_of,
             "completed_at": record.completed_at,
+            "evaluation": evaluation_summary,
             "software_revision": "uncommitted",
             "environment": {"python": os.sys.version},
         }
@@ -571,8 +579,14 @@ class ProjectStore:
                     "model_revision": record.model_revision,
                     "artifact": record.artifact,
                     "predictions": record.predictions,
+                    "evaluation": evaluation_summary,
+                    "fold_artifacts": record.fold_artifacts,
                 }
             )
+            persisted_result.pop("folds", None)
+            report_result = dict(persisted_result)
+            report_result["evaluation"] = record.evaluation
+            report_result["folds"] = record.folds
             self._write_json(
                 temporary_artifacts / "predictive_model.json", persisted_result
             )
@@ -580,6 +594,22 @@ class ProjectStore:
             self._write_json(
                 temporary_artifacts / "predictions.json",
                 {"predictions": record.predictions},
+            )
+            self._write_json(
+                temporary_artifacts / "fold_artifacts.json",
+                {"artifacts": record.fold_artifacts},
+            )
+            self._write_json(
+                temporary_artifacts / "folds.json",
+                {"folds": record.folds},
+            )
+            (temporary_artifacts / "predictive_model_report.html").write_text(
+                generate_predictive_model_html_report(report_result, manifest),
+                encoding="utf-8",
+            )
+            (temporary_artifacts / "summary.csv").write_text(
+                generate_predictive_model_csv(report_result),
+                encoding="utf-8",
             )
             shutil.rmtree(run_directory / "artifacts")
             os.replace(temporary_artifacts, run_directory / "artifacts")
@@ -668,21 +698,88 @@ class ProjectStore:
         self.get_project(project_id)
         return self._read_predictive_model_result(self._directory(project_id) / "runs" / run_id)
 
+    def get_predictive_model_export(
+        self, project_id: str, run_id: str, format_type: str
+    ) -> ExportArtifact:
+        """Return an HTML, CSV, or manifest export for a Predictive Model Run."""
+        self.get_project(project_id)
+        run_dir = self._directory(project_id) / "runs" / run_id
+        if not run_dir.is_dir():
+            raise ProjectNotFoundError(f"Run {run_id} not found in project {project_id}")
+
+        norm_fmt = format_type.lower().strip()
+        if norm_fmt in ("html", "report"):
+            report_path = run_dir / "artifacts" / "predictive_model_report.html"
+            if report_path.is_file():
+                return ExportArtifact(
+                    content=report_path.read_text(encoding="utf-8"),
+                    media_type="text/html",
+                    filename=f"predictive_model_{run_id}.html",
+                )
+            raise FileNotFoundError(f"HTML report not found for run {run_id}")
+        if norm_fmt == "csv":
+            csv_path = run_dir / "artifacts" / "summary.csv"
+            if csv_path.is_file():
+                return ExportArtifact(
+                    content=csv_path.read_text(encoding="utf-8"),
+                    media_type="text/csv",
+                    filename=f"predictive_model_{run_id}.csv",
+                )
+            raise FileNotFoundError(f"CSV export not found for run {run_id}")
+        if norm_fmt in ("json", "manifest"):
+            manifest_path = run_dir / "manifest.json"
+            artifact_path = run_dir / "artifacts" / "predictive_model.json"
+            folds_path = run_dir / "artifacts" / "folds.json"
+            predictive_model = (
+                json.loads(artifact_path.read_text(encoding="utf-8"))
+                if artifact_path.is_file()
+                else {}
+            )
+            if folds_path.is_file() and isinstance(predictive_model, dict):
+                folds_document = json.loads(folds_path.read_text(encoding="utf-8"))
+                if isinstance(folds_document, dict):
+                    predictive_model["folds"] = folds_document.get("folds", [])
+            combined = {
+                "manifest": json.loads(manifest_path.read_text(encoding="utf-8"))
+                if manifest_path.is_file()
+                else {},
+                "predictive_model": predictive_model,
+            }
+            return ExportArtifact(
+                content=json.dumps(combined, indent=2),
+                media_type="application/json",
+                filename=f"predictive_model_manifest_{run_id}.json",
+            )
+
+        raise ValueError(f"Unsupported export format: {format_type}. Supported: json, csv, html")
+
     @staticmethod
     def _read_predictive_model_result(run_dir: Path) -> dict[str, JsonValue] | None:
         manifest_path = run_dir / "manifest.json"
         status_path = run_dir / "status.json"
         artifact_path = run_dir / "artifacts" / "predictive_model.json"
+        folds_path = run_dir / "artifacts" / "folds.json"
         if not (manifest_path.is_file() and status_path.is_file() and artifact_path.is_file()):
             return None
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             status_data = json.loads(status_path.read_text(encoding="utf-8"))
             result = json.loads(artifact_path.read_text(encoding="utf-8"))
+            folds_document = (
+                json.loads(folds_path.read_text(encoding="utf-8"))
+                if folds_path.is_file()
+                else {}
+            )
         except (OSError, json.JSONDecodeError):
             return None
         if manifest.get("kind") != "predictive_model" or status_data.get("status") != "completed":
             return None
+        if (
+            isinstance(result, dict)
+            and "folds" not in result
+            and isinstance(folds_document, dict)
+        ):
+            result["folds"] = folds_document.get("folds", [])
         revisions = manifest.get("definition_revisions", [])
         model_revision = str(revisions[0]) if revisions else ""
         return {

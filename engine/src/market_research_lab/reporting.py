@@ -7,6 +7,7 @@ import html
 import io
 
 from .json_types import JsonValue
+from .predictive_models import is_naive_benchmark_comparison_complete
 
 
 def generate_valuation_html_report(
@@ -385,6 +386,414 @@ def generate_valuation_csv(result_data: dict[str, JsonValue]) -> str:
     return output.getvalue()
 
 
+def generate_predictive_model_html_report(
+    result_data: dict[str, JsonValue],
+    manifest_data: dict[str, JsonValue],
+) -> str:
+    """Generate a self-contained report with labelled chronological model metrics."""
+    model_name = html.escape(
+        str(result_data.get("display_name") or result_data.get("model_name") or "Predictive Model")
+    )
+    run_id = html.escape(str(result_data.get("run_id") or manifest_data.get("id") or "N/A"))
+    revision_values = manifest_data.get("definition_revisions")
+    revisions = revision_values if isinstance(revision_values, list) else []
+    revision = html.escape(
+        str(result_data.get("model_revision") or (revisions[0] if revisions else "unversioned"))
+    )
+    datasets_raw = manifest_data.get("dataset_versions")
+    datasets = datasets_raw if isinstance(datasets_raw, list) else []
+    evaluation_raw = result_data.get("evaluation")
+    evaluation = evaluation_raw if isinstance(evaluation_raw, dict) else {}
+    splits_raw = evaluation.get("splits") or result_data.get("splits")
+    splits = splits_raw if isinstance(splits_raw, list) else []
+    metrics_raw = evaluation.get("period_metrics") or result_data.get("period_metrics")
+    period_metrics = metrics_raw if isinstance(metrics_raw, list) else []
+    folds_raw = evaluation.get("folds") or result_data.get("folds")
+    folds = folds_raw if isinstance(folds_raw, list) else []
+    parameters_raw = manifest_data.get("parameters")
+    parameters = parameters_raw if isinstance(parameters_raw, dict) else {}
+    preprocessing = (
+        result_data.get("artifact", {}).get("preprocessing", {})
+        if isinstance(result_data.get("artifact"), dict)
+        else {}
+    )
+    evaluation_mode = html.escape(
+        str(evaluation.get("mode") or result_data.get("evaluation_mode") or "holdout")
+    )
+    warnings_raw = evaluation.get("warnings") or result_data.get("warnings")
+    warnings = warnings_raw if isinstance(warnings_raw, list) else []
+
+    benchmark_raw = (
+        evaluation.get("benchmark")
+        or result_data.get("benchmark")
+        or result_data.get("benchmark_comparison")
+    )
+    benchmark = benchmark_raw if isinstance(benchmark_raw, dict) else {}
+    benchmark_complete = is_naive_benchmark_comparison_complete(benchmark)
+    bench_name = html.escape(
+        str(
+            (
+                benchmark.get("display_name")
+                or benchmark.get("name")
+                or "Naive Benchmark"
+            )
+            if benchmark_complete
+            else "Not evaluated"
+        )
+    )
+    bench_desc = html.escape(str(benchmark.get("description") or ""))
+    benchmark_summary = (
+        f'  <div class="benchmark-box"><strong>Naive Benchmark Comparison:</strong> '
+        f'{bench_name}<br><small>{bench_desc}</small></div>'
+        if benchmark_complete
+        else '  <p class="note"><strong>Naive Benchmark Comparison:</strong> '
+        "Not evaluated for this Run. Strategy use is blocked until the comparison "
+        "is complete.</p>"
+    )
+
+    assumptions_raw = evaluation.get("assumptions") or result_data.get("assumptions")
+    assumptions = assumptions_raw if isinstance(assumptions_raw, list) else []
+    limitations_raw = evaluation.get("limitations") or result_data.get("limitations")
+    limitations = limitations_raw if isinstance(limitations_raw, list) else []
+    unsupported_raw = evaluation.get("unsupported_claims") or result_data.get("unsupported_claims")
+    unsupported_claims = unsupported_raw if isinstance(unsupported_raw, list) else []
+    strategy_eligible = evaluation.get(
+        "is_eligible_for_strategy", result_data.get("is_eligible_for_strategy", False)
+    )
+    eligibility_reason = html.escape(
+        str(
+            evaluation.get(
+                "eligibility_reason",
+                result_data.get(
+                    "eligibility_reason",
+                    "Predictive Model is not eligible until benchmark comparison is complete.",
+                ),
+            )
+        )
+    )
+
+    doc = [
+        "<!DOCTYPE html>",
+        '<html lang="en">',
+        "<head>",
+        '  <meta charset="utf-8">',
+        f"  <title>{model_name} — Chronological Evaluation & Benchmark Comparison</title>",
+        "  <style>",
+        "    body { font-family: sans-serif; line-height: 1.5; color: #1e293b; "
+        "max-width: 960px; margin: 40px auto; padding: 0 20px; }",
+        "    h1, h2 { color: #0f172a; }",
+        "    .meta { background: #f8fafc; border: 1px solid #e2e8f0; "
+        "border-radius: 8px; padding: 16px; }",
+        "    table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; }",
+        "    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e2e8f0; }",
+        "    th { background: #f8fafc; }",
+        "    .note { background: #eff6ff; border-left: 4px solid #2563eb; padding: 12px 16px; }",
+        "    .benchmark-box { background: #f0fdf4; border: 1px solid #bbf7d0; "
+        "border-radius: 8px; padding: 16px; margin: 16px 0; }",
+        "    .warning-box { background: #fffbeb; border: 1px solid #fef3c7; "
+        "border-radius: 8px; padding: 16px; margin: 16px 0; }",
+        "  </style>",
+        "</head>",
+        "<body>",
+        f"  <h1>{model_name}</h1>",
+        f'  <div class="meta"><strong>Run:</strong> {run_id}<br>'
+        f'<strong>Definition Revision:</strong> {revision}<br>'
+        f'<strong>Dataset Versions:</strong> '
+        f'{html.escape(", ".join(str(dataset) for dataset in datasets))}<br>'
+        f'<strong>Evaluation Mode:</strong> {evaluation_mode}<br>'
+        f'<strong>Naive Benchmark:</strong> {bench_name}<br>'
+        f'<strong>Strategy Eligibility:</strong> '
+        f'{"Eligible" if strategy_eligible is True else "Blocked"}<br>'
+        '<strong>Metric Scope:</strong> In-sample training; held-out validation and '
+        'out-of-sample test</div>',
+        '  <p class="note">The initial fit uses training observations only. Each later '
+        'fold uses only data available before its decision session.</p>',
+        benchmark_summary,
+        f'  <p class="note"><strong>Strategy eligibility:</strong> '
+        f'{html.escape("Eligible" if strategy_eligible is True else "Blocked")}. '
+        f'{eligibility_reason}</p>',
+        "  <h2>Chronological Periods</h2>",
+        "  <table>",
+        "    <thead><tr><th>Period</th><th>Target Dates</th><th>Feature Dates</th>"
+        "<th>Observations</th><th>Fit Scope</th></tr></thead>",
+        "    <tbody>",
+    ]
+    for split in splits:
+        if isinstance(split, dict):
+            period = split.get("period", "")
+            period_label = "out-of-sample" if period == "test" else period
+            doc.append(
+                "      <tr>"
+                f"<td>{html.escape(str(period_label))}</td>"
+                f"<td>{html.escape(str(split.get('start', '')))} to "
+                f"{html.escape(str(split.get('end', '')))}</td>"
+                f"<td>{html.escape(str(split.get('feature_start', '')))} to "
+                f"{html.escape(str(split.get('feature_end', '')))}</td>"
+                f"<td>{html.escape(str(split.get('observations', '')))}</td>"
+                f"<td>{html.escape(str(split.get('fit_scope', '')))}</td>"
+                "</tr>"
+            )
+    doc.extend(["    </tbody>", "  </table>"])
+    if folds:
+        doc.extend(
+            [
+                "  <h2>Walk-forward Folds</h2>",
+                "  <table>",
+                "    <thead><tr><th>Fold</th><th>Period</th><th>Prediction Session</th>"
+                "<th>Target Date</th><th>Training Feature Dates</th>"
+                "<th>Training Observations</th><th>Fit Scope</th><th>MAE</th>"
+                "<th>RMSE</th></tr></thead>",
+                "    <tbody>",
+            ]
+        )
+        for fold in folds:
+            if not isinstance(fold, dict):
+                continue
+            fold_metrics = fold.get("metrics")
+            fold_metrics_dict = fold_metrics if isinstance(fold_metrics, dict) else {}
+            period = fold.get("period", "")
+            period_label = "out-of-sample" if period == "test" else period
+            doc.append(
+                "      <tr>"
+                f"<td>{html.escape(str(fold.get('fold_index', '')))}</td>"
+                f"<td>{html.escape(str(period_label))}</td>"
+                f"<td>{html.escape(str(fold.get('prediction_session_date', '')))}</td>"
+                f"<td>{html.escape(str(fold.get('target_date', '')))}</td>"
+                f"<td>{html.escape(str(fold.get('training_start', '')))} to "
+                f"{html.escape(str(fold.get('training_end', '')))}</td>"
+                f"<td>{html.escape(str(fold.get('training_observations', '')))}</td>"
+                f"<td>{html.escape(str(fold.get('fit_scope', '')))}</td>"
+                f"<td>{html.escape(str(fold_metrics_dict.get('mae', '')))}</td>"
+                f"<td>{html.escape(str(fold_metrics_dict.get('rmse', '')))}</td>"
+                "</tr>"
+            )
+        doc.extend(["    </tbody>", "  </table>"])
+    doc.extend(
+        [
+            "  <h2>Model vs Naive Benchmark Performance</h2>",
+            "  <table>",
+            "    <thead><tr><th>Period</th><th>Observations</th><th>Metric</th>"
+            "<th>Model Value</th><th>Benchmark Value</th><th>Improvement</th></tr></thead>",
+            "    <tbody>",
+        ]
+        if benchmark_complete
+        else [
+            "  <p class=\"note\">Model-versus-benchmark metrics are not available "
+            "because the comparison is incomplete.</p>"
+        ]
+    )
+    for period_metric in (period_metrics if benchmark_complete else []):
+        if not isinstance(period_metric, dict):
+            continue
+        metric_values = period_metric.get("metrics")
+        if not isinstance(metric_values, dict):
+            continue
+        bench_metrics = period_metric.get("benchmark_metrics")
+        bench_metrics_dict = bench_metrics if isinstance(bench_metrics, dict) else {}
+        comparison = period_metric.get("comparison")
+        comparison_dict = comparison if isinstance(comparison, dict) else {}
+        period = period_metric.get("period", "")
+        period_label = "out-of-sample (test)" if period == "test" else period
+        for metric_name, metric_value in metric_values.items():
+            bench_val = bench_metrics_dict.get(metric_name, "—")
+            impr_key = f"{metric_name}_improvement"
+            impr_val = comparison_dict.get(impr_key, "—")
+            if isinstance(impr_val, (int, float)):
+                impr_str = f"{impr_val * 100:+.2f}%"
+            else:
+                impr_str = str(impr_val)
+            doc.append(
+                "      <tr>"
+                f"<td>{html.escape(str(period_label))}</td>"
+                f"<td>{html.escape(str(period_metric.get('observations', '')))}</td>"
+                f"<td>{html.escape(str(metric_name).upper())}</td>"
+                f"<td>{html.escape(str(metric_value))}</td>"
+                f"<td>{html.escape(str(bench_val))}</td>"
+                f"<td>{html.escape(impr_str)}</td>"
+                "</tr>"
+            )
+    doc.extend(
+        (
+            ["    </tbody>", "  </table>"]
+            if benchmark_complete
+            else []
+        )
+        + ["  <h2>Assumptions and Provenance</h2>", "  <table>"]
+    )
+    doc.append("    <tbody>")
+    for label, value in (
+        ("Target", result_data.get("target", "")),
+        ("Horizon", result_data.get("horizon", "")),
+        ("Features", result_data.get("features", "")),
+        ("Parameters", parameters),
+        ("Preprocessing", preprocessing),
+    ):
+        doc.append(
+            f"      <tr><th>{html.escape(label)}</th>"
+            f"<td>{html.escape(str(value))}</td></tr>"
+        )
+    doc.extend(["    </tbody>", "  </table>"])
+
+    if assumptions:
+        doc.extend(["  <h2>Assumptions</h2>", "  <ul>"])
+        for assumption in assumptions:
+            doc.append(f"    <li>{html.escape(str(assumption))}</li>")
+        doc.append("  </ul>")
+
+    doc.extend(["  <h2>Warnings</h2>", "  <ul>"])
+    if warnings:
+        for warning in warnings:
+            doc.append(f"    <li>{html.escape(str(warning))}</li>")
+    else:
+        doc.append("    <li>No warnings recorded.</li>")
+    doc.append("  </ul>")
+
+    if limitations:
+        doc.extend(["  <h2>Limitations</h2>", "  <ul>"])
+        for limitation in limitations:
+            doc.append(f"    <li>{html.escape(str(limitation))}</li>")
+        doc.append("  </ul>")
+
+    if unsupported_claims:
+        doc.extend(["  <h2>Unsupported Claims</h2>", "  <ul>"])
+        for claim in unsupported_claims:
+            doc.append(f"    <li>{html.escape(str(claim))}</li>")
+        doc.append("  </ul>")
+
+    doc.extend(
+        [
+            "  <footer>Market Research Lab — Predictive Model Run & Benchmark Report</footer>",
+            "</body>",
+            "</html>",
+        ]
+    )
+    return "\n".join(doc)
+
+
+def generate_predictive_model_csv(result_data: dict[str, JsonValue]) -> str:
+    """Generate a CSV export with period-labelled metrics and predictions."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Predictive Model", result_data.get("model_name", "")])
+    writer.writerow(["Run ID", result_data.get("run_id", "")])
+    writer.writerow(["Model Revision", result_data.get("model_revision", "")])
+    evaluation_raw = result_data.get("evaluation")
+    evaluation = evaluation_raw if isinstance(evaluation_raw, dict) else {}
+    benchmark_raw = (
+        evaluation.get("benchmark")
+        or result_data.get("benchmark")
+        or result_data.get("benchmark_comparison")
+    )
+    benchmark = benchmark_raw if isinstance(benchmark_raw, dict) else {}
+    benchmark_complete = is_naive_benchmark_comparison_complete(benchmark)
+    writer.writerow(
+        [
+            "Naive Benchmark",
+            (
+                benchmark.get("display_name") or benchmark.get("name")
+                if benchmark_complete
+                else "Not evaluated"
+            ),
+        ]
+    )
+    writer.writerow([])
+    writer.writerow(
+        ["Period", "Observations", "Metric", "Model Value", "Benchmark Value", "Improvement"]
+    )
+    metrics_raw = evaluation.get("period_metrics") or result_data.get("period_metrics")
+    period_metrics = metrics_raw if isinstance(metrics_raw, list) else []
+    for period_metric in (period_metrics if benchmark_complete else []):
+        if not isinstance(period_metric, dict):
+            continue
+        values = period_metric.get("metrics")
+        if not isinstance(values, dict):
+            continue
+        bench_metrics = period_metric.get("benchmark_metrics")
+        bench_dict = bench_metrics if isinstance(bench_metrics, dict) else {}
+        comparison = period_metric.get("comparison")
+        comp_dict = comparison if isinstance(comparison, dict) else {}
+        period = period_metric.get("period", "")
+        period_label = "out-of-sample" if period == "test" else period
+        for metric_name, metric_value in values.items():
+            bench_val = bench_dict.get(metric_name, "")
+            impr_val = comp_dict.get(f"{metric_name}_improvement", "")
+            writer.writerow(
+                [
+                    period_label,
+                    period_metric.get("observations", ""),
+                    metric_name,
+                    metric_value,
+                    bench_val,
+                    impr_val,
+                ]
+            )
+    writer.writerow([])
+    writer.writerow(
+        [
+            "Fold",
+            "Period",
+            "Prediction Session",
+            "Target Date",
+            "Training Start",
+            "Training End",
+            "Training Observations",
+            "Fit Scope",
+            "Metric",
+            "Value",
+        ]
+    )
+    folds_raw = evaluation.get("folds") or result_data.get("folds")
+    folds = folds_raw if isinstance(folds_raw, list) else []
+    for fold in folds:
+        if not isinstance(fold, dict):
+            continue
+        metrics_raw = fold.get("metrics")
+        fold_metrics = metrics_raw if isinstance(metrics_raw, dict) else {}
+        for metric_name, metric_value in fold_metrics.items():
+            period = fold.get("period", "")
+            period_label = "out-of-sample" if period == "test" else period
+            writer.writerow(
+                [
+                    fold.get("fold_index", ""),
+                    period_label,
+                    fold.get("prediction_session_date", ""),
+                    fold.get("target_date", ""),
+                    fold.get("training_start", ""),
+                    fold.get("training_end", ""),
+                    fold.get("training_observations", ""),
+                    fold.get("fit_scope", ""),
+                    metric_name,
+                    metric_value,
+                ]
+            )
+    writer.writerow([])
+    writer.writerow(
+        [
+            "Session Date",
+            "Target Date",
+            "Period",
+            "Feature Value",
+            "Predicted Value",
+            "Actual Target",
+        ]
+    )
+    predictions_raw = result_data.get("predictions")
+    predictions = predictions_raw if isinstance(predictions_raw, list) else []
+    for prediction in predictions:
+        if isinstance(prediction, dict):
+            writer.writerow(
+                [
+                    prediction.get("session_date", ""),
+                    prediction.get("target_date", ""),
+                    prediction.get("period", ""),
+                    prediction.get("feature_value", ""),
+                    prediction.get("predicted_value", ""),
+                    prediction.get("actual_target", ""),
+                ]
+            )
+    return output.getvalue()
+
+
 # ---------------------------------------------------------------------------
 # Backtest HTML and CSV Exporters
 # ---------------------------------------------------------------------------
@@ -416,6 +825,7 @@ def generate_backtest_html_report(
     execution = exec_raw if isinstance(exec_raw, dict) else {}
     commission_rate = float(execution.get("commission_rate", 0.0))
     slippage_rate = float(execution.get("slippage_rate", 0.0))
+    cash_interest_rate = float(execution.get("cash_interest_rate", 0.0))
     schedule = html.escape(str(execution.get("schedule") or "daily"))
     price_field = html.escape(str(spec.get("price_field") or "close"))
 
@@ -459,6 +869,15 @@ def generate_backtest_html_report(
     bench_rel = metrics.get("benchmark_relative_return")
     num_trades = int(metrics.get("num_trades", 0))
     num_fills = int(metrics.get("num_fills", 0))
+
+    result_manifest_raw = result_data.get("manifest")
+    result_manifest = result_manifest_raw if isinstance(result_manifest_raw, dict) else {}
+    costs_raw = result_manifest.get("costs")
+    costs = costs_raw if isinstance(costs_raw, dict) else {}
+    portfolio_impact_raw = costs.get("portfolio_impact")
+    portfolio_impact = (
+        portfolio_impact_raw if isinstance(portfolio_impact_raw, dict) else {}
+    )
 
     hit_rate_str = f"{float(hit_rate) * 100:.1f}%" if hit_rate is not None else "—"
     bench_rel_str = f"{float(bench_rel) * 100:+.2f}%" if bench_rel is not None else "—"
@@ -591,16 +1010,40 @@ def generate_backtest_html_report(
     )
     if benchmark_id:
         doc.append(f'      <tr><td>Benchmark Security</td><td class="num">{benchmark_id}</td></tr>')
-    doc.append(f'      <tr><td>Strategy Algorithm</td><td class="num">{strategy_name}</td></tr>')
+    doc.append(f'      <tr><td>Strategy</td><td class="num">{strategy_name}</td></tr>')
     doc.append(f'      <tr><td>Strategy Revision</td><td class="num">{strategy_rev}</td></tr>')
     doc.append(f'      <tr><td>Price Field</td><td class="num">{price_field}</td></tr>')
     doc.append(f'      <tr><td>Rebalance Schedule</td><td class="num">{schedule}</td></tr>')
+    borrow_fee_rate = float(execution.get("borrow_fee_rate", 0.0))
+    raw_unavail = execution.get("unavailable_borrow", [])
+    unavailable_borrow = raw_unavail if isinstance(raw_unavail, list) else []
+
     doc.append(
         f'      <tr><td>Commission Rate</td><td class="num">{commission_rate * 10000:.1f} bps ({commission_rate * 100:.3f}%)</td></tr>'
     )
     doc.append(
         f'      <tr><td>Slippage Rate</td><td class="num">{slippage_rate * 10000:.1f} bps ({slippage_rate * 100:.3f}%)</td></tr>'
     )
+    doc.append(
+        f'      <tr><td>Cash Interest Rate</td><td class="num">{cash_interest_rate * 10000:.1f} bps ({cash_interest_rate * 100:.3f}% p.a., signed)</td></tr>'
+    )
+    if borrow_fee_rate > 0.0:
+        doc.append(
+            f'      <tr><td>Borrow Fee Rate</td><td class="num">{borrow_fee_rate * 10000:.1f} bps ({borrow_fee_rate * 100:.3f}% p.a.)</td></tr>'
+        )
+    if unavailable_borrow:
+        doc.append(
+            f'      <tr><td>Unavailable Borrow</td><td class="num">{html.escape(", ".join(str(u) for u in unavailable_borrow))}</td></tr>'
+        )
+    max_leverage = float(execution.get("max_leverage", 1.0))
+    margin_req = float(execution.get("margin_requirement", 1.0))
+    maint_margin = float(execution.get("maintenance_margin", 0.25))
+    leverage_mode = html.escape(str(execution.get("leverage_mode") or "reject"))
+
+    doc.append(f'      <tr><td>Max Leverage Limit</td><td class="num">{max_leverage:.2f}x ({max_leverage * 100:.0f}% gross exposure)</td></tr>')
+    doc.append(f'      <tr><td>Margin Requirement</td><td class="num">{margin_req * 100:.1f}%</td></tr>')
+    doc.append(f'      <tr><td>Maintenance Margin</td><td class="num">{maint_margin * 100:.1f}%</td></tr>')
+    doc.append(f'      <tr><td>Leverage Constraint Mode</td><td class="num">{leverage_mode}</td></tr>')
 
     params_raw = spec.get("parameters")
     if isinstance(params_raw, dict):
@@ -608,6 +1051,33 @@ def generate_backtest_html_report(
             doc.append(
                 f'      <tr><td>Strategy Parameter: {html.escape(k)}</td><td class="num">{html.escape(str(v))}</td></tr>'
             )
+    doc.append("    </tbody>")
+    doc.append("  </table>")
+
+    # Cost attribution table
+    doc.append("  <h2>Cost Attribution</h2>")
+    doc.append("  <table>")
+    doc.append(
+        '    <thead><tr><th>Category</th><th class="num">Amount</th><th class="num">Portfolio Impact</th></tr></thead>'
+    )
+    doc.append("    <tbody>")
+    for label, key in (
+        ("Commission", "total_commission"),
+        ("Slippage", "total_slippage"),
+        ("Borrow Fees", "total_borrow_fees"),
+        ("Cash Interest", "total_cash_interest"),
+    ):
+        amount = float(costs.get(key, 0.0))
+        impact_key = key.removeprefix("total_")
+        impact = float(portfolio_impact.get(impact_key, 0.0))
+        doc.append(
+            f'      <tr><td>{label}</td><td class="num">${amount:+,.2f}</td><td class="num">${impact:+,.2f}</td></tr>'
+        )
+    net_costs = float(costs.get("total_costs", 0.0))
+    net_impact = float(portfolio_impact.get("net", 0.0))
+    doc.append(
+        f'      <tr><td><strong>Net Costs</strong></td><td class="num"><strong>${net_costs:+,.2f}</strong></td><td class="num"><strong>${net_impact:+,.2f}</strong></td></tr>'
+    )
     doc.append("    </tbody>")
     doc.append("  </table>")
 
@@ -669,7 +1139,7 @@ def generate_backtest_html_report(
         doc.append('  <div class="scroll-table">')
         doc.append("    <table>")
         doc.append(
-            '      <thead><tr><th>Session Date</th><th class="num">Target Weight</th><th>Positions Breakdown</th><th class="num">Cash Balance</th><th class="num">Position Value</th><th class="num">Portfolio Value</th><th class="num">Gross Exposure</th></tr></thead>'
+            '      <thead><tr><th>Session Date</th><th class="num">Target Weight</th><th>Positions Breakdown</th><th class="num">Cash Balance</th><th class="num">Position Value</th><th class="num">Portfolio Value</th><th class="num">Gross Exp</th><th class="num">Net Exp</th><th class="num">Borrow Fees</th><th class="num">Cash Interest</th></tr></thead>'
         )
         doc.append("      <tbody>")
         for row in ledger:
@@ -692,11 +1162,14 @@ def generate_backtest_html_report(
                     pos_summary = "<br>".join(pos_parts) if pos_parts else "Flat"
                 else:
                     shares_held = float(row.get("shares", 0))
-                    pos_summary = f"{shares_held:.2f} sh" if shares_held > 0 else "Flat"
+                    pos_summary = f"{shares_held:.2f} sh" if abs(shares_held) > 0.0001 else "Flat"
 
                 gross_exp = float(row.get("gross_exposure", 0))
+                net_exp = float(row.get("net_exposure", 0))
+                borrow_fee = float(row.get("borrow_fees", 0.0))
+                cash_interest = float(row.get("cash_interest", 0.0))
                 doc.append(
-                    f'        <tr><td>{row.get("session_date")}</td><td class="num">{weight_str}</td><td><small>{pos_summary}</small></td><td class="num">${float(row.get("cash", 0)):,.2f}</td><td class="num">${float(row.get("position_value", 0)):,.2f}</td><td class="num"><strong>${float(row.get("portfolio_value", 0)):,.2f}</strong></td><td class="num">{gross_exp * 100:.0f}%</td></tr>'
+                    f'        <tr><td>{row.get("session_date")}</td><td class="num">{weight_str}</td><td><small>{pos_summary}</small></td><td class="num">${float(row.get("cash", 0)):,.2f}</td><td class="num">${float(row.get("position_value", 0)):,.2f}</td><td class="num"><strong>${float(row.get("portfolio_value", 0)):,.2f}</strong></td><td class="num">{gross_exp * 100:.0f}%</td><td class="num">{net_exp * 100:.0f}%</td><td class="num">${borrow_fee:,.2f}</td><td class="num">${cash_interest:+,.2f}</td></tr>'
                 )
         doc.append("      </tbody>")
         doc.append("    </table>")
@@ -749,6 +1222,12 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
         writer.writerow(["Schedule", exec_raw.get("schedule", "daily")])
         writer.writerow(["Commission Rate", exec_raw.get("commission_rate", 0.0)])
         writer.writerow(["Slippage Rate", exec_raw.get("slippage_rate", 0.0)])
+        writer.writerow(["Allow Shorting", exec_raw.get("allow_shorting", True)])
+        writer.writerow(["Borrow Fee Rate", exec_raw.get("borrow_fee_rate", 0.0)])
+        writer.writerow(["Cash Interest Rate", exec_raw.get("cash_interest_rate", 0.0)])
+        raw_u = exec_raw.get("unavailable_borrow", [])
+        u_str = ", ".join(str(x) for x in raw_u) if isinstance(raw_u, list) else str(raw_u)
+        writer.writerow(["Unavailable Borrow", u_str])
 
     params_raw = spec.get("parameters")
     if isinstance(params_raw, dict):
@@ -772,6 +1251,28 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
     writer.writerow(["Benchmark Relative Return", metrics.get("benchmark_relative_return", "")])
     writer.writerow(["Number of Trades", metrics.get("num_trades", "")])
     writer.writerow(["Number of Fills", metrics.get("num_fills", "")])
+    writer.writerow([])
+
+    # Cost attribution
+    result_manifest_raw = result_data.get("manifest")
+    result_manifest = result_manifest_raw if isinstance(result_manifest_raw, dict) else {}
+    costs_raw = result_manifest.get("costs")
+    costs = costs_raw if isinstance(costs_raw, dict) else {}
+    portfolio_impact_raw = costs.get("portfolio_impact")
+    portfolio_impact = (
+        portfolio_impact_raw if isinstance(portfolio_impact_raw, dict) else {}
+    )
+    writer.writerow(["Cost Attribution", ""])
+    writer.writerow(["Total Commission", costs.get("total_commission", 0.0)])
+    writer.writerow(["Total Slippage", costs.get("total_slippage", 0.0)])
+    writer.writerow(["Total Borrow Fees", costs.get("total_borrow_fees", 0.0)])
+    writer.writerow(["Total Cash Interest", costs.get("total_cash_interest", 0.0)])
+    writer.writerow(["Net Costs", costs.get("total_costs", 0.0)])
+    writer.writerow(["Portfolio Impact - Commission", portfolio_impact.get("commission", "")])
+    writer.writerow(["Portfolio Impact - Slippage", portfolio_impact.get("slippage", "")])
+    writer.writerow(["Portfolio Impact - Borrow Fees", portfolio_impact.get("borrow_fees", "")])
+    writer.writerow(["Portfolio Impact - Cash Interest", portfolio_impact.get("cash_interest", "")])
+    writer.writerow(["Portfolio Impact - Net", portfolio_impact.get("net", "")])
     writer.writerow([])
 
     # Warnings & Rejections
@@ -891,6 +1392,8 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
             "Portfolio Value",
             "Gross Exposure",
             "Net Exposure",
+            "Borrow Fees",
+            "Cash Interest",
         ]
     )
     for row in ledger:
@@ -915,6 +1418,8 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
                     row.get("portfolio_value", ""),
                     row.get("gross_exposure", ""),
                     row.get("net_exposure", ""),
+                    row.get("borrow_fees", 0.0),
+                    row.get("cash_interest", 0.0),
                 ]
             )
 

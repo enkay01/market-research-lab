@@ -148,3 +148,97 @@ def test_evaluate_strategy_unknown_name_raises():
             {},
             decision_time="2024-01-05T21:00:00Z",
         )
+
+
+def test_predictive_model_cannot_feed_strategy_without_completed_benchmark_mod009():
+    from market_research_lab.strategies import validate_model_eligibility_for_strategy
+
+    with pytest.raises(StrategyEvaluationError, match="MOD-009"):
+        validate_model_eligibility_for_strategy({"evaluation": {"mode": "holdout"}})
+
+    with pytest.raises(StrategyEvaluationError, match="MOD-009"):
+        validate_model_eligibility_for_strategy(
+            {
+                "evaluation": {
+                    "benchmark": {
+                        "completed": True,
+                        "out_of_sample_comparison": {
+                            "comparison_complete": False,
+                            "same_eligible_periods": True,
+                        },
+                    },
+                    "is_eligible_for_strategy": True,
+                }
+            }
+        )
+
+    validate_model_eligibility_for_strategy(
+        {
+            "evaluation": {
+                "benchmark": {
+                    "name": "zero_return",
+                    "completed": True,
+                    "period_metrics": {
+                        "test": {"mae": 1.0, "rmse": 1.0, "r2": 0.0}
+                    },
+                    "out_of_sample_comparison": {
+                        "benchmark_name": "zero_return",
+                        "period": "test",
+                        "sample_scope": "out_of_sample",
+                        "observations": 1,
+                        "comparison_complete": True,
+                        "same_eligible_periods": True,
+                        "status": "evaluated",
+                        "model_rmse": 1.0,
+                        "benchmark_rmse": 1.0,
+                        "rmse_improvement": 0.0,
+                        "model_mae": 1.0,
+                        "benchmark_mae": 1.0,
+                        "mae_improvement": 0.0,
+                        "model_r2": 0.0,
+                        "benchmark_r2": 0.0,
+                    },
+                },
+                "is_eligible_for_strategy": True,
+            }
+        }
+    )
+
+
+def test_saved_model_result_is_unwrapped_before_strategy_guard():
+    from market_research_lab.strategies import validate_model_eligibility_for_strategy
+
+    result = validate_model_eligibility_for_strategy(
+        {
+            "result": {
+                "evaluation": {
+                    "benchmark": {
+                        "name": "zero_return",
+                        "completed": True,
+                        "period_metrics": {
+                            "test": {"mae": 1.0, "rmse": 1.0, "r2": 0.0}
+                        },
+                        "out_of_sample_comparison": {
+                            "benchmark_name": "zero_return",
+                            "period": "test",
+                            "sample_scope": "out_of_sample",
+                            "observations": 1,
+                            "comparison_complete": True,
+                            "same_eligible_periods": True,
+                            "status": "evaluated",
+                            "model_rmse": 1.0,
+                            "benchmark_rmse": 1.0,
+                            "rmse_improvement": 0.0,
+                            "model_mae": 1.0,
+                            "benchmark_mae": 1.0,
+                            "mae_improvement": 0.0,
+                            "model_r2": 0.0,
+                            "benchmark_r2": 0.0,
+                        },
+                    },
+                    "is_eligible_for_strategy": True,
+                }
+            }
+        }
+    )
+    assert result is None

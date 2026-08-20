@@ -5,7 +5,12 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from market_research_lab.api import create_app
+from market_research_lab.api import ExecutionModelAssumptionsRequest, create_app
+
+
+def test_cash_interest_request_rejects_non_finite_values():
+    with pytest.raises(ValueError, match="finite"):
+        ExecutionModelAssumptionsRequest.model_validate({"cash_interest_rate": float("nan")})
 
 
 def _tiingo_prices_fetch_json(url: str, _headers: dict[str, str]) -> dict:
@@ -1060,6 +1065,77 @@ def test_strategy_endpoints_and_definition_lifecycle(tmp_path):
     assert any(path.is_file() for path in revision_files)
 
 
+def test_strategy_model_feed_requires_a_completed_benchmark_comparison(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Model gate"}).json()
+    request = {
+        "name": "long_flat_moving_average",
+        "dataset_version_id": "dataset-not-used-before-model-gate",
+        "symbol": "AAPL",
+        "parameters": {"predictive_model_run_id": "missing-run"},
+    }
+
+    missing_run = client.post(
+        f"/api/projects/{project['id']}/strategies/evaluate", json=request
+    )
+
+    assert missing_run.status_code == 400
+    assert missing_run.json()["code"] == "strategy_evaluation_error"
+    assert "MOD-009" in missing_run.json()["message"]
+
+    request["parameters"] = {
+        "predictive_model_evaluation": {"evaluation": {"mode": "holdout"}}
+    }
+    incomplete_run = client.post(
+        f"/api/projects/{project['id']}/strategies/evaluate", json=request
+    )
+
+    assert incomplete_run.status_code == 400
+    assert incomplete_run.json()["code"] == "strategy_evaluation_error"
+    assert "persisted Predictive Model Run" in incomplete_run.json()["message"]
+
+    fabricated_run = {
+        "evaluation": {
+            "benchmark": {
+                "name": "zero_return",
+                "completed": True,
+                "period_metrics": {
+                    "test": {"mae": 1.0, "rmse": 1.0, "r2": 0.0}
+                },
+                "out_of_sample_comparison": {
+                    "benchmark_name": "zero_return",
+                    "period": "test",
+                    "sample_scope": "out_of_sample",
+                    "observations": 1,
+                    "same_eligible_periods": True,
+                    "model_rmse": 1.0,
+                    "benchmark_rmse": 1.0,
+                    "rmse_improvement": 0.0,
+                    "model_mae": 1.0,
+                    "benchmark_mae": 1.0,
+                    "mae_improvement": 0.0,
+                    "model_r2": 0.0,
+                    "benchmark_r2": 0.0,
+                    "status": "evaluated",
+                    "comparison_complete": True,
+                },
+            },
+            "is_eligible_for_strategy": True,
+        }
+    }
+    request["parameters"] = {"predictive_model_evaluation": fabricated_run}
+    fabricated = client.post(
+        f"/api/projects/{project['id']}/strategies/evaluate", json=request
+    )
+
+    assert fabricated.status_code == 400
+    assert "persisted Predictive Model Run" in fabricated.json()["message"]
+
+    preview = client.post("/api/strategies/evaluate", json=request)
+    assert preview.status_code == 400
+    assert "saved Predictive Model Run" in preview.json()["message"]
+
+
 def test_strategy_only_uses_observations_eligible_at_decision_time(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
 
@@ -1148,6 +1224,11 @@ def test_backtest_run_end_to_end_returns_ledger_and_metrics(tmp_path):
             "end_date": "2024-01-10",
             "starting_cash": 100000,
             "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+            "execution": {
+                "commission_rate": 0.001,
+                "slippage_rate": 0.0005,
+                "cash_interest_rate": 0.02,
+            },
         },
     )
     assert response.status_code == 201
@@ -1157,6 +1238,9 @@ def test_backtest_run_end_to_end_returns_ledger_and_metrics(tmp_path):
     assert result["ledger"]
     assert "total_return" in result["metrics"]
     assert result["manifest"]["kind"] == "backtest"
+    assert result["specification"]["execution"]["cash_interest_rate"] == 0.02
+    assert result["manifest"]["execution"]["cash_interest_rate"] == 0.02
+    assert "total_cash_interest" in result["manifest"]["costs"]
 
     listed = client.get(f"/api/projects/{project['id']}/backtests")
     assert listed.status_code == 200
@@ -1451,3 +1535,123 @@ def test_refresh_preserves_failure_and_creates_no_partial_signal(tmp_path):
 
     alerts = client.get(f"/api/projects/{project['id']}/alerts")
     assert alerts.json() == []
+def test_backtest_run_shorting_and_borrow_fees(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Shorting Strategy Project"}).json()
+
+    # Falling AAPL prices triggers bearish signals (short positions)
+    csv_content = (
+        "symbol,date,open,high,low,close,volume,available_at\n"
+        "AAPL,2024-01-02,100,105,99,100,1000,2024-01-02T20:00:00Z\n"
+        "AAPL,2024-01-03,95,96,90,92,1200,2024-01-03T20:00:00Z\n"
+        "AAPL,2024-01-04,90,91,85,88,1100,2024-01-04T20:00:00Z\n"
+        "AAPL,2024-01-05,85,86,80,82,1300,2024-01-05T20:00:00Z\n"
+        "AAPL,2024-01-06,80,81,75,78,1400,2024-01-06T20:00:00Z\n"
+        "AAPL,2024-01-07,75,76,70,72,1500,2024-01-07T20:00:00Z\n"
+    )
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "pit_short_source"},
+        files={"file": ("falling_bars.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
+    )
+    assert imported.status_code == 201
+    version_id = imported.json()["dataset_version_id"]
+
+    response = client.post(
+        f"/api/projects/{project['id']}/backtests",
+        json={
+            "strategy_name": "long_short_moving_average",
+            "strategy_revision": "long_short_moving_average:v1",
+            "dataset_version_id": version_id,
+            "symbols": ["AAPL"],
+            "start_date": "2024-01-02",
+            "end_date": "2024-01-07",
+            "starting_cash": 100000,
+            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+            "execution": {
+                "schedule": "daily",
+                "allow_shorting": True,
+                "borrow_fee_rate": 0.05,
+                "unavailable_borrow": [],
+            },
+        },
+    )
+    assert response.status_code == 201
+    result = response.json()
+    assert result["run_id"]
+    assert result["specification"]["execution"]["allow_shorting"] is True
+    assert result["specification"]["execution"]["borrow_fee_rate"] == 0.05
+    assert len(result["signals"]) >= 1
+    # Check that short positions and borrow fees were produced
+    has_short = any(
+        row["positions"].get("AAPL", {}).get("shares", 0.0) < 0
+        for row in result["ledger"]
+    )
+    assert has_short
+    total_borrow_fees = sum(row.get("borrow_fees", 0.0) for row in result["ledger"])
+    assert total_borrow_fees > 0.0
+
+
+def test_backtest_run_with_corporate_actions_and_calendar(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Corporate Actions Project"}).json()
+
+    # Import DailyBars
+    bars_csv = (
+        "symbol,date,open,high,low,close,volume,available_at\n"
+        "AAPL,2024-01-08,10,10,10,10,1000,2024-01-08T20:00:00Z\n"
+        "AAPL,2024-01-09,11,11,11,11,1000,2024-01-09T20:00:00Z\n"
+        "AAPL,2024-01-10,12,12,12,12,1000,2024-01-10T20:00:00Z\n"
+        "AAPL,2024-01-11,13,13,13,13,1000,2024-01-11T20:00:00Z\n"
+        "AAPL,2024-01-12,14,14,14,14,1000,2024-01-12T20:00:00Z\n"
+        "AAPL,2024-01-16,14,14,14,14,1000,2024-01-16T20:00:00Z\n"
+    )
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "bars_source"},
+        files={"file": ("bars.csv", io.BytesIO(bars_csv.encode("utf-8")), "text/csv")},
+    )
+    assert imported.status_code == 201
+    version_id = imported.json()["dataset_version_id"]
+
+    # Import Corporate Actions
+    actions_csv = (
+        "symbol,type,effective_date,value,available_at\n"
+        "AAPL,dividend,2024-01-16,0.50,2024-01-12T21:00:00Z\n"
+    )
+    imported_actions = client.post(
+        "/api/datasets",
+        data={"source": "actions_source"},
+        files={"file": ("actions.csv", io.BytesIO(actions_csv.encode("utf-8")), "text/csv")},
+    )
+    assert imported_actions.status_code == 201
+
+    # Run backtest with US calendar
+    response = client.post(
+        f"/api/projects/{project['id']}/backtests",
+        json={
+            "strategy_name": "long_flat_moving_average",
+            "strategy_revision": "long_flat_moving_average:v1",
+            "dataset_version_id": version_id,
+            "symbols": ["AAPL"],
+            "start_date": "2024-01-08",
+            "end_date": "2024-01-16",
+            "starting_cash": 100000,
+            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+            "calendar": "US",
+        },
+    )
+    assert response.status_code == 201
+    result = response.json()
+    assert result["run_id"]
+    assert result["specification"]["calendar"] == "US"
+    # Verification of US calendar dates (Jan 8, 9, 10, 11, 12, 16 - MLK Day skipped)
+    ledger_dates = [row["session_date"] for row in result["ledger"]]
+    assert ledger_dates == [
+        "2024-01-08",
+        "2024-01-09",
+        "2024-01-10",
+        "2024-01-11",
+        "2024-01-12",
+        "2024-01-16",
+    ]
