@@ -8,6 +8,8 @@ import pytest
 
 from market_research_lab.alerts import (
     InvalidStrategyDefinitionError,
+    SignalEvaluationRequest,
+    enable_strategy_revision,
     evaluate_signal,
     refresh_enabled_strategies,
     validate_strategy_definition,
@@ -107,6 +109,18 @@ def _ingest(store: MarketDataStore, rows: list[dict[str, JsonValue]]) -> str:
     return version.id
 
 
+def _signal_request(view: MarketView) -> SignalEvaluationRequest:
+    return SignalEvaluationRequest(
+        strategy_name=STRATEGY_NAME,
+        market_view=view,
+        parameters={"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+        strategy_revision=f"{STRATEGY_NAME}:v1",
+        dataset_version_id="ds-1",
+        decision_time="2024-01-10T21:00:00Z",
+        data_time="2024-01-10T20:00:00Z",
+    )
+
+
 def _save_and_enable(store: ProjectStore, project_id: str, dataset_version_id: str) -> None:
     definition = {
         "strategy": STRATEGY_NAME,
@@ -121,7 +135,12 @@ def _save_and_enable(store: ProjectStore, project_id: str, dataset_version_id: s
         name=f"{STRATEGY_NAME} - AAPL",
         definition=definition,
     )
-    store.enable_strategy(project_id, name=f"{STRATEGY_NAME} - AAPL", revision="v1")
+    enable_strategy_revision(
+        store,
+        project_id,
+        name=f"{STRATEGY_NAME} - AAPL",
+        revision="v1",
+    )
 
 
 def test_validate_strategy_definition_accepts_valid_and_rejects_missing_fields() -> None:
@@ -158,15 +177,7 @@ def test_evaluate_signal_builds_action_data_time_and_rationale() -> None:
         ),
         prices=(100.0, 102.0, 106.0, 108.0, 110.0, 114.0, 116.0),
     )
-    signal = evaluate_signal(
-        STRATEGY_NAME,
-        view,
-        {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
-        strategy_revision=f"{STRATEGY_NAME}:v1",
-        dataset_version_id="ds-1",
-        decision_time="2024-01-10T21:00:00Z",
-        data_time="2024-01-10T20:00:00Z",
-    )
+    signal = evaluate_signal(_signal_request(view))
 
     assert signal.strategy_revision == f"{STRATEGY_NAME}:v1"
     assert signal.security_id == "AAPL"
@@ -191,6 +202,28 @@ def test_only_immutable_revisions_can_be_enabled(tmp_path: Path) -> None:
 
     with pytest.raises(RevisionNotImmutableError):
         store.read_revision(project.id, kind="strategy", name=name, revision="draft")
+
+
+def test_enable_rejects_an_invalid_immutable_strategy_definition(tmp_path: Path) -> None:
+    store = ProjectStore(tmp_path)
+    project = store.create_project("Signals")
+    name = f"{STRATEGY_NAME} - AAPL"
+    store.save_revision(
+        project.id,
+        kind="strategy",
+        name=name,
+        definition={
+            "strategy": STRATEGY_NAME,
+            "symbol": "AAPL",
+            "dataset_version_id": "ds-1",
+            "parameters": {"fast_period": 4, "slow_period": 4},
+        },
+    )
+
+    with pytest.raises(InvalidStrategyDefinitionError, match="fast_period"):
+        enable_strategy_revision(store, project.id, name=name, revision="v1")
+
+    assert store.list_enabled_strategies(project.id) == []
 
 
 def test_refresh_produces_a_persisted_signal_with_provenance(tmp_path: Path) -> None:
@@ -221,6 +254,35 @@ def test_refresh_produces_a_persisted_signal_with_provenance(tmp_path: Path) -> 
     assert len(persisted) == 1
     assert persisted[0]["signal_id"] == signal.signal_id
     assert persisted[0]["action"] == "long"
+
+
+def test_refresh_uses_latest_data_eligible_at_the_decision_time(tmp_path: Path) -> None:
+    store = ProjectStore(tmp_path)
+    market_store = MarketDataStore(tmp_path)
+    project = store.create_project("Signals")
+    rows = _bullish_bars()
+    rows.append(
+        {
+            "symbol": "AAPL",
+            "session_date": "2024-01-11",
+            "open": 116,
+            "high": 120,
+            "low": 115,
+            "close": 118,
+            "volume": 1700,
+            "available_at": "2024-01-11T20:00:00Z",
+        }
+    )
+
+    dataset_version_id = _ingest(market_store, rows)
+    _save_and_enable(store, project.id, dataset_version_id)
+
+    result = refresh_enabled_strategies(
+        store, market_store, project.id, decision_time="2024-01-10T21:00:00Z"
+    )
+
+    assert result.failures == ()
+    assert result.signals[0].data_time == "2024-01-10T20:00:00Z"
 
 
 def test_refresh_preserves_validation_failure_without_partial_signal(tmp_path: Path) -> None:

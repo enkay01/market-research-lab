@@ -20,7 +20,7 @@ from .strategies import (
     StrategyEvaluationError,
     StrategyParameterValidationError,
     evaluate_strategy,
-    get_strategy_spec,
+    validate_strategy_parameters,
 )
 
 if TYPE_CHECKING:
@@ -40,6 +40,10 @@ _REFRESH_ERRORS = (
     RevisionNotFoundError,
     RevisionNotImmutableError,
     ValueError,
+    OSError,
+    TypeError,
+    KeyError,
+    IndexError,
 )
 
 
@@ -65,6 +69,19 @@ class Signal:
 
 
 @dataclass(frozen=True)
+class SignalEvaluationRequest:
+    """Inputs required to evaluate one Strategy and build its Signal."""
+
+    strategy_name: str
+    market_view: MarketView
+    parameters: dict[str, JsonValue]
+    strategy_revision: str
+    dataset_version_id: str
+    decision_time: str
+    data_time: str
+
+
+@dataclass(frozen=True)
 class SignalRefreshFailure:
     """A failed Strategy refresh whose error is preserved without a partial Signal."""
 
@@ -80,7 +97,7 @@ class SignalRefreshResult:
     failures: tuple[SignalRefreshFailure, ...]
 
 
-def validate_strategy_definition(definition: dict[str, JsonValue]) -> None:
+def validate_strategy_definition(definition: JsonValue) -> None:
     """Reject a Strategy definition that is not a validated, enableable revision."""
     if not isinstance(definition, dict):
         raise InvalidStrategyDefinitionError("The Strategy definition must be an object.")
@@ -99,9 +116,19 @@ def validate_strategy_definition(definition: dict[str, JsonValue]) -> None:
         raise InvalidStrategyDefinitionError(
             "The Strategy definition is missing its 'dataset_version_id'."
         )
+    price_field = definition.get("price_field", "close")
+    if price_field not in {"close", "open", "high", "low"}:
+        raise InvalidStrategyDefinitionError(
+            "The Strategy definition has an invalid 'price_field'."
+        )
+    parameters = definition.get("parameters", {})
+    if not isinstance(parameters, dict):
+        raise InvalidStrategyDefinitionError(
+            "The Strategy definition's 'parameters' must be an object."
+        )
     try:
-        get_strategy_spec(strategy_name)
-    except StrategyEvaluationError as error:
+        validate_strategy_parameters(strategy_name, parameters)
+    except (StrategyEvaluationError, StrategyParameterValidationError) as error:
         raise InvalidStrategyDefinitionError(str(error)) from error
 
 
@@ -116,41 +143,56 @@ def _price_for_field(bar: DailyBar, price_field: str) -> float:
 
 
 def _action_for_weight(weight: float) -> str:
-    return "long" if weight > 0 else "flat"
+    if weight > 0:
+        return "long"
+    if weight < 0:
+        return "short"
+    return "flat"
 
 
-def evaluate_signal(
-    strategy_name: str,
-    market_view: MarketView,
-    parameters: dict[str, JsonValue],
+def enable_strategy_revision(
+    store: ProjectStore,
+    project_id: str,
     *,
-    strategy_revision: str,
-    dataset_version_id: str,
-    decision_time: str,
-    data_time: str,
-) -> Signal:
+    name: str,
+    revision: str,
+) -> dict[str, JsonValue]:
+    """Validate and enable one immutable Strategy revision."""
+    wrapped = store.read_revision(
+        project_id,
+        kind="strategy",
+        name=name,
+        revision=revision,
+    )
+    definition = wrapped.get("definition") if isinstance(wrapped, dict) else None
+    validate_strategy_definition(definition)
+    return store.enable_strategy(project_id, name=name, revision=revision)
+
+
+def evaluate_signal(request: SignalEvaluationRequest) -> Signal:
     """Evaluate a Strategy at one decision time and build a traceable Signal."""
     evaluation = evaluate_strategy(
-        strategy_name,
-        market_view,
-        parameters,
-        decision_time=decision_time,
+        request.strategy_name,
+        request.market_view,
+        request.parameters,
+        decision_time=request.decision_time,
     )
     if not evaluation.targets:
         raise StrategyEvaluationError(
-            f"Strategy '{strategy_name}' produced no target at decision time {decision_time}."
+            f"Strategy '{request.strategy_name}' produced no target at decision time "
+            f"{request.decision_time}."
         )
     target = evaluation.targets[0]
     return Signal(
         signal_id=uuid4().hex,
-        strategy_name=strategy_name,
-        strategy_revision=strategy_revision,
+        strategy_name=request.strategy_name,
+        strategy_revision=request.strategy_revision,
         security_id=target.security_id,
         action=_action_for_weight(target.weight),
         weight=target.weight,
-        decision_time=decision_time,
-        data_time=data_time,
-        dataset_version_id=dataset_version_id,
+        decision_time=request.decision_time,
+        data_time=request.data_time,
+        dataset_version_id=request.dataset_version_id,
         rationale=target.rationale,
         indicator_state=target.indicator_state,
         created_at=datetime.now(UTC).isoformat(),
@@ -177,7 +219,7 @@ def refresh_enabled_strategies(
             wrapped = store.read_revision(
                 project_id, kind="strategy", name=name, revision=revision
             )
-            definition = wrapped.get("definition")
+            definition = wrapped.get("definition") if isinstance(wrapped, dict) else None
             if not isinstance(definition, dict):
                 raise InvalidStrategyDefinitionError(
                     f"Strategy revision '{strategy_revision}' has no definition."
@@ -214,13 +256,15 @@ def refresh_enabled_strategies(
             )
 
             signal = evaluate_signal(
-                strategy_name,
-                market_view,
-                parameters,
-                strategy_revision=strategy_revision,
-                dataset_version_id=dataset_version_id,
-                decision_time=resolved_decision_time,
-                data_time=data_time,
+                SignalEvaluationRequest(
+                    strategy_name=strategy_name,
+                    market_view=market_view,
+                    parameters=parameters,
+                    strategy_revision=strategy_revision,
+                    dataset_version_id=dataset_version_id,
+                    decision_time=resolved_decision_time,
+                    data_time=data_time,
+                )
             )
             store.save_signal(project_id, signal.to_json())
             signals.append(signal)

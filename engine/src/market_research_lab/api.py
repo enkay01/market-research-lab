@@ -34,8 +34,8 @@ from .alerts import (
     InvalidStrategyDefinitionError,
     SignalRefreshResult,
     refresh_enabled_strategies,
-    validate_strategy_definition,
 )
+from .alerts import enable_strategy_revision as enable_strategy_revision_domain
 from .backtest import (
     BacktestError,
     BacktestParameterError,
@@ -3072,13 +3072,12 @@ def create_app(
     def enable_strategy_revision(
         project_id: UUID, request: EnabledStrategyRequest
     ) -> EnabledStrategyResponse:
-        wrapped = store.read_revision(
-            str(project_id), kind="strategy", name=request.name, revision=request.revision
-        )
-        validate_strategy_definition(wrapped.get("definition"))
         return EnabledStrategyResponse.model_validate(
-            store.enable_strategy(
-                str(project_id), name=request.name, revision=request.revision
+            enable_strategy_revision_domain(
+                store,
+                str(project_id),
+                name=request.name,
+                revision=request.revision,
             )
         )
 
