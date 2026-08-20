@@ -6,6 +6,7 @@ import math
 import re
 import statistics
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from typing import Literal, Sequence
 
 from .json_types import JsonValue
@@ -22,6 +23,7 @@ class BacktestParameterError(ValueError):
 
 
 EPS = 1e-9
+TRADING_DAYS_PER_YEAR = 252.0
 _DATE_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$")
 
 
@@ -34,6 +36,7 @@ class ExecutionModelAssumptions:
     slippage_rate: float = 0.0  # fraction applied to fill price
     allow_shorting: bool = True
     borrow_fee_rate: float = 0.0  # annualized borrow fee rate on short market value
+    cash_interest_rate: float = 0.0  # signed annualized rate on cash between eligible bars
     unavailable_borrow: tuple[str, ...] = ()
     hard_to_borrow_rates: dict[str, float] = field(default_factory=dict)
     max_leverage: float = 1.0  # maximum allowed gross portfolio exposure (e.g. 1.0 for 100%, 2.0 for 200%)
@@ -116,6 +119,7 @@ class LedgerRow:
     gross_exposure: float = 0.0
     net_exposure: float = 0.0
     borrow_fees: float = 0.0
+    cash_interest: float = 0.0  # signed interest credited to or charged against cash
 
 
 @dataclass(frozen=True)
@@ -223,6 +227,17 @@ def _valid_date(value: str) -> bool:
     return _DATE_PATTERN.fullmatch(value) is not None
 
 
+def _parse_available_at(value: str) -> datetime:
+    """Parse one DailyBar eligibility timestamp as an aware UTC datetime."""
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise BacktestError(f"DailyBar available_at is not an ISO timestamp: {value!r}.") from error
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
 def _resolve_universe(specification: BacktestSpecification) -> tuple[str, ...]:
     """Resolve the effective universe tuple from universe or security_id."""
     if specification.universe:
@@ -252,6 +267,11 @@ def _validate_specification(specification: BacktestSpecification) -> tuple[str, 
     if not math.isfinite(borrow_fee) or borrow_fee < 0.0:
         raise BacktestParameterError(
             f"borrow_fee_rate must be finite and >= 0, got {borrow_fee}."
+        )
+    cash_interest = specification.execution.cash_interest_rate
+    if not math.isfinite(cash_interest):
+        raise BacktestParameterError(
+            f"cash_interest_rate must be finite, got {cash_interest}."
         )
     max_leverage = specification.execution.max_leverage
     if not math.isfinite(max_leverage) or max_leverage <= 0.0:
@@ -502,11 +522,18 @@ def run_backtest(
     universe = _validate_specification(specification)
     get_strategy_spec(specification.strategy_name)
 
+    available_at_by_date: dict[str, datetime] = {}
     for bar in bars:
         if not bar.available_at or not bar.available_at.strip():
             raise BacktestError(
                 "Backtest requires point-in-time availability ('available_at') on every DailyBar."
             )
+        available_at = _parse_available_at(bar.available_at)
+        if bar.security_id not in universe:
+            continue
+        prior_available_at = available_at_by_date.get(bar.session_date)
+        if prior_available_at is None or available_at > prior_available_at:
+            available_at_by_date[bar.session_date] = available_at
 
     # Index bars by symbol and session_date
     bars_by_symbol: dict[str, dict[str, DailyBar]] = {}
@@ -544,11 +571,30 @@ def run_backtest(
     ledger: list[LedgerRow] = []
     warnings: list[str] = []
     rejections: list[ConstraintRejection] = []
+    previous_eligible_at: datetime | None = None
+    cash_interest_periods = 0
 
     primary_symbol = universe[0]
 
     for date_str in sorted_window_dates:
         fills_today: list[Fill] = []
+        cash_interest_today = 0.0
+        current_eligible_at = available_at_by_date.get(date_str)
+        if (
+            previous_eligible_at is not None
+            and current_eligible_at is not None
+            and current_eligible_at > previous_eligible_at
+        ):
+            cash_interest_periods += 1
+            cash_interest_today = cash * (
+                specification.execution.cash_interest_rate / TRADING_DAYS_PER_YEAR
+            )
+            cash += cash_interest_today
+        if current_eligible_at is not None:
+            previous_eligible_at = max(
+                previous_eligible_at or current_eligible_at,
+                current_eligible_at,
+            )
 
         # -------------------------------------------------------------
         # STEP 1: Reconcile pending targets at today's open price
@@ -1110,6 +1156,7 @@ def run_backtest(
                 gross_exposure=round(gross_exp, 6),
                 net_exposure=round(net_exp, 6),
                 borrow_fees=round(borrow_fee_today, 4),
+                cash_interest=round(cash_interest_today, 4),
             )
         )
 
@@ -1166,6 +1213,15 @@ def run_backtest(
         )
     )
 
+    total_commission = round(sum(fill.commission for fill in fills), 4)
+    total_slippage = round(sum(fill.slippage_cost for fill in fills), 4)
+    total_borrow_fees = round(sum(row.borrow_fees for row in ledger), 4)
+    total_cash_interest = round(sum(row.cash_interest for row in ledger), 4)
+    total_costs = round(
+        total_commission + total_slippage + total_borrow_fees - total_cash_interest,
+        4,
+    )
+
     manifest: dict[str, JsonValue] = {
         "kind": "backtest",
         "strategy_name": specification.strategy_name,
@@ -1186,6 +1242,7 @@ def run_backtest(
             "slippage_rate": specification.execution.slippage_rate,
             "allow_shorting": specification.execution.allow_shorting,
             "borrow_fee_rate": specification.execution.borrow_fee_rate,
+            "cash_interest_rate": specification.execution.cash_interest_rate,
             "unavailable_borrow": list(specification.execution.unavailable_borrow),
             "max_leverage": specification.execution.max_leverage,
             "margin_requirement": specification.execution.margin_requirement,
@@ -1196,15 +1253,20 @@ def run_backtest(
         "fill_count": len(fills),
         "trade_count": len(trades),
         "rejection_count": len(rejections),
+        "cash_interest_periods": cash_interest_periods,
         "costs": {
-            "total_commission": round(sum(fill.commission for fill in fills), 4),
-            "total_slippage": round(sum(fill.slippage_cost for fill in fills), 4),
-            "total_borrow_fees": round(sum(row.borrow_fees for row in ledger), 4),
-            "total_costs": round(
-                sum(fill.commission + fill.slippage_cost for fill in fills)
-                + sum(row.borrow_fees for row in ledger),
-                4,
-            ),
+            "total_commission": total_commission,
+            "total_slippage": total_slippage,
+            "total_borrow_fees": total_borrow_fees,
+            "total_cash_interest": total_cash_interest,
+            "total_costs": total_costs,
+            "portfolio_impact": {
+                "commission": round(-total_commission, 4),
+                "slippage": round(-total_slippage, 4),
+                "borrow_fees": round(-total_borrow_fees, 4),
+                "cash_interest": total_cash_interest,
+                "net": round(-total_costs, 4),
+            },
         },
     }
 

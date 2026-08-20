@@ -1193,6 +1193,11 @@ export interface components {
              * @default 0
              */
             borrow_fee_rate: number;
+            /**
+             * Cash Interest Rate
+             * @default 0
+             */
+            cash_interest_rate: number;
             /** Unavailable Borrow */
             unavailable_borrow?: string[];
             /**
@@ -1244,6 +1249,11 @@ export interface components {
              * @default 0
              */
             borrow_fee_rate: number;
+            /**
+             * Cash Interest Rate
+             * @default 0
+             */
+            cash_interest_rate: number;
             /** Unavailable Borrow */
             unavailable_borrow?: string[];
             /**
@@ -1702,6 +1712,11 @@ export interface components {
              * @default 0
              */
             borrow_fees: number;
+            /**
+             * Cash Interest
+             * @default 0
+             */
+            cash_interest: number;
         };
         /** NaiveBenchmarkEvaluationResponse */
         NaiveBenchmarkEvaluationResponse: {

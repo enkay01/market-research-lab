@@ -819,6 +819,7 @@ class ExecutionModelAssumptionsRequest(BaseModel):
     slippage_rate: float = Field(default=0.0, ge=0, lt=1)
     allow_shorting: bool = True
     borrow_fee_rate: float = Field(default=0.0, ge=0)
+    cash_interest_rate: float = Field(default=0.0, allow_inf_nan=False)
     unavailable_borrow: list[str] = Field(default_factory=list)
     max_leverage: float = Field(default=1.0, gt=0)
     margin_requirement: float = Field(default=1.0, gt=0)
@@ -895,6 +896,7 @@ class LedgerRowResponse(BaseModel):
     gross_exposure: float = 0.0
     net_exposure: float = 0.0
     borrow_fees: float = 0.0
+    cash_interest: float = 0.0
 
 
 class TradeResponse(BaseModel):
@@ -923,6 +925,7 @@ class ExecutionModelAssumptionsResponse(BaseModel):
     slippage_rate: float = 0.0
     allow_shorting: bool = True
     borrow_fee_rate: float = 0.0
+    cash_interest_rate: float = 0.0
     unavailable_borrow: list[str] = Field(default_factory=list)
     max_leverage: float = 1.0
     margin_requirement: float = 1.0
@@ -2495,6 +2498,7 @@ def create_app(
                     slippage_rate=request.execution.slippage_rate,
                     allow_shorting=request.execution.allow_shorting,
                     borrow_fee_rate=request.execution.borrow_fee_rate,
+                    cash_interest_rate=request.execution.cash_interest_rate,
                     unavailable_borrow=tuple(request.execution.unavailable_borrow),
                     max_leverage=request.execution.max_leverage,
                     margin_requirement=request.execution.margin_requirement,
