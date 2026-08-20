@@ -1184,15 +1184,22 @@ class MarketDataStore:
         loaded = self._load_dataset_df(dataset_version_id)
         df = self._filter_by_as_of_and_symbol(loaded, symbol=symbol, as_of=as_of)
 
+        if "field" not in df.columns or "fiscal_period" not in df.columns:
+            if as_dataframe:
+                return pd.DataFrame()
+            return []
+
         if as_dataframe:
             return df.reset_index(drop=True)
 
         facts: list[FundamentalFact] = []
         for _, row in df.iterrows():
             raw_val = row["value"]
-            val: float | str = str(raw_val)
+            val: float | str = str(raw_val).strip()
             with contextlib.suppress(ValueError, TypeError):
-                val = float(raw_val)
+                numeric_val = float(raw_val)
+                if math.isfinite(numeric_val):
+                    val = numeric_val
 
             raw_incomplete = row.get("incomplete_fields")
             incomplete_fields = _parse_incomplete_fields(raw_incomplete)
@@ -1239,6 +1246,11 @@ class MarketDataStore:
     ) -> list[CorporateAction] | pd.DataFrame:
         loaded = self._load_dataset_df(dataset_version_id)
         df = self._filter_by_as_of_and_symbol(loaded, symbol=symbol, as_of=as_of)
+
+        if "type" not in df.columns or "effective_date" not in df.columns:
+            if as_dataframe:
+                return pd.DataFrame()
+            return []
 
         if as_dataframe:
             return df.reset_index(drop=True)
