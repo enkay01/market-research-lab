@@ -162,6 +162,9 @@ def test_validate_strategy_definition_accepts_valid_and_rejects_missing_fields()
             {"strategy": "mystery", "symbol": "AAPL", "dataset_version_id": "ds-1"}
         )
 
+    with pytest.raises(InvalidStrategyDefinitionError, match="price_field"):
+        validate_strategy_definition({**valid, "price_field": []})
+
 
 def test_evaluate_signal_builds_action_data_time_and_rationale() -> None:
     view = MarketView(

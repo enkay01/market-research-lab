@@ -7,6 +7,7 @@ to a broker and never produces an order (CORE-009, ALT-005).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -28,6 +29,9 @@ if TYPE_CHECKING:
     from .projects import ProjectStore
 
 
+logger = logging.getLogger(__name__)
+
+
 class InvalidStrategyDefinitionError(ValueError):
     """Raised when a Strategy revision definition cannot be enabled."""
 
@@ -40,10 +44,6 @@ _REFRESH_ERRORS = (
     RevisionNotFoundError,
     RevisionNotImmutableError,
     ValueError,
-    OSError,
-    TypeError,
-    KeyError,
-    IndexError,
 )
 
 
@@ -117,7 +117,12 @@ def validate_strategy_definition(definition: JsonValue) -> None:
             "The Strategy definition is missing its 'dataset_version_id'."
         )
     price_field = definition.get("price_field", "close")
-    if price_field not in {"close", "open", "high", "low"}:
+    if not isinstance(price_field, str) or price_field not in {
+        "close",
+        "open",
+        "high",
+        "low",
+    }:
         raise InvalidStrategyDefinitionError(
             "The Strategy definition has an invalid 'price_field'."
         )
@@ -212,10 +217,14 @@ def refresh_enabled_strategies(
     failures: list[SignalRefreshFailure] = []
 
     for enabled in store.list_enabled_strategies(project_id):
-        name = str(enabled["name"])
-        revision = str(enabled["revision"])
+        name = str(enabled.get("name", ""))
+        revision = str(enabled.get("revision", ""))
         strategy_revision = f"{name}:{revision}"
         try:
+            if not name.strip() or not revision.strip():
+                raise InvalidStrategyDefinitionError(
+                    "The enabled Strategy record is missing its name or revision."
+                )
             wrapped = store.read_revision(
                 project_id, kind="strategy", name=name, revision=revision
             )
@@ -269,6 +278,11 @@ def refresh_enabled_strategies(
             store.save_signal(project_id, signal.to_json())
             signals.append(signal)
         except _REFRESH_ERRORS as error:
+            failures.append(
+                SignalRefreshFailure(strategy_revision=strategy_revision, error=str(error))
+            )
+        except Exception as error:
+            logger.exception("Unexpected failure while refreshing %s", strategy_revision)
             failures.append(
                 SignalRefreshFailure(strategy_revision=strategy_revision, error=str(error))
             )
