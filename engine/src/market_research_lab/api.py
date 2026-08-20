@@ -51,7 +51,6 @@ from .indicators import (
 )
 from .json_types import JsonValue
 from .market_data import (
-    DATASET_TYPE_CORPORATE_ACTIONS,
     CoverageReport,
     InadequateTemporalProvenanceError,
     IngestionRequest,
@@ -840,7 +839,6 @@ class BacktestRunRequest(BaseModel):
     starting_cash: float = Field(gt=0)
     parameters: dict[str, JsonValue] = Field(default_factory=dict)
     price_field: Literal["close", "open", "high", "low"] = "close"
-    calendar: Literal["US", "none"] = "none"
     execution: ExecutionModelAssumptionsRequest = Field(
         default_factory=ExecutionModelAssumptionsRequest
     )
@@ -899,9 +897,6 @@ class LedgerRowResponse(BaseModel):
     net_exposure: float = 0.0
     borrow_fees: float = 0.0
     cash_interest: float = 0.0
-    dividends: float = 0.0
-    splits: dict[str, float] = Field(default_factory=dict)
-    delistings: list[str] = Field(default_factory=list)
 
 
 class TradeResponse(BaseModel):
@@ -948,7 +943,6 @@ class BacktestSpecificationResponse(BaseModel):
     starting_cash: float = 100000.0
     parameters: dict[str, JsonValue] = Field(default_factory=dict)
     price_field: str = "close"
-    calendar: str = "none"
     execution: ExecutionModelAssumptionsResponse = Field(
         default_factory=ExecutionModelAssumptionsResponse
     )
@@ -2486,25 +2480,6 @@ def create_app(
                 )
                 all_bars.extend(bench_bars)
 
-            all_corp_actions = []
-            for sec in resolved_securities:
-                actions_sec = market_store.corporate_actions(
-                    request.dataset_version_id, symbol=sec.security_id
-                )
-                if isinstance(actions_sec, list):
-                    all_corp_actions.extend(actions_sec)
-
-            for ver_cov in market_store.list_dataset_versions():
-                if ver_cov.id != request.dataset_version_id and (
-                    ver_cov.dataset_type == DATASET_TYPE_CORPORATE_ACTIONS or ver_cov.is_corporate_actions
-                ):
-                    for sec in resolved_securities:
-                        actions_sec = market_store.corporate_actions(
-                            ver_cov.id, symbol=sec.security_id
-                        )
-                        if isinstance(actions_sec, list):
-                            all_corp_actions.extend(actions_sec)
-
             universe_ids = tuple(sec.security_id for sec in resolved_securities)
             spec = BacktestSpecification(
                 strategy_name=request.strategy_name,
@@ -2517,7 +2492,6 @@ def create_app(
                 starting_cash=request.starting_cash,
                 parameters=request.parameters,
                 price_field=request.price_field,
-                calendar=request.calendar,
                 execution=ExecutionModelAssumptions(
                     schedule=request.execution.schedule,
                     commission_rate=request.execution.commission_rate,
@@ -2533,7 +2507,7 @@ def create_app(
                 ),
                 benchmark_security_id=bench_sec.security_id if bench_sec else None,
             )
-            result = run_backtest(spec, bars=all_bars, corporate_actions=all_corp_actions)
+            result = run_backtest(spec, bars=all_bars)
         except Exception as error:
             store.create_failed_backtest_run(
                 str(project_id),

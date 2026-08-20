@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import math
 import re
 import statistics
@@ -10,9 +9,8 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Literal, Sequence
 
-from .exchange_calendar import get_trading_days, is_trading_day, next_trading_day
 from .json_types import JsonValue
-from .market_data import CorporateAction, DailyBar
+from .market_data import DailyBar
 from .strategies import MarketView, StrategyTarget, evaluate_strategy, get_strategy_spec
 
 
@@ -63,7 +61,6 @@ class BacktestSpecification:
     execution: ExecutionModelAssumptions = field(default_factory=ExecutionModelAssumptions)
     universe: tuple[str, ...] = ()
     benchmark_security_id: str | None = None
-    calendar: Literal["US", "none"] = "none"
 
 
 @dataclass(frozen=True)
@@ -123,9 +120,6 @@ class LedgerRow:
     net_exposure: float = 0.0
     borrow_fees: float = 0.0
     cash_interest: float = 0.0  # signed interest credited to or charged against cash
-    dividends: float = 0.0  # net cash dividends credited (positive) or debited (negative)
-    splits: dict[str, float] = field(default_factory=dict)  # security_id -> split factor applied today
-    delistings: tuple[str, ...] = ()  # securities delisted today
 
 
 @dataclass(frozen=True)
@@ -302,10 +296,6 @@ def _validate_specification(specification: BacktestSpecification) -> tuple[str, 
         raise BacktestParameterError(
             f"price_field must be one of 'close', 'open', 'high', 'low', "
             f"got {specification.price_field!r}."
-        )
-    if specification.calendar not in {"US", "none"}:
-        raise BacktestParameterError(
-            f"calendar must be 'US' or 'none', got {specification.calendar!r}."
         )
     if not _valid_date(specification.start_date):
         raise BacktestParameterError(
@@ -526,25 +516,11 @@ def _compute_benchmark_curve(
 
 
 def run_backtest(
-    specification: BacktestSpecification,
-    *,
-    bars: Sequence[DailyBar],
-    corporate_actions: Sequence[CorporateAction] = (),
+    specification: BacktestSpecification, *, bars: Sequence[DailyBar]
 ) -> BacktestResult:
     """Run a deterministic next-open Backtest over a multi-Security universe."""
     universe = _validate_specification(specification)
     get_strategy_spec(specification.strategy_name)
-
-    # Validate corporate actions
-    for action in corporate_actions:
-        if action.type not in {"split", "stock_split", "dividend", "delisting", "delist"}:
-            raise BacktestError(f"Unsupported corporate action type: {action.type!r}.")
-        if not math.isfinite(action.value):
-            raise BacktestError(f"Corporate action value must be finite, got {action.value!r}.")
-        if action.type in {"split", "stock_split"} and action.value <= 0.0:
-            raise BacktestError(f"Split factor must be > 0, got {action.value!r}.")
-        if not _valid_date(action.effective_date):
-            raise BacktestError(f"Corporate action effective_date must be YYYY-MM-DD, got {action.effective_date!r}.")
 
     available_at_by_date: dict[str, datetime] = {}
     for bar in bars:
@@ -564,30 +540,22 @@ def run_backtest(
     for bar in bars:
         bars_by_symbol.setdefault(bar.security_id, {})[bar.session_date] = bar
 
-    # Index corporate actions by effective_date
-    corp_actions_by_date: dict[str, list[CorporateAction]] = {}
-    for action in corporate_actions:
-        if action.security_id in universe:
-            corp_actions_by_date.setdefault(action.effective_date, []).append(action)
-
     # Determine unique sorted simulation dates in the window [start_date, end_date]
-    if specification.calendar == "US":
-        trading_days = get_trading_days(specification.start_date, specification.end_date, exchange="US")
-        if not trading_days:
-            raise BacktestError("no bars within [start_date, end_date]")
-        sorted_window_dates = trading_days
-    else:
-        window_dates_set: set[str] = set()
-        for sym in universe:
-            if sym in bars_by_symbol:
-                for session_date in bars_by_symbol[sym]:
-                    if specification.start_date <= session_date <= specification.end_date:
-                        window_dates_set.add(session_date)
+    universe_and_bench = set(universe)
+    if specification.benchmark_security_id:
+        universe_and_bench.add(specification.benchmark_security_id)
 
-        if not window_dates_set:
-            raise BacktestError("no bars within [start_date, end_date]")
-        sorted_window_dates = sorted(window_dates_set)
+    window_dates_set: set[str] = set()
+    for sym in universe:
+        if sym in bars_by_symbol:
+            for session_date in bars_by_symbol[sym]:
+                if specification.start_date <= session_date <= specification.end_date:
+                    window_dates_set.add(session_date)
 
+    if not window_dates_set:
+        raise BacktestError("no bars within [start_date, end_date]")
+
+    sorted_window_dates = sorted(window_dates_set)
     sorted_all_bars = sorted(bars, key=lambda b: (b.available_at, b.session_date))
 
     cash = specification.starting_cash
@@ -595,8 +563,6 @@ def run_backtest(
     holding_target_weights: dict[str, float] = {sym: 0.0 for sym in universe}
     pending_targets: dict[str, PendingTarget] = {}
     open_trades: dict[str, OpenTrade] = {}
-    last_known_close_prices: dict[str, float] = {sym: 0.0 for sym in universe}
-    delisted_securities: set[str] = set()
     trade_counter = 0
 
     signals: list[StrategyTarget] = []
@@ -607,129 +573,13 @@ def run_backtest(
     rejections: list[ConstraintRejection] = []
     previous_eligible_at: datetime | None = None
     cash_interest_periods = 0
-    total_splits_count = 0
-    total_dividends_credited = 0.0
-    delistings_applied: list[str] = []
 
     primary_symbol = universe[0]
 
     for date_str in sorted_window_dates:
         fills_today: list[Fill] = []
-        splits_today: dict[str, float] = {}
-        dividends_today = 0.0
-        delistings_today: list[str] = []
         cash_interest_today = 0.0
-
         current_eligible_at = available_at_by_date.get(date_str)
-
-        # -------------------------------------------------------------
-        # STEP 0: Apply corporate actions effective on date_str
-        # -------------------------------------------------------------
-        day_actions = corp_actions_by_date.get(date_str, [])
-        for action in day_actions:
-            # Point-in-time check: corporate action must be available at or before today's decision time
-            if action.available_at and current_eligible_at:
-                action_available_at: datetime | None = None
-                with contextlib.suppress(BacktestError):
-                    action_available_at = _parse_available_at(action.available_at)
-
-                if action_available_at is not None and action_available_at > current_eligible_at:
-                    # Skip future corporate action (DATA-008 leakage prevention)
-                    continue
-
-            sym = action.security_id
-            if sym in delisted_securities:
-                continue
-
-            if action.type in {"split", "stock_split"}:
-                factor = action.value
-                curr_s = positions.get(sym, 0.0)
-                positions[sym] = curr_s * factor
-                if sym in open_trades:
-                    open_tr = open_trades[sym]
-                    new_qty = open_tr.quantity * factor
-                    new_entry_p = open_tr.entry_price / factor if factor > 0 else open_tr.entry_price
-                    open_trades[sym] = replace(open_tr, quantity=new_qty, entry_price=new_entry_p)
-                splits_today[sym] = factor
-                total_splits_count += 1
-
-            elif action.type == "dividend":
-                div_val = action.value
-                curr_s = positions.get(sym, 0.0)
-                div_cash = curr_s * div_val
-                cash += div_cash
-                dividends_today += div_cash
-                total_dividends_credited += div_cash
-
-            elif action.type in {"delisting", "delist"}:
-                liq_price = max(0.0, action.value)
-                curr_s = positions.get(sym, 0.0)
-                if abs(curr_s) > EPS:
-                    open_tr = open_trades.get(sym)
-                    if curr_s > EPS:
-                        proceeds = curr_s * liq_price
-                        cash += proceeds
-                        if open_tr is not None:
-                            trade_pnl = proceeds - open_tr.entry_cost
-                            trade_cost_basis = open_tr.entry_cost
-                            trades.append(
-                                Trade(
-                                    trade_id=open_tr.trade_id,
-                                    security_id=sym,
-                                    entry_date=open_tr.entry_date,
-                                    exit_date=date_str,
-                                    entry_price=open_tr.entry_price,
-                                    exit_price=liq_price,
-                                    quantity=open_tr.quantity,
-                                    entry_cost=round(open_tr.entry_cost, 4),
-                                    exit_proceeds=round(proceeds, 4),
-                                    pnl=round(trade_pnl, 4),
-                                    return_pct=round(trade_pnl / trade_cost_basis if trade_cost_basis > 0 else 0.0, 6),
-                                )
-                            )
-                            del open_trades[sym]
-                    else:
-                        cover_cost = abs(curr_s) * liq_price
-                        cash = cash - cover_cost
-                        if open_tr is not None:
-                            trade_pnl = open_tr.entry_cost - cover_cost
-                            trade_cost_basis = open_tr.quantity * open_tr.entry_price
-                            trades.append(
-                                Trade(
-                                    trade_id=open_tr.trade_id,
-                                    security_id=sym,
-                                    entry_date=open_tr.entry_date,
-                                    exit_date=date_str,
-                                    entry_price=open_tr.entry_price,
-                                    exit_price=liq_price,
-                                    quantity=open_tr.quantity,
-                                    entry_cost=round(open_tr.entry_cost, 4),
-                                    exit_proceeds=round(cover_cost, 4),
-                                    pnl=round(trade_pnl, 4),
-                                    return_pct=round(trade_pnl / trade_cost_basis if trade_cost_basis > 0 else 0.0, 6),
-                                )
-                            )
-                            del open_trades[sym]
-                    positions[sym] = 0.0
-                    holding_target_weights[sym] = 0.0
-
-                delisted_securities.add(sym)
-                delistings_today.append(sym)
-                delistings_applied.append(sym)
-                if sym in pending_targets:
-                    del pending_targets[sym]
-                    rejections.append(
-                        ConstraintRejection(
-                            session_date=date_str,
-                            security_id=sym,
-                            rule="delisted_security",
-                            reason=f"Security '{sym}' was delisted on {action.effective_date}.",
-                        )
-                    )
-
-        # -------------------------------------------------------------
-        # STEP 1: Cash Interest
-        # -------------------------------------------------------------
         if (
             previous_eligible_at is not None
             and current_eligible_at is not None
@@ -747,48 +597,32 @@ def run_backtest(
             )
 
         # -------------------------------------------------------------
-        # STEP 2: Reconcile pending targets at today's open price
+        # STEP 1: Reconcile pending targets at today's open price
         # -------------------------------------------------------------
         if pending_targets:
             # Calculate open portfolio value using today's open prices
             open_prices: dict[str, float] = {}
             for sym in universe:
-                if sym in delisted_securities:
-                    open_prices[sym] = 0.0
-                    continue
                 bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
                 if bar_sym is not None:
                     open_prices[sym] = bar_sym.open
-                    last_known_close_prices[sym] = bar_sym.close
                 else:
                     open_prices[sym] = 0.0
 
             curr_positions_val_at_open = sum(
-                positions.get(sym, 0.0)
-                * (open_prices.get(sym, 0.0) if open_prices.get(sym, 0.0) > 0.0 else last_known_close_prices.get(sym, 0.0))
-                for sym in universe
+                positions.get(sym, 0.0) * open_prices.get(sym, 0.0) for sym in universe
             )
             portfolio_val_at_open = cash + curr_positions_val_at_open
 
-            # Compute desired share deltas for symbols with active open prices
+            # Compute desired share deltas for each symbol
             desired_deltas: dict[str, float] = {}
-            symbols_to_process: list[str] = []
-
-            for sym, target in list(pending_targets.items()):
-                if sym in delisted_securities:
-                    del pending_targets[sym]
-                    continue
-
-                open_p = open_prices.get(sym, 0.0)
-                if open_p <= 0.0:
-                    # Missing bar on this session: target remains pending for the next session
-                    continue
-
-                symbols_to_process.append(sym)
-                target_w = target.weight
+            for sym in universe:
+                target = pending_targets.get(sym)
+                target_w = target.weight if target is not None else 0.0
                 curr_shares = positions.get(sym, 0.0)
+                open_p = open_prices.get(sym, 0.0)
 
-                if abs(target_w) <= EPS:
+                if open_p <= 0.0 or abs(target_w) <= EPS:
                     target_shares = 0.0
                     holding_target_weights[sym] = 0.0
                 elif target_w > 0.0:
@@ -814,10 +648,10 @@ def run_backtest(
                 desired_deltas[sym] = target_shares - curr_shares
 
             # Execution ordering: SELLS execute before BUYS
-            sell_symbols = [s for s in symbols_to_process if desired_deltas.get(s, 0.0) < -EPS]
-            buy_symbols = [s for s in symbols_to_process if desired_deltas.get(s, 0.0) > EPS]
+            sell_symbols = [s for s in universe if desired_deltas.get(s, 0.0) < -EPS]
+            buy_symbols = [s for s in universe if desired_deltas.get(s, 0.0) > EPS]
 
-            # 2a. Process SELLS (long exits / short openings)
+            # 1a. Process SELLS (long exits / short openings)
             for sym in sell_symbols:
                 bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
                 if bar_sym is None:
@@ -910,7 +744,7 @@ def run_backtest(
                         side="short",
                     )
 
-            # 2b. Process BUYS (short covers / long openings)
+            # 1b. Process BUYS (short covers / long openings)
             for sym in buy_symbols:
                 bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
                 if bar_sym is None:
@@ -1077,23 +911,18 @@ def run_backtest(
                         side="long",
                     )
 
-            # Clear processed pending targets
-            for sym in symbols_to_process:
-                pending_targets.pop(sym, None)
+        pending_targets.clear()
 
         # -------------------------------------------------------------
-        # STEP 3: Evaluate Strategy on today's close for each security
+        # STEP 2: Evaluate Strategy on today's close for each security
         # -------------------------------------------------------------
         candidate_targets: list[tuple[str, StrategyTarget, float, DailyBar]] = []
-        active_universe = [s for s in universe if s not in delisted_securities]
-        universe_size = len(active_universe)
+        universe_size = len(universe)
 
-        for sym in active_universe:
+        for sym in universe:
             bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
             if bar_sym is None:
                 continue
-
-            last_known_close_prices[sym] = _price_value(bar_sym, specification.price_field)
 
             view = _market_view(
                 sym, sorted_all_bars, bar_sym.available_at, specification.price_field
@@ -1233,14 +1062,14 @@ def run_backtest(
                     primary_target = target
 
         # -------------------------------------------------------------
-        # STEP 4: Mark-to-market and borrow cost accounting at close
+        # STEP 3: Mark-to-market and borrow cost accounting at close
         # -------------------------------------------------------------
         borrow_fee_today = 0.0
         for sym in universe:
             shares_sym = positions.get(sym, 0.0)
             if shares_sym < -EPS:
                 bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
-                close_p = _price_value(bar_sym, specification.price_field) if bar_sym else last_known_close_prices.get(sym, 0.0)
+                close_p = _price_value(bar_sym, specification.price_field) if bar_sym else 0.0
                 short_val = abs(shares_sym) * close_p
                 borrow_rate = specification.execution.hard_to_borrow_rates.get(
                     sym, specification.execution.borrow_fee_rate
@@ -1258,16 +1087,8 @@ def run_backtest(
         primary_shares = positions.get(primary_symbol, 0.0)
 
         for sym in universe:
-            if sym in delisted_securities:
-                close_p = 0.0
-            else:
-                bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
-                if bar_sym is not None:
-                    close_p = _price_value(bar_sym, specification.price_field)
-                    last_known_close_prices[sym] = close_p
-                else:
-                    close_p = last_known_close_prices.get(sym, 0.0)
-
+            bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
+            close_p = _price_value(bar_sym, specification.price_field) if bar_sym else 0.0
             if sym == primary_symbol:
                 primary_close = close_p
 
@@ -1279,12 +1100,8 @@ def run_backtest(
         portfolio_val = cash + total_pos_val
 
         for sym in universe:
-            if sym in delisted_securities:
-                close_p = 0.0
-            else:
-                bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
-                close_p = _price_value(bar_sym, specification.price_field) if bar_sym else last_known_close_prices.get(sym, 0.0)
-
+            bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
+            close_p = _price_value(bar_sym, specification.price_field) if bar_sym else 0.0
             shares_sym = positions.get(sym, 0.0)
             val_sym = shares_sym * close_p
             w_sym = (val_sym / portfolio_val) if portfolio_val > 0.0 else 0.0
@@ -1340,9 +1157,6 @@ def run_backtest(
                 net_exposure=round(net_exp, 6),
                 borrow_fees=round(borrow_fee_today, 4),
                 cash_interest=round(cash_interest_today, 4),
-                dividends=round(dividends_today, 4),
-                splits=splits_today,
-                delistings=tuple(delistings_today),
             )
         )
 
@@ -1403,7 +1217,6 @@ def run_backtest(
     total_slippage = round(sum(fill.slippage_cost for fill in fills), 4)
     total_borrow_fees = round(sum(row.borrow_fees for row in ledger), 4)
     total_cash_interest = round(sum(row.cash_interest for row in ledger), 4)
-    total_dividends = round(sum(row.dividends for row in ledger), 4)
     total_costs = round(
         total_commission + total_slippage + total_borrow_fees - total_cash_interest,
         4,
@@ -1441,28 +1254,18 @@ def run_backtest(
         "trade_count": len(trades),
         "rejection_count": len(rejections),
         "cash_interest_periods": cash_interest_periods,
-        "corporate_actions": {
-            "total_dividends": total_dividends,
-            "total_splits": total_splits_count,
-            "delistings": delistings_applied,
-        },
         "costs": {
             "total_commission": total_commission,
             "total_slippage": total_slippage,
             "total_borrow_fees": total_borrow_fees,
             "total_cash_interest": total_cash_interest,
-            "total_dividends": total_dividends,
             "total_costs": total_costs,
             "portfolio_impact": {
                 "commission": round(-total_commission, 4),
                 "slippage": round(-total_slippage, 4),
                 "borrow_fees": round(-total_borrow_fees, 4),
                 "cash_interest": total_cash_interest,
-                "dividends": total_dividends,
-                "net": round(
-                    -total_commission - total_slippage - total_borrow_fees + total_cash_interest + total_dividends,
-                    4,
-                ),
+                "net": round(-total_costs, 4),
             },
         },
     }

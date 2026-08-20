@@ -823,12 +823,6 @@ export interface components {
              * @enum {string}
              */
             price_field: "close" | "open" | "high" | "low";
-            /**
-             * Calendar
-             * @default none
-             * @enum {string}
-             */
-            calendar: "US" | "none";
             execution?: components["schemas"]["ExecutionModelAssumptionsRequest"];
         };
         /** BacktestSpecificationResponse */
@@ -868,11 +862,6 @@ export interface components {
              * @default close
              */
             price_field: string;
-            /**
-             * Calendar
-             * @default none
-             */
-            calendar: string;
             execution?: components["schemas"]["ExecutionModelAssumptionsResponse"];
             /** Universe */
             universe?: string[];
@@ -1728,17 +1717,6 @@ export interface components {
              * @default 0
              */
             cash_interest: number;
-            /**
-             * Dividends
-             * @default 0
-             */
-            dividends: number;
-            /** Splits */
-            splits?: {
-                [key: string]: number;
-            };
-            /** Delistings */
-            delistings?: string[];
         };
         /** NaiveBenchmarkEvaluationResponse */
         NaiveBenchmarkEvaluationResponse: {
