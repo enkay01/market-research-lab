@@ -5,7 +5,12 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from market_research_lab.api import create_app
+from market_research_lab.api import ExecutionModelAssumptionsRequest, create_app
+
+
+def test_cash_interest_request_rejects_non_finite_values():
+    with pytest.raises(ValueError, match="finite"):
+        ExecutionModelAssumptionsRequest.model_validate({"cash_interest_rate": float("nan")})
 
 
 def _tiingo_prices_fetch_json(url: str, _headers: dict[str, str]) -> dict:
@@ -1219,6 +1224,11 @@ def test_backtest_run_end_to_end_returns_ledger_and_metrics(tmp_path):
             "end_date": "2024-01-10",
             "starting_cash": 100000,
             "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+            "execution": {
+                "commission_rate": 0.001,
+                "slippage_rate": 0.0005,
+                "cash_interest_rate": 0.02,
+            },
         },
     )
     assert response.status_code == 201
@@ -1228,6 +1238,9 @@ def test_backtest_run_end_to_end_returns_ledger_and_metrics(tmp_path):
     assert result["ledger"]
     assert "total_return" in result["metrics"]
     assert result["manifest"]["kind"] == "backtest"
+    assert result["specification"]["execution"]["cash_interest_rate"] == 0.02
+    assert result["manifest"]["execution"]["cash_interest_rate"] == 0.02
+    assert "total_cash_interest" in result["manifest"]["costs"]
 
     listed = client.get(f"/api/projects/{project['id']}/backtests")
     assert listed.status_code == 200

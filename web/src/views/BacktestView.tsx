@@ -55,6 +55,39 @@ function currencyFormat(value: number | null | undefined, currency: string = "US
   return `${currency} ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function signedCurrencyFormat(value: number | null | undefined, currency: string = "USD"): string {
+  if (value === null || value === undefined) return "—";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${currencyFormat(value, currency)}`;
+}
+
+function manifestCost(result: BacktestResult | null, key: string): number {
+  const manifest = result?.manifest;
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) return 0;
+  const costs = (manifest as Record<string, unknown>).costs;
+  if (!costs || typeof costs !== "object" || Array.isArray(costs)) return 0;
+  const value = (costs as Record<string, unknown>)[key];
+  return typeof value === "number" ? value : 0;
+}
+
+function manifestNumber(result: BacktestResult | null, key: string): number {
+  const manifest = result?.manifest;
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) return 0;
+  const value = (manifest as Record<string, unknown>)[key];
+  return typeof value === "number" ? value : 0;
+}
+
+function manifestPortfolioImpact(result: BacktestResult | null, key: string): number {
+  const manifest = result?.manifest;
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) return 0;
+  const costs = (manifest as Record<string, unknown>).costs;
+  if (!costs || typeof costs !== "object" || Array.isArray(costs)) return 0;
+  const impact = (costs as Record<string, unknown>).portfolio_impact;
+  if (!impact || typeof impact !== "object" || Array.isArray(impact)) return 0;
+  const value = (impact as Record<string, unknown>)[key];
+  return typeof value === "number" ? value : 0;
+}
+
 function KpiCard({
   label,
   value,
@@ -248,6 +281,7 @@ export function BacktestView({ project }: BacktestViewProps) {
   const [slippageBps, setSlippageBps] = useState<string>("2.0");
   const [allowShorting, setAllowShorting] = useState<boolean>(true);
   const [borrowFeeBps, setBorrowFeeBps] = useState<string>("0.0");
+  const [cashInterestBps, setCashInterestBps] = useState<string>("0.0");
   const [unavailableBorrowInput, setUnavailableBorrowInput] = useState<string>("");
   const [maxLeverage, setMaxLeverage] = useState<string>("1.0");
   const [marginRequirement, setMarginRequirement] = useState<string>("100.0");
@@ -392,6 +426,7 @@ export function BacktestView({ project }: BacktestViewProps) {
           slippage_rate: (parseFloat(slippageBps) || 0) / 10000,
           allow_shorting: allowShorting,
           borrow_fee_rate: (parseFloat(borrowFeeBps) || 0) / 10000,
+          cash_interest_rate: (parseFloat(cashInterestBps) || 0) / 10000,
           unavailable_borrow: unavailableList,
           max_leverage: parseFloat(maxLeverage) || 1.0,
           margin_requirement: (parseFloat(marginRequirement) || 100.0) / 100.0,
@@ -667,6 +702,11 @@ export function BacktestView({ project }: BacktestViewProps) {
                       onChange={(v) => setBorrowFeeBps(typeof v === "string" ? v : "")}
                     />
                     <TextInput
+                      label="Cash Interest (signed bps p.a.)"
+                      value={cashInterestBps}
+                      onChange={(v) => setCashInterestBps(typeof v === "string" ? v : "")}
+                    />
+                    <TextInput
                       label="Unavailable Borrow (Symbols)"
                       value={unavailableBorrowInput}
                       onChange={(v) => setUnavailableBorrowInput(typeof v === "string" ? v : "")}
@@ -873,6 +913,38 @@ export function BacktestView({ project }: BacktestViewProps) {
                         </TableRow>
                       </TableBody>
                     </Table>
+
+                    <Heading level={3}>Cost Attribution</Heading>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHeaderCell>Category</TableHeaderCell>
+                          <TableHeaderCell>Amount</TableHeaderCell>
+                          <TableHeaderCell>Portfolio Impact</TableHeaderCell>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {[
+                          ["Commission", "total_commission", "commission"],
+                          ["Slippage", "total_slippage", "slippage"],
+                          ["Borrow Fees", "total_borrow_fees", "borrow_fees"],
+                          ["Cash Interest", "total_cash_interest", "cash_interest"],
+                          ["Net Costs", "total_costs", "net"],
+                        ].map(([label, amountKey, impactKey]) => (
+                          <TableRow key={label}>
+                            <TableCell>
+                              <Text weight={label === "Net Costs" ? "bold" : undefined}>{label}</Text>
+                            </TableCell>
+                            <TableCell>{signedCurrencyFormat(manifestCost(currentResult, amountKey))}</TableCell>
+                            <TableCell>
+                              <Text weight={label === "Net Costs" ? "bold" : undefined}>
+                                {signedCurrencyFormat(manifestPortfolioImpact(currentResult, impactKey))}
+                              </Text>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </VStack>
                 )}
 
@@ -1013,6 +1085,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                             <TableHeaderCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>Gross Exp</TableHeaderCell>
                             <TableHeaderCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>Net Exp</TableHeaderCell>
                             <TableHeaderCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>Borrow Fees</TableHeaderCell>
+                            <TableHeaderCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>Cash Interest</TableHeaderCell>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -1048,6 +1121,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                                 <TableCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>{percentage(row.gross_exposure)}</TableCell>
                                 <TableCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>{percentage(row.net_exposure)}</TableCell>
                                 <TableCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>{currencyFormat(row.borrow_fees ?? 0)}</TableCell>
+                                <TableCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>{signedCurrencyFormat(row.cash_interest ?? 0)}</TableCell>
                               </TableRow>
                             );
                           })}
@@ -1171,11 +1245,15 @@ export function BacktestView({ project }: BacktestViewProps) {
                             <Text type="supporting">Total Execution Costs</Text>
                           </TableCell>
                           <TableCell>
-                            <Text>
-                              {currencyFormat(
-                                (currentResult.manifest?.costs as any)?.total_costs ?? 0,
-                              )}
-                            </Text>
+                            <Text>{signedCurrencyFormat(manifestCost(currentResult, "total_costs"))}</Text>
+                          </TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>
+                            <Text type="supporting">Cash Interest Periods</Text>
+                          </TableCell>
+                          <TableCell>
+                            <Text>{manifestNumber(currentResult, "cash_interest_periods")}</Text>
                           </TableCell>
                         </TableRow>
                       </TableBody>

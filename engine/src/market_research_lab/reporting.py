@@ -825,6 +825,7 @@ def generate_backtest_html_report(
     execution = exec_raw if isinstance(exec_raw, dict) else {}
     commission_rate = float(execution.get("commission_rate", 0.0))
     slippage_rate = float(execution.get("slippage_rate", 0.0))
+    cash_interest_rate = float(execution.get("cash_interest_rate", 0.0))
     schedule = html.escape(str(execution.get("schedule") or "daily"))
     price_field = html.escape(str(spec.get("price_field") or "close"))
 
@@ -868,6 +869,15 @@ def generate_backtest_html_report(
     bench_rel = metrics.get("benchmark_relative_return")
     num_trades = int(metrics.get("num_trades", 0))
     num_fills = int(metrics.get("num_fills", 0))
+
+    result_manifest_raw = result_data.get("manifest")
+    result_manifest = result_manifest_raw if isinstance(result_manifest_raw, dict) else {}
+    costs_raw = result_manifest.get("costs")
+    costs = costs_raw if isinstance(costs_raw, dict) else {}
+    portfolio_impact_raw = costs.get("portfolio_impact")
+    portfolio_impact = (
+        portfolio_impact_raw if isinstance(portfolio_impact_raw, dict) else {}
+    )
 
     hit_rate_str = f"{float(hit_rate) * 100:.1f}%" if hit_rate is not None else "—"
     bench_rel_str = f"{float(bench_rel) * 100:+.2f}%" if bench_rel is not None else "—"
@@ -1014,6 +1024,9 @@ def generate_backtest_html_report(
     doc.append(
         f'      <tr><td>Slippage Rate</td><td class="num">{slippage_rate * 10000:.1f} bps ({slippage_rate * 100:.3f}%)</td></tr>'
     )
+    doc.append(
+        f'      <tr><td>Cash Interest Rate</td><td class="num">{cash_interest_rate * 10000:.1f} bps ({cash_interest_rate * 100:.3f}% p.a., signed)</td></tr>'
+    )
     if borrow_fee_rate > 0.0:
         doc.append(
             f'      <tr><td>Borrow Fee Rate</td><td class="num">{borrow_fee_rate * 10000:.1f} bps ({borrow_fee_rate * 100:.3f}% p.a.)</td></tr>'
@@ -1038,6 +1051,33 @@ def generate_backtest_html_report(
             doc.append(
                 f'      <tr><td>Strategy Parameter: {html.escape(k)}</td><td class="num">{html.escape(str(v))}</td></tr>'
             )
+    doc.append("    </tbody>")
+    doc.append("  </table>")
+
+    # Cost attribution table
+    doc.append("  <h2>Cost Attribution</h2>")
+    doc.append("  <table>")
+    doc.append(
+        '    <thead><tr><th>Category</th><th class="num">Amount</th><th class="num">Portfolio Impact</th></tr></thead>'
+    )
+    doc.append("    <tbody>")
+    for label, key in (
+        ("Commission", "total_commission"),
+        ("Slippage", "total_slippage"),
+        ("Borrow Fees", "total_borrow_fees"),
+        ("Cash Interest", "total_cash_interest"),
+    ):
+        amount = float(costs.get(key, 0.0))
+        impact_key = key.removeprefix("total_")
+        impact = float(portfolio_impact.get(impact_key, 0.0))
+        doc.append(
+            f'      <tr><td>{label}</td><td class="num">${amount:+,.2f}</td><td class="num">${impact:+,.2f}</td></tr>'
+        )
+    net_costs = float(costs.get("total_costs", 0.0))
+    net_impact = float(portfolio_impact.get("net", 0.0))
+    doc.append(
+        f'      <tr><td><strong>Net Costs</strong></td><td class="num"><strong>${net_costs:+,.2f}</strong></td><td class="num"><strong>${net_impact:+,.2f}</strong></td></tr>'
+    )
     doc.append("    </tbody>")
     doc.append("  </table>")
 
@@ -1099,7 +1139,7 @@ def generate_backtest_html_report(
         doc.append('  <div class="scroll-table">')
         doc.append("    <table>")
         doc.append(
-            '      <thead><tr><th>Session Date</th><th class="num">Target Weight</th><th>Positions Breakdown</th><th class="num">Cash Balance</th><th class="num">Position Value</th><th class="num">Portfolio Value</th><th class="num">Gross Exp</th><th class="num">Net Exp</th><th class="num">Borrow Fees</th></tr></thead>'
+            '      <thead><tr><th>Session Date</th><th class="num">Target Weight</th><th>Positions Breakdown</th><th class="num">Cash Balance</th><th class="num">Position Value</th><th class="num">Portfolio Value</th><th class="num">Gross Exp</th><th class="num">Net Exp</th><th class="num">Borrow Fees</th><th class="num">Cash Interest</th></tr></thead>'
         )
         doc.append("      <tbody>")
         for row in ledger:
@@ -1127,8 +1167,9 @@ def generate_backtest_html_report(
                 gross_exp = float(row.get("gross_exposure", 0))
                 net_exp = float(row.get("net_exposure", 0))
                 borrow_fee = float(row.get("borrow_fees", 0.0))
+                cash_interest = float(row.get("cash_interest", 0.0))
                 doc.append(
-                    f'        <tr><td>{row.get("session_date")}</td><td class="num">{weight_str}</td><td><small>{pos_summary}</small></td><td class="num">${float(row.get("cash", 0)):,.2f}</td><td class="num">${float(row.get("position_value", 0)):,.2f}</td><td class="num"><strong>${float(row.get("portfolio_value", 0)):,.2f}</strong></td><td class="num">{gross_exp * 100:.0f}%</td><td class="num">{net_exp * 100:.0f}%</td><td class="num">${borrow_fee:,.2f}</td></tr>'
+                    f'        <tr><td>{row.get("session_date")}</td><td class="num">{weight_str}</td><td><small>{pos_summary}</small></td><td class="num">${float(row.get("cash", 0)):,.2f}</td><td class="num">${float(row.get("position_value", 0)):,.2f}</td><td class="num"><strong>${float(row.get("portfolio_value", 0)):,.2f}</strong></td><td class="num">{gross_exp * 100:.0f}%</td><td class="num">{net_exp * 100:.0f}%</td><td class="num">${borrow_fee:,.2f}</td><td class="num">${cash_interest:+,.2f}</td></tr>'
                 )
         doc.append("      </tbody>")
         doc.append("    </table>")
@@ -1183,6 +1224,7 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
         writer.writerow(["Slippage Rate", exec_raw.get("slippage_rate", 0.0)])
         writer.writerow(["Allow Shorting", exec_raw.get("allow_shorting", True)])
         writer.writerow(["Borrow Fee Rate", exec_raw.get("borrow_fee_rate", 0.0)])
+        writer.writerow(["Cash Interest Rate", exec_raw.get("cash_interest_rate", 0.0)])
         raw_u = exec_raw.get("unavailable_borrow", [])
         u_str = ", ".join(str(x) for x in raw_u) if isinstance(raw_u, list) else str(raw_u)
         writer.writerow(["Unavailable Borrow", u_str])
@@ -1209,6 +1251,28 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
     writer.writerow(["Benchmark Relative Return", metrics.get("benchmark_relative_return", "")])
     writer.writerow(["Number of Trades", metrics.get("num_trades", "")])
     writer.writerow(["Number of Fills", metrics.get("num_fills", "")])
+    writer.writerow([])
+
+    # Cost attribution
+    result_manifest_raw = result_data.get("manifest")
+    result_manifest = result_manifest_raw if isinstance(result_manifest_raw, dict) else {}
+    costs_raw = result_manifest.get("costs")
+    costs = costs_raw if isinstance(costs_raw, dict) else {}
+    portfolio_impact_raw = costs.get("portfolio_impact")
+    portfolio_impact = (
+        portfolio_impact_raw if isinstance(portfolio_impact_raw, dict) else {}
+    )
+    writer.writerow(["Cost Attribution", ""])
+    writer.writerow(["Total Commission", costs.get("total_commission", 0.0)])
+    writer.writerow(["Total Slippage", costs.get("total_slippage", 0.0)])
+    writer.writerow(["Total Borrow Fees", costs.get("total_borrow_fees", 0.0)])
+    writer.writerow(["Total Cash Interest", costs.get("total_cash_interest", 0.0)])
+    writer.writerow(["Net Costs", costs.get("total_costs", 0.0)])
+    writer.writerow(["Portfolio Impact - Commission", portfolio_impact.get("commission", "")])
+    writer.writerow(["Portfolio Impact - Slippage", portfolio_impact.get("slippage", "")])
+    writer.writerow(["Portfolio Impact - Borrow Fees", portfolio_impact.get("borrow_fees", "")])
+    writer.writerow(["Portfolio Impact - Cash Interest", portfolio_impact.get("cash_interest", "")])
+    writer.writerow(["Portfolio Impact - Net", portfolio_impact.get("net", "")])
     writer.writerow([])
 
     # Warnings & Rejections
@@ -1329,6 +1393,7 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
             "Gross Exposure",
             "Net Exposure",
             "Borrow Fees",
+            "Cash Interest",
         ]
     )
     for row in ledger:
@@ -1354,6 +1419,7 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
                     row.get("gross_exposure", ""),
                     row.get("net_exposure", ""),
                     row.get("borrow_fees", 0.0),
+                    row.get("cash_interest", 0.0),
                 ]
             )
 

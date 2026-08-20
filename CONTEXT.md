@@ -64,6 +64,14 @@ _Avoid_: Account, book, watchlist
 The explicit assumptions and constraints that translate desired portfolio changes into simulated orders, fills, costs, and rejections.
 _Avoid_: Strategy, broker, execution engine
 
+**Cash Interest**:
+A signed annualized Execution Model assumption applied to eligible cash-holding periods. A positive rate credits the Portfolio's cash. A negative rate charges it.
+_Avoid_: Cash yield, funding cost
+
+**Cost Attribution**:
+A Backtest Run breakdown of commissions, slippage, borrow fees, and cash interest, with the Portfolio impact of each category and the net result.
+_Avoid_: Total costs without categories
+
 **Signal**:
 A time-stamped Strategy output that identifies an intended action or state without executing an order.
 _Avoid_: Trade, alert
