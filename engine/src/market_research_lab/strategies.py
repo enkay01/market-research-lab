@@ -94,6 +94,23 @@ class MovingAverageStrategyParams(BaseModel):
     ma_type: Literal["sma", "ema"] = "sma"
 
 
+def _validated_long_flat_parameters(
+    parameters: Mapping[str, JsonValue],
+) -> LongFlatMovingAverageParams:
+    """Parse and validate the moving-average Strategy parameters."""
+    try:
+        config = LongFlatMovingAverageParams.model_validate(dict(parameters))
+    except ValueError as error:
+        raise StrategyParameterValidationError(str(error)) from error
+
+    if config.fast_period >= config.slow_period:
+        raise StrategyParameterValidationError(
+            f"fast_period must be strictly less than slow_period "
+            f"(got fast={config.fast_period}, slow={config.slow_period})."
+        )
+    return config
+
+
 # Backward-compatible alias
 LongFlatMovingAverageParams = MovingAverageStrategyParams
 
@@ -111,13 +128,7 @@ def _calculate_ma_crossover_latest(
     parameters: dict[str, JsonValue],
 ) -> MovingAverageExecutionPoint:
     """Validate parameters and compute the latest moving-average crossover point."""
-    config = MovingAverageStrategyParams.model_validate(parameters)
-
-    if config.fast_period >= config.slow_period:
-        raise StrategyParameterValidationError(
-            f"fast_period must be strictly less than slow_period "
-            f"(got fast={config.fast_period}, slow={config.slow_period})."
-        )
+    config = _validated_long_flat_parameters(parameters)
 
     if len(market_view.session_dates) != len(market_view.prices):
         raise StrategyParameterValidationError(
@@ -328,7 +339,10 @@ def evaluate_combined_predictive_model(
                     security_id=market_view.security_id,
                     weight=0.0,
                     decision_time=decision_time,
-                    rationale="Insufficient history for combined predictive model features; target flat position.",
+                    rationale=(
+                        "Insufficient history for combined predictive model features; "
+                        "target flat position."
+                    ),
                     indicator_state="warmup",
                 ),
             ),
@@ -666,6 +680,16 @@ def get_strategy_spec(name: str) -> StrategyMetadata:
     if spec is None:
         raise StrategyEvaluationError(f"Unknown Strategy '{name}'.")
     return spec
+
+
+def validate_strategy_parameters(
+    name: str,
+    parameters: Mapping[str, JsonValue],
+) -> None:
+    """Validate a saved Strategy's parameters without needing Market Dataset rows."""
+    get_strategy_spec(name)
+    if name == "long_flat_moving_average":
+        _validated_long_flat_parameters(parameters)
 
 
 def evaluate_strategy(

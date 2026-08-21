@@ -326,7 +326,7 @@ def test_synthetic_cash_dividends():
 # ---------------------------------------------------------------------------
 def test_synthetic_short_positions_and_disabling():
     """Negative target weights create short positions.
-    
+
     Disabling shorting emits ConstraintRejection.
     """
     dates = _make_dates(6)

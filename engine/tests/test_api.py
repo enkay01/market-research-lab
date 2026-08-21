@@ -1398,6 +1398,143 @@ def test_backtest_run_multi_symbol_with_benchmark(tmp_path):
     assert "MSFT" in result["ledger"][0]["positions"]
 
 
+def test_enable_strategy_revision_requires_an_immutable_revision(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Signals"}).json()
+
+    draft = client.post(
+        f"/api/projects/{project['id']}/strategies/enable",
+        json={"name": "long_flat_moving_average - AAPL", "revision": "draft"},
+    )
+    assert draft.status_code == 400
+    assert draft.json()["code"] == "revision_not_immutable"
+
+    missing = client.post(
+        f"/api/projects/{project['id']}/strategies/enable",
+        json={"name": "long_flat_moving_average - AAPL", "revision": "v9"},
+    )
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "revision_not_found"
+
+
+def test_enable_and_refresh_produces_a_traceable_signal(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Signals"}).json()
+
+    csv_content = (
+        "symbol,name,exchange,session_date,open,high,low,close,volume,available_at\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-02,100,105,99,102,1000,2024-01-02T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-03,102,108,101,106,1200,2024-01-03T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-04,106,110,105,108,1100,2024-01-04T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-05,108,112,107,110,1300,2024-01-05T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-08,110,114,109,112,1500,2024-01-08T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-09,112,116,111,114,1400,2024-01-09T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-10,114,118,113,116,1600,2024-01-10T20:00:00Z\n"
+    )
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "test_provider"},
+        files={"file": ("bars.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
+    )
+    dataset_version_id = imported.json()["dataset_version_id"]
+
+    saved = client.post(
+        f"/api/projects/{project['id']}/strategies/evaluate",
+        json={
+            "name": "long_flat_moving_average",
+            "dataset_version_id": dataset_version_id,
+            "symbol": "AAPL",
+            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+        },
+    )
+    assert saved.status_code == 201
+    definition_name = f"{saved.json()['strategy_name']} - {saved.json()['symbol']}"
+    assert saved.json()["revision"] == "v1"
+
+    listed = client.get(f"/api/projects/{project['id']}/strategies")
+    assert listed.status_code == 200
+    listed_revisions = listed.json()
+    assert any(
+        item["name"] == definition_name and item["revision"] == "v1"
+        for item in listed_revisions
+    )
+
+    enabled = client.post(
+        f"/api/projects/{project['id']}/strategies/enable",
+        json={"name": definition_name, "revision": "v1"},
+    )
+    assert enabled.status_code == 201
+
+    enabled_list = client.get(f"/api/projects/{project['id']}/strategies/enabled")
+    assert enabled_list.status_code == 200
+    assert enabled_list.json()[0]["revision"] == "v1"
+
+    refreshed = client.post(f"/api/projects/{project['id']}/alerts/refresh")
+    assert refreshed.status_code == 200
+    body = refreshed.json()
+    assert body["failures"] == []
+    assert len(body["signals"]) == 1
+    signal = body["signals"][0]
+    assert signal["security_id"] == "AAPL"
+    assert signal["action"] == "long"
+    assert signal["weight"] == 1.0
+    assert signal["strategy_revision"] == f"{definition_name}:v1"
+    assert signal["decision_time"]
+    assert signal["data_time"] == "2024-01-10T20:00:00Z"
+    assert "long" in signal["rationale"]
+    assert signal["dataset_version_id"] == dataset_version_id
+
+    alerts = client.get(f"/api/projects/{project['id']}/alerts")
+    assert alerts.status_code == 200
+    assert len(alerts.json()) == 1
+    assert alerts.json()[0]["signal_id"] == signal["signal_id"]
+
+
+def test_refresh_preserves_failure_and_creates_no_partial_signal(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Signals"}).json()
+
+    csv_content = (
+        "symbol,name,exchange,session_date,open,high,low,close,volume\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-02,100,105,99,102,1000\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-03,102,108,101,106,1200\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-04,106,110,105,108,1100\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-05,108,112,107,110,1300\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-08,110,114,109,112,1500\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-09,112,116,111,114,1400\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-10,114,118,113,116,1600\n"
+    )
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "test_provider"},
+        files={"file": ("bars.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
+    )
+    dataset_version_id = imported.json()["dataset_version_id"]
+
+    saved = client.post(
+        f"/api/projects/{project['id']}/strategies/evaluate",
+        json={
+            "name": "long_flat_moving_average",
+            "dataset_version_id": dataset_version_id,
+            "symbol": "AAPL",
+            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+        },
+    )
+    definition_name = f"{saved.json()['strategy_name']} - {saved.json()['symbol']}"
+    client.post(
+        f"/api/projects/{project['id']}/strategies/enable",
+        json={"name": definition_name, "revision": "v1"},
+    )
+
+    refreshed = client.post(f"/api/projects/{project['id']}/alerts/refresh")
+    assert refreshed.status_code == 200
+    body = refreshed.json()
+    assert body["signals"] == []
+    assert len(body["failures"]) == 1
+    assert body["failures"][0]["strategy_revision"] == f"{definition_name}:v1"
+
+    alerts = client.get(f"/api/projects/{project['id']}/alerts")
+    assert alerts.json() == []
 def test_backtest_run_shorting_and_borrow_fees(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
     project = client.post("/api/projects", json={"name": "Shorting Strategy Project"}).json()
@@ -1488,7 +1625,6 @@ def test_backtest_run_with_corporate_actions_and_calendar(tmp_path):
         files={"file": ("actions.csv", io.BytesIO(actions_csv.encode("utf-8")), "text/csv")},
     )
     assert imported_actions.status_code == 201
-    actions_version_id = imported_actions.json()["dataset_version_id"]
 
     # Run backtest with US calendar
     response = client.post(
@@ -1511,7 +1647,14 @@ def test_backtest_run_with_corporate_actions_and_calendar(tmp_path):
     assert result["specification"]["calendar"] == "US"
     # Verification of US calendar dates (Jan 8, 9, 10, 11, 12, 16 - MLK Day skipped)
     ledger_dates = [row["session_date"] for row in result["ledger"]]
-    assert ledger_dates == ["2024-01-08", "2024-01-09", "2024-01-10", "2024-01-11", "2024-01-12", "2024-01-16"]
+    assert ledger_dates == [
+        "2024-01-08",
+        "2024-01-09",
+        "2024-01-10",
+        "2024-01-11",
+        "2024-01-12",
+        "2024-01-16",
+    ]
 
 
 def test_backtest_run_compare(tmp_path):
@@ -1604,5 +1747,3 @@ def test_backtest_run_compare(tmp_path):
         json={"run_ids": ["non-existent-run-id"]},
     )
     assert missing_cmp.status_code == 404
-
-
