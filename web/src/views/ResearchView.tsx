@@ -39,9 +39,10 @@ import {
 
 interface ResearchViewProps {
   project?: Project;
+  focusSecurityId?: string | null;
 }
 
-export function ResearchView({ project }: ResearchViewProps) {
+export function ResearchView({ project, focusSecurityId }: ResearchViewProps) {
   const [watchlistItems, setWatchlistItems] = useState<WatchlistItem[]>([]);
   const [selectedSecurityId, setSelectedSecurityId] = useState<string | null>(null);
   const [selectedSecurity, setSelectedSecurity] = useState<Security | null>(null);
@@ -85,6 +86,13 @@ export function ResearchView({ project }: ResearchViewProps) {
     ];
   }, [watchlistItems]);
 
+  // Focus a Security opened from another view, such as an Alert link
+  useEffect(() => {
+    if (focusSecurityId) {
+      setSelectedSecurityId(focusSecurityId);
+    }
+  }, [focusSecurityId]);
+
   // Fetch watchlist when project or filters change
   useEffect(() => {
     if (!project) {
@@ -108,6 +116,10 @@ export function ResearchView({ project }: ResearchViewProps) {
       .then((res) => {
         if (!isMounted) return;
         setWatchlistItems(res.items);
+        if (focusSecurityId) {
+          // An Alert-linked Security owns the selection; leave it in place.
+          return;
+        }
         // Select first if current selection is invalid
         if (res.items.length > 0) {
           if (!selectedSecurityId || !res.items.some((i) => i.security.security_id === selectedSecurityId)) {
@@ -130,7 +142,7 @@ export function ResearchView({ project }: ResearchViewProps) {
     return () => {
       isMounted = false;
     };
-  }, [project, searchQuery, exchangeFilter, thesisFilter, sortBy, sortOrder]);
+  }, [project, searchQuery, exchangeFilter, thesisFilter, sortBy, sortOrder, focusSecurityId]);
 
   // Load selected security details and research thesis
   useEffect(() => {
@@ -143,20 +155,31 @@ export function ResearchView({ project }: ResearchViewProps) {
 
     let isMounted = true;
 
-    void Promise.all([
-      api.getSecurityDetails(selectedSecurityId, { project_id: project.id }),
-      api.getThesis(project.id, selectedSecurityId),
-    ])
-      .then(([summary, thesis]) => {
+    // Details and thesis load independently: a Security opened from an Alert
+    // may not be watched yet, so a missing thesis must not hide its data.
+    void api
+      .getSecurityDetails(selectedSecurityId, { project_id: project.id })
+      .then((summary) => {
         if (!isMounted) return;
         setSecuritySummary(summary);
         setSelectedSecurity(summary.security);
-        setThesisContent(thesis.content);
-        setThesisUpdatedAt(thesis.updated_at ?? null);
       })
       .catch((err: unknown) => {
         if (!isMounted) return;
-        console.error("Failed to load security details or thesis:", err);
+        console.error("Failed to load security details:", err);
+      });
+
+    void api
+      .getThesis(project.id, selectedSecurityId)
+      .then((thesis) => {
+        if (!isMounted) return;
+        setThesisContent(thesis.content);
+        setThesisUpdatedAt(thesis.updated_at ?? null);
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setThesisContent("");
+        setThesisUpdatedAt(null);
       });
 
     return () => {
@@ -681,7 +704,11 @@ export function ResearchView({ project }: ResearchViewProps) {
                         {securitySummary?.alerts && securitySummary.alerts.length > 0 ? (
                           <VStack gap={1}>
                             {securitySummary.alerts.map((a, idx) => (
-                              <Token key={idx} label={String(a.name || "Alert")} color="yellow" />
+                              <Token
+                                key={idx}
+                                label={String(a.strategy_revision || a.name || "Alert")}
+                                color={a.action === "long" ? "green" : a.action === "short" ? "red" : "default"}
+                              />
                             ))}
                           </VStack>
                         ) : (

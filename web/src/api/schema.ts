@@ -110,6 +110,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/definitions/{kind}/{name}/{revision}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Definition Revision */
+        get: operations["read_definition_revision_api_projects__project_id__definitions__kind___name___revision__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/securities": {
         parameters: {
             query?: never;
@@ -1313,6 +1330,21 @@ export interface components {
             /** Revision */
             revision: string;
         };
+        /** DefinitionRevisionResponse */
+        DefinitionRevisionResponse: {
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+            /** Revision */
+            revision: string;
+            definition: components["schemas"]["JsonValue-Output"];
+            /**
+             * Saved At
+             * @default
+             */
+            saved_at: string;
+        };
         /** DraftRequest */
         DraftRequest: {
             /** Definition */
@@ -2509,6 +2541,12 @@ export interface components {
              * @default
              */
             created_at: string;
+            /**
+             * Data State
+             * @default stale-data
+             * @enum {string}
+             */
+            data_state: "fresh" | "stale-data";
         };
         /** StrategyEvaluateRequest */
         StrategyEvaluateRequest: {
@@ -3036,6 +3074,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DraftResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_definition_revision_api_projects__project_id__definitions__kind___name___revision__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                kind: string;
+                name: string;
+                revision: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DefinitionRevisionResponse"];
                 };
             };
             /** @description Validation Error */

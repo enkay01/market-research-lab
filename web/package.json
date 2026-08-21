@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "generate:client": "uv run --project ../engine python -m market_research_lab.export_openapi && openapi-typescript ../engine/openapi.json -o src/api/schema.ts",
-    "check": "npm run generate:client && tsc --noEmit",
+    "lint": "oxlint",
+    "check": "npm run generate:client && oxlint && tsc --noEmit",
     "build": "npm run generate:client && tsc --noEmit && vite build"
   },
   "dependencies": {
@@ -18,9 +19,11 @@
     "vite": "latest"
   },
   "devDependencies": {
+    "@oxlint/plugins": "^1.79.0",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "openapi-typescript": "latest",
+    "oxlint": "^1.79.0",
     "playwright": "^1.62.1",
     "typescript": "latest"
   }

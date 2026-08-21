@@ -31,8 +31,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .alerts import (
+    DataFreshnessState,
     InvalidStrategyDefinitionError,
     SignalRefreshResult,
+    data_freshness_state,
     refresh_enabled_strategies,
 )
 from .alerts import enable_strategy_revision as enable_strategy_revision_domain
@@ -857,6 +859,24 @@ class SignalResponse(BaseModel):
     rationale: str
     indicator_state: str | None = None
     created_at: str = ""
+    data_state: DataFreshnessState = "stale-data"
+
+
+def signal_response(signal: dict[str, JsonValue]) -> SignalResponse:
+    """Build one Signal response with freshness classified at read time (ALT-004)."""
+    body = dict(signal)
+    body["data_state"] = data_freshness_state(
+        str(body.get("data_time", "")), now=datetime.now(UTC)
+    )
+    return SignalResponse.model_validate(body)
+
+
+class DefinitionRevisionResponse(BaseModel):
+    kind: str
+    name: str
+    revision: str
+    definition: JsonValue
+    saved_at: str = ""
 
 
 class SignalRefreshFailureResponse(BaseModel):
@@ -2255,6 +2275,28 @@ def create_app(
         return DraftResponse(**store.read_draft(str(project_id), kind=kind, name=name))
 
     @app.get(
+        "/api/projects/{project_id}/definitions/{kind}/{name}/{revision}",
+        response_model=DefinitionRevisionResponse,
+        tags=["definitions"],
+    )
+    def read_definition_revision(
+        project_id: UUID,
+        kind: str = FastAPIPath(pattern=r"^[a-z][a-z_]*$"),
+        name: str = FastAPIPath(min_length=1, max_length=128),
+        revision: str = FastAPIPath(pattern=r"^v[1-9][0-9]*$"),
+    ) -> DefinitionRevisionResponse:
+        wrapped = store.read_revision(
+            str(project_id), kind=kind, name=name, revision=revision
+        )
+        return DefinitionRevisionResponse(
+            kind=kind,
+            name=str(wrapped.get("name", name)),
+            revision=revision,
+            definition=wrapped.get("definition"),
+            saved_at=str(wrapped.get("saved_at", "")),
+        )
+
+    @app.get(
         "/api/securities",
         response_model=list[SecurityResponse],
         tags=["securities"],
@@ -2806,12 +2848,19 @@ def create_app(
 
         valuations: list[dict[str, JsonValue]] = []
         runs: list[dict[str, JsonValue]] = []
+        alerts: list[dict[str, JsonValue]] = []
         if project_id:
             with contextlib.suppress(ProjectNotFoundError, OSError, KeyError):
                 valuations = store.list_valuations_for_security(
                     str(project_id), summary.security.security_id
                 )
                 runs = store.list_runs_for_security(str(project_id), summary.security.security_id)
+                alerts = [
+                    signal_response(s).model_dump(mode="json")
+                    for s in store.list_signals_for_security(
+                        str(project_id), summary.security.security_id
+                    )
+                ]
 
         return SecuritySummaryResponse(
             security=SecurityResponse(
@@ -2834,6 +2883,7 @@ def create_app(
             covering_dataset_versions=summary.covering_dataset_versions,
             valuations=valuations,
             runs=runs,
+            alerts=alerts,
         )
 
     @app.get(
@@ -3521,8 +3571,7 @@ def create_app(
     )
     def list_project_signals(project_id: UUID) -> list[SignalResponse]:
         return [
-            SignalResponse.model_validate(signal)
-            for signal in store.list_signals(str(project_id))
+            signal_response(signal) for signal in store.list_signals(str(project_id))
         ]
 
     @app.post(
@@ -3535,7 +3584,7 @@ def create_app(
             store, market_store, str(project_id)
         )
         return SignalRefreshResponse(
-            signals=[SignalResponse.model_validate(s.to_json()) for s in result.signals],
+            signals=[signal_response(s.to_json()) for s in result.signals],
             failures=[
                 SignalRefreshFailureResponse(
                     strategy_revision=failure.strategy_revision, error=failure.error

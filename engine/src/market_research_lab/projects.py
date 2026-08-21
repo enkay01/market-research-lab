@@ -333,6 +333,16 @@ class ProjectStore:
         signals.sort(key=lambda item: str(item.get("decision_time", "")), reverse=True)
         return signals
 
+    def list_signals_for_security(
+        self, project_id: str, security_id: str
+    ) -> list[dict[str, JsonValue]]:
+        """Read persisted Signals for one Security newest-first (RES-005)."""
+        return [
+            signal
+            for signal in self.list_signals(project_id)
+            if str(signal.get("security_id", "")) == security_id
+        ]
+
     def _write_enabled_strategies(
         self, project_id: str, strategies: list[dict[str, JsonValue]]
     ) -> None:

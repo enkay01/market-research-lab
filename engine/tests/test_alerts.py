@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from market_research_lab.alerts import (
+    DEFAULT_STALE_AFTER_DAYS,
     InvalidStrategyDefinitionError,
     SignalEvaluationRequest,
+    data_freshness_state,
     enable_strategy_revision,
     evaluate_signal,
     refresh_enabled_strategies,
@@ -321,3 +324,41 @@ def test_refresh_with_no_enabled_strategies_is_empty(tmp_path: Path) -> None:
 
     assert result.signals == ()
     assert result.failures == ()
+
+
+def test_data_freshness_state_marks_recent_data_fresh() -> None:
+    now = datetime(2026, 8, 21, 12, 0, 0, tzinfo=UTC)
+
+    assert (
+        data_freshness_state("2026-08-20T20:00:00Z", now=now) == "fresh"
+    )
+
+
+def test_data_freshness_state_marks_old_data_stale() -> None:
+    now = datetime(2026, 8, 21, 12, 0, 0, tzinfo=UTC)
+
+    assert (
+        data_freshness_state("2024-01-10T20:00:00Z", now=now) == "stale-data"
+    )
+
+
+def test_data_freshness_state_boundary_is_stale_at_the_threshold() -> None:
+    now = datetime(2026, 8, 21, 12, 0, 0, tzinfo=UTC)
+    edge = f"2026-08-{21 - DEFAULT_STALE_AFTER_DAYS}T12:00:00Z"
+
+    assert data_freshness_state(edge, now=now) == "stale-data"
+    just_inside = f"2026-08-{21 - DEFAULT_STALE_AFTER_DAYS}T12:00:01Z"
+    assert data_freshness_state(just_inside, now=now) == "fresh"
+
+
+def test_data_freshness_state_accepts_a_bare_session_date() -> None:
+    now = datetime(2026, 8, 21, 12, 0, 0, tzinfo=UTC)
+
+    assert data_freshness_state("2026-08-20", now=now) == "fresh"
+
+
+def test_data_freshness_state_degrades_unparseable_data_time_to_stale() -> None:
+    now = datetime(2026, 8, 21, 12, 0, 0, tzinfo=UTC)
+
+    assert data_freshness_state("not-a-time", now=now) == "stale-data"
+    assert data_freshness_state("", now=now) == "stale-data"
