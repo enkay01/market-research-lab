@@ -56,9 +56,9 @@ export function App() {
         setEngineConnected(isOk);
         setStatusText(isOk ? "Engine Online" : "Engine Unavailable");
       })
-      .catch((err: unknown) => {
+      .catch((cause: unknown) => {
         setEngineConnected(false);
-        setStatusText(err instanceof Error ? err.message : "Engine Offline");
+        setStatusText(cause instanceof Error ? cause.message : "Engine Offline");
       });
   }, []);
 
@@ -253,7 +253,7 @@ export function App() {
               <TextInput
                 label="Project Name"
                 value={newProjectName}
-                onChange={(val) => setNewProjectName(typeof val === "string" ? val : "")}
+                onChange={(val) => setNewProjectName(String(val ?? ""))}
                 placeholder="e.g. US Tech & Semiconductors"
                 isRequired
                 hasAutoFocus

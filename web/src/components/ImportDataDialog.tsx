@@ -36,10 +36,11 @@ export function ImportDataDialog({ isOpen, onClose, onSuccess }: ImportDataDialo
     setError(null);
     try {
       const response = await api.importDataset(source, file);
+      // SAFETY: api.importDataset returns the imported dataset payload with dataset_version_id
       onSuccess(response as { id?: string; dataset_version_id?: string });
       onClose();
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Failed to import dataset file.";
+    } catch (cause: unknown) {
+      const message = cause instanceof Error ? cause.message : "Failed to import dataset file.";
       setError(message);
     } finally {
       setIsSubmitting(false);
@@ -69,7 +70,7 @@ export function ImportDataDialog({ isOpen, onClose, onSuccess }: ImportDataDialo
             <TextInput
               label="Source Identifier / Name"
               value={source}
-              onChange={(val) => setSource(typeof val === "string" ? val : "")}
+              onChange={(val) => setSource(String(val ?? ""))}
               placeholder="e.g. daily_prices.csv"
               isRequired
             />

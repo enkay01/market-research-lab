@@ -424,8 +424,8 @@ function EnabledStrategiesPanel({
       .then((items) => {
         if (isMounted) setEnabled(items);
       })
-      .catch((err: unknown) => {
-        if (isMounted) setError(err instanceof Error ? err.message : "Failed to load enabled Strategies.");
+      .catch((cause: unknown) => {
+        if (isMounted) setError(cause instanceof Error ? cause.message : "Failed to load enabled Strategies.");
       });
     return () => {
       isMounted = false;

@@ -64,8 +64,8 @@ export function DownloadProviderDialog({ isOpen, onClose, onSuccess }: DownloadP
 
       onSuccess(response);
       onClose();
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Provider download failed.";
+    } catch (cause: unknown) {
+      const message = cause instanceof Error ? cause.message : "Provider download failed.";
       setError(message);
     } finally {
       setIsSubmitting(false);
@@ -96,7 +96,10 @@ export function DownloadProviderDialog({ isOpen, onClose, onSuccess }: DownloadP
             <SegmentedControl
               label="Select Provider"
               value={provider}
-              onChange={(val) => setProvider(val as "tiingo" | "sec_edgar")}
+              onChange={(val) => {
+                // SAFETY: Value is constrained by SegmentedControlItem values
+                setProvider(val as "tiingo" | "sec_edgar");
+              }}
             >
               <SegmentedControlItem value="tiingo" label="Tiingo (EOD Prices & Actions)" />
               <SegmentedControlItem value="sec_edgar" label="SEC EDGAR (Fundamentals)" />
@@ -108,7 +111,7 @@ export function DownloadProviderDialog({ isOpen, onClose, onSuccess }: DownloadP
               <TextInput
                 label="Ticker Symbols (comma-separated)"
                 value={symbols}
-                onChange={(val) => setSymbols(typeof val === "string" ? val : "")}
+                onChange={(val) => setSymbols(String(val ?? ""))}
                 placeholder="e.g. AAPL, MSFT, SPY"
                 isRequired
                 description="Requires TIINGO_API_TOKEN in local .env.local or process environment."
@@ -119,7 +122,7 @@ export function DownloadProviderDialog({ isOpen, onClose, onSuccess }: DownloadP
               <TextInput
                 label="SEC CIKs or Tickers (comma-separated)"
                 value={ciks}
-                onChange={(val) => setCiks(typeof val === "string" ? val : "")}
+                onChange={(val) => setCiks(String(val ?? ""))}
                 placeholder="e.g. 0000320193, 0000789019"
                 isRequired
                 description="Identified via SEC_EDGAR_USER_AGENT in local configuration."
@@ -132,7 +135,7 @@ export function DownloadProviderDialog({ isOpen, onClose, onSuccess }: DownloadP
               <TextInput
                 label="Start Date (YYYY-MM-DD)"
                 value={startDate}
-                onChange={(val) => setStartDate(typeof val === "string" ? val : "")}
+                onChange={(val) => setStartDate(String(val ?? ""))}
                 placeholder="2024-01-01"
               />
             </VStack>
@@ -140,7 +143,7 @@ export function DownloadProviderDialog({ isOpen, onClose, onSuccess }: DownloadP
               <TextInput
                 label="End Date (YYYY-MM-DD)"
                 value={endDate}
-                onChange={(val) => setEndDate(typeof val === "string" ? val : "")}
+                onChange={(val) => setEndDate(String(val ?? ""))}
                 placeholder="2024-12-31"
               />
             </VStack>

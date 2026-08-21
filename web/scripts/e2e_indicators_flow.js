@@ -112,7 +112,6 @@ async function run() {
 
     // Adjust parameters: Fast: 10, Slow: 25
     console.log("8. Adjusting parameter fields (Fast: 10, Slow: 25)...");
-    const fastInput = page.locator('input').filter({ hasText: "" }).nth(1); // fast_period input
     // Locate inputs in panel
     const textInputs = page.locator('input[type="text"], input:not([type])');
     const inputCount = await textInputs.count();

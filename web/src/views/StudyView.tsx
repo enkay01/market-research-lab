@@ -174,7 +174,10 @@ export function StudyView({ project }: StudyViewProps) {
               <SegmentedControl
                 label="Section Filter"
                 value={activeSection}
-                onChange={(val) => setActiveSection(val as "all" | "inputs" | "math" | "bridge" | "risks")}
+                onChange={(val) => {
+                  // SAFETY: Value is constrained by SegmentedControlItem options
+                  setActiveSection(val as "all" | "inputs" | "math" | "bridge" | "risks");
+                }}
               >
                 <SegmentedControlItem value="all" label="Full Case" />
                 <SegmentedControlItem value="inputs" label="1. Inputs" />
@@ -189,13 +192,16 @@ export function StudyView({ project }: StudyViewProps) {
                   isLabelHidden
                   placeholder="Search ticker, company, methodology…"
                   value={searchQuery}
-                  onChange={(val) => setSearchQuery(typeof val === "string" ? val : "")}
+                  onChange={(val) => setSearchQuery(String(val ?? ""))}
                   width={280}
                 />
                 <SegmentedControl
                   label="Category Filter"
                   value={categoryFilter}
-                  onChange={(val) => setCategoryFilter(val as typeof categoryFilter)}
+                  onChange={(val) => {
+                    // SAFETY: Value is constrained by SegmentedControlItem options
+                    setCategoryFilter(val as typeof categoryFilter);
+                  }}
                 >
                   <SegmentedControlItem value="all" label="All Types" />
                   <SegmentedControlItem value="dcf" label="DCF" />

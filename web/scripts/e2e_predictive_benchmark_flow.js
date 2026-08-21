@@ -22,7 +22,7 @@ async function findFreePort(environmentVariable) {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
-      const port = typeof address === "object" && address ? String(address.port) : null;
+      const port = address && !Array.isArray(address) ? String(address.port) : null;
       server.close((error) => {
         if (error) reject(error);
         else if (port) resolve(port);

@@ -54,11 +54,10 @@ def make_spec(
     dates: list[str],
     execution: ExecutionModelAssumptions | None = None,
     cash: float = 100000.0,
-    strategy_name: str = "long_short_moving_average",
 ) -> BacktestSpecification:
     """Build a BacktestSpecification with configurable execution assumptions."""
     return BacktestSpecification(
-        strategy_name=strategy_name,
+        strategy_name="long_short_moving_average",
         strategy_revision="v1",
         dataset_version_id="ds-leverage",
         security_id=universe[0] if universe else "AAPL",

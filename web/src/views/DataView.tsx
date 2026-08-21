@@ -33,7 +33,7 @@ export function DataView() {
   const [datasetVersions, setDatasetVersions] = useState<CoverageResponse[]>([]);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [selectedCoverage, setSelectedCoverage] = useState<CoverageResponse | null>(null);
-  const [previewRows, setPreviewRows] = useState<Record<string, unknown>[]>([]);
+  const [previewRows, setPreviewRows] = useState<Record<string, string | number | boolean | null>[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isInspectorLoading, setIsInspectorLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

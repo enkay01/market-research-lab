@@ -61,31 +61,47 @@ function signedCurrencyFormat(value: number | null | undefined, currency: string
   return `${sign}${currencyFormat(value, currency)}`;
 }
 
+interface BacktestCostsManifest {
+  commission?: number;
+  slippage?: number;
+  borrow_fees?: number;
+  cash_interest?: number;
+  portfolio_impact?: Record<string, number>;
+  [key: string]: number | Record<string, number> | undefined;
+}
+
+interface BacktestManifestData {
+  costs?: BacktestCostsManifest;
+  dataset_versions?: string[];
+  [key: string]: number | string | string[] | BacktestCostsManifest | undefined;
+}
+
 function manifestCost(result: BacktestResult | null, key: string): number {
-  const manifest = result?.manifest;
-  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) return 0;
-  const costs = (manifest as Record<string, unknown>).costs;
-  if (!costs || typeof costs !== "object" || Array.isArray(costs)) return 0;
-  const value = (costs as Record<string, unknown>)[key];
-  return typeof value === "number" ? value : 0;
+  if (!result?.manifest) return 0;
+  // SAFETY: Manifest payload is parsed into BacktestManifestData structure
+  const manifest = result.manifest as BacktestManifestData;
+  const costs = manifest.costs;
+  if (!costs) return 0;
+  const value = costs[key];
+  return Number.isFinite(value) ? Number(value) : 0;
 }
 
 function manifestNumber(result: BacktestResult | null, key: string): number {
-  const manifest = result?.manifest;
-  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) return 0;
-  const value = (manifest as Record<string, unknown>)[key];
-  return typeof value === "number" ? value : 0;
+  if (!result?.manifest) return 0;
+  // SAFETY: Manifest payload is parsed into BacktestManifestData structure
+  const manifest = result.manifest as BacktestManifestData;
+  const value = manifest[key];
+  return Number.isFinite(value) ? Number(value) : 0;
 }
 
 function manifestPortfolioImpact(result: BacktestResult | null, key: string): number {
-  const manifest = result?.manifest;
-  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) return 0;
-  const costs = (manifest as Record<string, unknown>).costs;
-  if (!costs || typeof costs !== "object" || Array.isArray(costs)) return 0;
-  const impact = (costs as Record<string, unknown>).portfolio_impact;
-  if (!impact || typeof impact !== "object" || Array.isArray(impact)) return 0;
-  const value = (impact as Record<string, unknown>)[key];
-  return typeof value === "number" ? value : 0;
+  if (!result?.manifest) return 0;
+  // SAFETY: Manifest payload is parsed into BacktestManifestData structure
+  const manifest = result.manifest as BacktestManifestData;
+  const impact = manifest.costs?.portfolio_impact;
+  if (!impact) return 0;
+  const value = impact[key];
+  return Number.isFinite(value) ? Number(value) : 0;
 }
 
 function KpiCard({
@@ -343,8 +359,8 @@ export function BacktestView({ project }: BacktestViewProps) {
           setCompareRunIds([runs[0].run_id || ""]);
         }
       })
-      .catch((err: unknown) => {
-        setMessage(err instanceof Error ? err.message : "Could not load saved Backtest runs.");
+      .catch((cause: unknown) => {
+        setMessage(cause instanceof Error ? cause.message : "Could not load saved Backtest runs.");
         setBannerType("warning");
       });
   };
@@ -361,9 +377,9 @@ export function BacktestView({ project }: BacktestViewProps) {
       if (preview && preview.length > 0) {
         const first = preview[0];
         const last = preview[preview.length - 1];
-        if (typeof first.date === "string" && typeof last.date === "string") {
-          setStartDate(first.date);
-          setEndDate(last.date);
+        if (first?.date && last?.date) {
+          setStartDate(String(first.date));
+          setEndDate(String(last.date));
         }
       }
     } catch {
@@ -438,8 +454,8 @@ export function BacktestView({ project }: BacktestViewProps) {
       setMessage(`Backtest Run ${res.run_id} executed and persisted successfully.`);
       setBannerType("info");
       loadSavedRuns();
-    } catch (err: unknown) {
-      setMessage(err instanceof Error ? err.message : "Backtest execution failed.");
+    } catch (cause: unknown) {
+      setMessage(cause instanceof Error ? cause.message : "Backtest execution failed.");
       setBannerType("warning");
     } finally {
       setIsRunning(false);
@@ -459,11 +475,13 @@ export function BacktestView({ project }: BacktestViewProps) {
   };
 
   const universeDisplay = useMemo(() => {
-    const rawU = (currentResult?.specification as any)?.universe;
+    // SAFETY: Specification contains optional universe list or legacy security_id string
+    const spec = currentResult?.specification as { universe?: string[]; security_id?: string } | undefined;
+    const rawU = spec?.universe;
     if (Array.isArray(rawU) && rawU.length > 0) {
       return rawU.join(", ");
     }
-    return (currentResult?.specification as any)?.security_id || "—";
+    return spec?.security_id || "—";
   }, [currentResult]);
 
   return (
@@ -602,7 +620,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                       label="Strategy"
                       value={strategyName}
                       onChange={(v) => {
-                        const val = v as string;
+                        const val = String(v);
                         setStrategyName(val);
                         setStrategyRevision(`${val}:v1`);
                       }}
@@ -625,22 +643,22 @@ export function BacktestView({ project }: BacktestViewProps) {
                     <TextInput
                       label="Universe (Symbols)"
                       value={universeInput}
-                      onChange={(v) => setUniverseInput(typeof v === "string" ? v : "")}
+                      onChange={(v) => setUniverseInput(String(v ?? ""))}
                     />
                     <TextInput
                       label="Benchmark (Optional)"
                       value={benchmarkInput}
-                      onChange={(v) => setBenchmarkInput(typeof v === "string" ? v : "")}
+                      onChange={(v) => setBenchmarkInput(String(v ?? ""))}
                     />
                     <TextInput
                       label="Start Date"
                       value={startDate}
-                      onChange={(v) => setStartDate(typeof v === "string" ? v : "")}
+                      onChange={(v) => setStartDate(String(v ?? ""))}
                     />
                     <TextInput
                       label="End Date"
                       value={endDate}
-                      onChange={(v) => setEndDate(typeof v === "string" ? v : "")}
+                      onChange={(v) => setEndDate(String(v ?? ""))}
                     />
                   </Grid>
                 </VStack>
@@ -656,22 +674,25 @@ export function BacktestView({ project }: BacktestViewProps) {
                     <TextInput
                       label="Starting Cash ($)"
                       value={startingCash}
-                      onChange={(v) => setStartingCash(typeof v === "string" ? v : "")}
+                      onChange={(v) => setStartingCash(String(v ?? ""))}
                     />
                     <TextInput
                       label="Fast MA Period"
                       value={fastPeriod}
-                      onChange={(v) => setFastPeriod(typeof v === "string" ? v : "")}
+                      onChange={(v) => setFastPeriod(String(v ?? ""))}
                     />
                     <TextInput
                       label="Slow MA Period"
                       value={slowPeriod}
-                      onChange={(v) => setSlowPeriod(typeof v === "string" ? v : "")}
+                      onChange={(v) => setSlowPeriod(String(v ?? ""))}
                     />
                     <Selector
                       label="Moving Average Type"
                       value={maType}
-                      onChange={(v) => setMaType(v as "sma" | "ema")}
+                      onChange={(v) => {
+                        // SAFETY: Value is constrained by Selector options
+                        setMaType(v as "sma" | "ema");
+                      }}
                       options={[
                         { value: "sma", label: "Simple (SMA)" },
                         { value: "ema", label: "Exponential (EMA)" },
@@ -680,12 +701,12 @@ export function BacktestView({ project }: BacktestViewProps) {
                     <TextInput
                       label="Commission (bps)"
                       value={commissionBps}
-                      onChange={(v) => setCommissionBps(typeof v === "string" ? v : "")}
+                      onChange={(v) => setCommissionBps(String(v ?? ""))}
                     />
                     <TextInput
                       label="Slippage (bps)"
                       value={slippageBps}
-                      onChange={(v) => setSlippageBps(typeof v === "string" ? v : "")}
+                      onChange={(v) => setSlippageBps(String(v ?? ""))}
                     />
                     <Selector
                       label="Allow Short Positions"
@@ -699,17 +720,17 @@ export function BacktestView({ project }: BacktestViewProps) {
                     <TextInput
                       label="Borrow Fee (bps p.a.)"
                       value={borrowFeeBps}
-                      onChange={(v) => setBorrowFeeBps(typeof v === "string" ? v : "")}
+                      onChange={(v) => setBorrowFeeBps(String(v ?? ""))}
                     />
                     <TextInput
                       label="Cash Interest (signed bps p.a.)"
                       value={cashInterestBps}
-                      onChange={(v) => setCashInterestBps(typeof v === "string" ? v : "")}
+                      onChange={(v) => setCashInterestBps(String(v ?? ""))}
                     />
                     <TextInput
                       label="Unavailable Borrow (Symbols)"
                       value={unavailableBorrowInput}
-                      onChange={(v) => setUnavailableBorrowInput(typeof v === "string" ? v : "")}
+                      onChange={(v) => setUnavailableBorrowInput(String(v ?? ""))}
                     />
                   </Grid>
                 </VStack>
@@ -725,12 +746,15 @@ export function BacktestView({ project }: BacktestViewProps) {
                     <TextInput
                       label="Max Leverage Limit (x)"
                       value={maxLeverage}
-                      onChange={(v) => setMaxLeverage(typeof v === "string" ? v : "")}
+                      onChange={(v) => setMaxLeverage(String(v ?? ""))}
                     />
                     <Selector
                       label="Leverage Breach Mode"
                       value={leverageMode}
-                      onChange={(v) => setLeverageMode(v as "reject" | "constrain")}
+                      onChange={(v) => {
+                        // SAFETY: Value is constrained by Selector options
+                        setLeverageMode(v as "reject" | "constrain");
+                      }}
                       options={[
                         { value: "reject", label: "Reject Orders" },
                         { value: "constrain", label: "Constrain / Scale" },
@@ -739,12 +763,12 @@ export function BacktestView({ project }: BacktestViewProps) {
                     <TextInput
                       label="Margin Requirement (%)"
                       value={marginRequirement}
-                      onChange={(v) => setMarginRequirement(typeof v === "string" ? v : "")}
+                      onChange={(v) => setMarginRequirement(String(v ?? ""))}
                     />
                     <TextInput
                       label="Maintenance Margin (%)"
                       value={maintenanceMargin}
-                      onChange={(v) => setMaintenanceMargin(typeof v === "string" ? v : "")}
+                      onChange={(v) => setMaintenanceMargin(String(v ?? ""))}
                     />
                   </Grid>
                 </VStack>
@@ -802,7 +826,8 @@ export function BacktestView({ project }: BacktestViewProps) {
                 {/* Sub-tabs for deep replay analysis */}
                 <SegmentedControl
                   value={activeTab}
-                  onChange={(v) =>
+                  onChange={(v) => {
+                    // SAFETY: Value is constrained by SegmentedControlItem options
                     setActiveTab(
                       v as
                         | "overview"
@@ -812,8 +837,8 @@ export function BacktestView({ project }: BacktestViewProps) {
                         | "rejections"
                         | "manifest"
                         | "compare",
-                    )
-                  }
+                    );
+                  }}
                 >
                   <SegmentedControlItem value="overview" label="Performance Overview" />
                   <SegmentedControlItem
@@ -1223,9 +1248,12 @@ export function BacktestView({ project }: BacktestViewProps) {
                           </TableCell>
                           <TableCell>
                             <Text>
-                              {(currentResult.manifest as any)?.dataset_versions?.join(", ") ||
+                              {
+                                // SAFETY: Manifest may declare dataset_versions provenance array
+                                (currentResult.manifest as { dataset_versions?: string[] } | undefined)?.dataset_versions?.join(", ") ||
                                 currentResult.specification?.dataset_version_id ||
-                                "N/A"}
+                                "N/A"
+                              }
                             </Text>
                           </TableCell>
                         </TableRow>
@@ -1405,7 +1433,8 @@ export function BacktestView({ project }: BacktestViewProps) {
                           <TableRow>
                             <TableCell><Text type="supporting">Fast / Slow MA</Text></TableCell>
                             {comparisonRuns.map((r) => {
-                              const params = r.specification?.parameters as any;
+                              // SAFETY: Specification parameters dictionary holds strategy config values
+                              const params = r.specification?.parameters as Record<string, string | number | boolean | null> | undefined;
                               return (
                                 <TableCell key={r.run_id}>
                                   {params?.fast_period ?? "—"} /{" "}

@@ -34,7 +34,6 @@ import {
   type CoverageResponse,
   type IndicatorMetadata,
   type IndicatorSeries,
-  type IndicatorPoint,
   type PredictiveModelMetadata,
   type PredictiveModelRun,
   type PredictiveModelRunRequest,
@@ -48,8 +47,8 @@ interface ModelsViewProps {
 }
 
 type CompletedBenchmark = NonNullable<PredictiveModelRun["benchmark"]>;
-const isFiniteNumber = (value: unknown): value is number =>
-  typeof value === "number" && Number.isFinite(value);
+const isFiniteNumber = (value: number | null | undefined): value is number =>
+  value !== null && value !== undefined && Number.isFinite(value);
 
 function isCompleteBenchmark(
   benchmark: PredictiveModelRun["benchmark"],
@@ -78,7 +77,7 @@ function isCompleteBenchmark(
     comparison.observations > 0 &&
     comparison.same_eligible_periods === true &&
     comparison.comparison_complete === true &&
-    typeof comparison.outperforms_benchmark === "boolean" &&
+    (comparison.outperforms_benchmark === true || comparison.outperforms_benchmark === false) &&
     testMetrics !== undefined &&
     ["mae", "rmse", "r2"].every((name) => isFiniteNumber(testMetrics[name])) &&
     comparisonMetricNames.every((name) => isFiniteNumber(comparison[name]))
@@ -91,7 +90,6 @@ export function ModelsView({ project }: ModelsViewProps) {
   // Datasets & Securities
   const [datasets, setDatasets] = useState<CoverageResponse[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
-  const [symbols, setSymbols] = useState<string[]>(["AAPL"]);
   const [selectedSymbol, setSelectedSymbol] = useState<string>("AAPL");
 
   // Indicator Metadata & Selection
@@ -165,8 +163,8 @@ export function ModelsView({ project }: ModelsViewProps) {
         setPredictiveModels(allPredictiveModels);
         setStrategies(allStrategies);
       })
-      .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : "Failed to load indicator metadata.");
+      .catch((cause: unknown) => {
+        setError(cause instanceof Error ? cause.message : "Failed to load indicator metadata.");
       });
   }, []);
 
@@ -211,15 +209,15 @@ export function ModelsView({ project }: ModelsViewProps) {
           setSelectedSymbol(latestRun.symbol);
           const restoredParameters: Record<string, string | number> = {};
           for (const [name, value] of Object.entries(latestRun.parameters)) {
-            if (typeof value === "string" || typeof value === "number") {
-              restoredParameters[name] = value;
+            if (value !== null && value !== undefined) {
+              restoredParameters[name] = Number.isFinite(value) ? Number(value) : String(value);
             }
           }
           setPredictiveParams((previous) => ({ ...previous, ...restoredParameters }));
         }
       })
-      .catch((err: unknown) => {
-        setPredictiveError(err instanceof Error ? err.message : "Failed to load saved model runs.");
+      .catch((cause: unknown) => {
+        setPredictiveError(cause instanceof Error ? cause.message : "Failed to load saved model runs.");
       });
   }, [project]);
 
@@ -243,6 +241,7 @@ export function ModelsView({ project }: ModelsViewProps) {
     if (!currentIndicator) return;
     const defaults: Record<string, string | number> = {};
     for (const p of currentIndicator.parameters) {
+      // SAFETY: Parameter default is an int, float, or string literal
       defaults[p.name] = (p.default as string | number) ?? (p.param_type === "int" ? 20 : "sma");
     }
     setParamValues((prev) => ({ ...defaults, ...prev }));
@@ -253,6 +252,7 @@ export function ModelsView({ project }: ModelsViewProps) {
     if (!currentStrategy) return;
     const defaults: Record<string, string | number> = {};
     for (const p of currentStrategy.parameters) {
+      // SAFETY: Parameter default is an int, float, or string literal
       defaults[p.name] = (p.default as string | number) ?? (p.param_type === "int" ? 20 : "sma");
     }
     setStrategyParams(defaults);
@@ -262,8 +262,9 @@ export function ModelsView({ project }: ModelsViewProps) {
     if (!currentPredictiveModel) return;
     const defaults: Record<string, string | number> = {};
     for (const parameter of currentPredictiveModel.parameters) {
-      if (typeof parameter.default === "string" || typeof parameter.default === "number") {
-        defaults[parameter.name] = parameter.default;
+      if (parameter.default !== null && parameter.default !== undefined) {
+        // SAFETY: Parameter default is string or number
+        defaults[parameter.name] = parameter.default as string | number;
       }
     }
     setPredictiveParams(defaults);
@@ -279,16 +280,18 @@ export function ModelsView({ project }: ModelsViewProps) {
     setError(null);
     setSaveSuccess(null);
 
-    const typedParams: Record<string, unknown> = {};
+    const typedParams: Record<string, string | number | boolean | null> = {};
     if (currentIndicator) {
       for (const p of currentIndicator.parameters) {
         const raw = paramValues[p.name];
         if (p.param_type === "int") {
+          // SAFETY: Int parameter default is numeric
           typedParams[p.name] = parseInt(String(raw), 10) || (p.default as number);
         } else if (p.param_type === "float") {
+          // SAFETY: Float parameter default is numeric
           typedParams[p.name] = parseFloat(String(raw)) || (p.default as number);
         } else {
-          typedParams[p.name] = raw || p.default;
+          typedParams[p.name] = raw || String(p.default ?? "");
         }
       }
     }
@@ -302,8 +305,8 @@ export function ModelsView({ project }: ModelsViewProps) {
         price_field: "close",
       });
       setSeries(result);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to calculate indicator.");
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : "Failed to calculate indicator.");
       setSeries(null);
     } finally {
       setIsLoading(false);
@@ -329,8 +332,8 @@ export function ModelsView({ project }: ModelsViewProps) {
       });
       setSaveSuccess(`Successfully saved revision for '${sanitizedName}'.`);
       setIsSaveOpen(false);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to save revision.");
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : "Failed to save revision.");
     } finally {
       setIsSaving(false);
     }
@@ -346,14 +349,15 @@ export function ModelsView({ project }: ModelsViewProps) {
     setStrategyError(null);
     setStrategySaveSuccess(null);
 
-    const typedParams: Record<string, unknown> = {};
+    const typedParams: Record<string, string | number | boolean | null> = {};
     if (currentStrategy) {
       for (const p of currentStrategy.parameters) {
         const raw = strategyParams[p.name];
         if (p.param_type === "int") {
+          // SAFETY: Int parameter default is numeric
           typedParams[p.name] = parseInt(String(raw), 10) || (p.default as number);
         } else {
-          typedParams[p.name] = raw || p.default;
+          typedParams[p.name] = raw || String(p.default ?? "");
         }
       }
     }
@@ -369,8 +373,8 @@ export function ModelsView({ project }: ModelsViewProps) {
     try {
       const result = await api.evaluateStrategy(request);
       setStrategyResult(result);
-    } catch (err: unknown) {
-      setStrategyError(err instanceof Error ? err.message : "Failed to evaluate strategy.");
+    } catch (cause: unknown) {
+      setStrategyError(cause instanceof Error ? cause.message : "Failed to evaluate strategy.");
       setStrategyResult(null);
     } finally {
       setIsStrategyLoading(false);
@@ -390,10 +394,10 @@ export function ModelsView({ project }: ModelsViewProps) {
       for (const parameter of currentPredictiveModel.parameters) {
         const raw = predictiveParams[parameter.name];
         if (parameter.param_type === "int") {
-          const fallback = typeof parameter.default === "number" ? parameter.default : 0;
+          const fallback = Number.isFinite(parameter.default) ? Number(parameter.default) : 0;
           typedParams[parameter.name] = Number.parseInt(String(raw), 10) || fallback;
         } else if (parameter.param_type === "float") {
-          const fallback = typeof parameter.default === "number" ? parameter.default : 0;
+          const fallback = Number.isFinite(parameter.default) ? Number(parameter.default) : 0;
           typedParams[parameter.name] = Number.parseFloat(String(raw)) || fallback;
         } else {
           typedParams[parameter.name] = raw ?? parameter.default;
@@ -468,21 +472,25 @@ export function ModelsView({ project }: ModelsViewProps) {
     for (const p of pts) {
       if (p.price < minVal) minVal = p.price;
       if (p.price > maxVal) maxVal = p.price;
-      if (typeof p.values["fast_ma"] === "number") {
-        minVal = Math.min(minVal, p.values["fast_ma"]);
-        maxVal = Math.max(maxVal, p.values["fast_ma"]);
+      if (Number.isFinite(p.values["fast_ma"])) {
+        const val = Number(p.values["fast_ma"]);
+        minVal = Math.min(minVal, val);
+        maxVal = Math.max(maxVal, val);
       }
-      if (typeof p.values["slow_ma"] === "number") {
-        minVal = Math.min(minVal, p.values["slow_ma"]);
-        maxVal = Math.max(maxVal, p.values["slow_ma"]);
+      if (Number.isFinite(p.values["slow_ma"])) {
+        const val = Number(p.values["slow_ma"]);
+        minVal = Math.min(minVal, val);
+        maxVal = Math.max(maxVal, val);
       }
-      if (typeof p.values["sma"] === "number") {
-        minVal = Math.min(minVal, p.values["sma"]);
-        maxVal = Math.max(maxVal, p.values["sma"]);
+      if (Number.isFinite(p.values["sma"])) {
+        const val = Number(p.values["sma"]);
+        minVal = Math.min(minVal, val);
+        maxVal = Math.max(maxVal, val);
       }
-      if (typeof p.values["ema"] === "number") {
-        minVal = Math.min(minVal, p.values["ema"]);
-        maxVal = Math.max(maxVal, p.values["ema"]);
+      if (Number.isFinite(p.values["ema"])) {
+        const val = Number(p.values["ema"]);
+        minVal = Math.min(minVal, val);
+        maxVal = Math.max(maxVal, val);
       }
     }
 
@@ -506,20 +514,26 @@ export function ModelsView({ project }: ModelsViewProps) {
       .join(" ");
 
     // Fast MA / SMA path
-    const fastMaPts = pts.map((p, i) => {
-      const v = (p.values["fast_ma"] ?? p.values["sma"] ?? p.values["ema"]) as number | undefined;
-      return typeof v === "number" ? { x: getX(i), y: getY(v), idx: i } : null;
-    }).filter(Boolean) as { x: number; y: number; idx: number }[];
+    const fastMaPts: Array<{ x: number; y: number; idx: number }> = [];
+    pts.forEach((p, i) => {
+      const raw = p.values["fast_ma"] ?? p.values["sma"] ?? p.values["ema"];
+      if (Number.isFinite(raw)) {
+        fastMaPts.push({ x: getX(i), y: getY(Number(raw)), idx: i });
+      }
+    });
 
     const fastMaPath = fastMaPts
       .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
       .join(" ");
 
     // Slow MA path
-    const slowMaPts = pts.map((p, i) => {
-      const v = p.values["slow_ma"] as number | undefined;
-      return typeof v === "number" ? { x: getX(i), y: getY(v), idx: i } : null;
-    }).filter(Boolean) as { x: number; y: number; idx: number }[];
+    const slowMaPts: Array<{ x: number; y: number; idx: number }> = [];
+    pts.forEach((p, i) => {
+      const raw = p.values["slow_ma"];
+      if (Number.isFinite(raw)) {
+        slowMaPts.push({ x: getX(i), y: getY(Number(raw)), idx: i });
+      }
+    });
 
     const slowMaPath = slowMaPts
       .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
@@ -565,7 +579,10 @@ export function ModelsView({ project }: ModelsViewProps) {
               <SegmentedControl
                 label="Workspace Mode"
                 value={activeWorkspaceTab}
-                onChange={(val) => setActiveWorkspaceTab(val as "indicators" | "predictive" | "strategies")}
+                onChange={(val) => {
+                  // SAFETY: Value is constrained by SegmentedControlItem options
+                  setActiveWorkspaceTab(val as "indicators" | "predictive" | "strategies");
+                }}
               >
                 <SegmentedControlItem value="indicators" label="Technical Indicators" />
                 <SegmentedControlItem value="predictive" label="Predictive Models" />
@@ -901,12 +918,12 @@ export function ModelsView({ project }: ModelsViewProps) {
                       </TableHeader>
                       <TableBody>
                         {series.points.map((pt, idx) => {
-                          const fastVal = (pt.values["fast_ma"] ?? pt.values["sma"] ?? pt.values["ema"]) as
-                            | number
-                            | null
-                            | undefined;
-                          const slowVal = pt.values["slow_ma"] as number | null | undefined;
-                          const spreadVal = pt.values["spread"] as number | null | undefined;
+                          const rawFast = pt.values["fast_ma"] ?? pt.values["sma"] ?? pt.values["ema"];
+                          const fastVal = Number.isFinite(rawFast) ? Number(rawFast) : null;
+                          const rawSlow = pt.values["slow_ma"];
+                          const slowVal = Number.isFinite(rawSlow) ? Number(rawSlow) : null;
+                          const rawSpread = pt.values["spread"];
+                          const spreadVal = Number.isFinite(rawSpread) ? Number(rawSpread) : null;
                           const stateStr = String(pt.values["state"] || "");
 
                           return (
@@ -1176,7 +1193,7 @@ export function ModelsView({ project }: ModelsViewProps) {
                             <VStack gap={0}>
                               <Text type="supporting">Out-of-Sample Model RMSE</Text>
                               <Text weight="bold">
-                                {typeof benchmarkComparison.model_rmse === "number"
+                                {isFiniteNumber(benchmarkComparison.model_rmse)
                                   ? benchmarkComparison.model_rmse.toFixed(6)
                                   : "—"}
                               </Text>
@@ -1184,7 +1201,7 @@ export function ModelsView({ project }: ModelsViewProps) {
                             <VStack gap={0}>
                               <Text type="supporting">Benchmark RMSE</Text>
                               <Text weight="bold">
-                                {typeof benchmarkComparison.benchmark_rmse === "number"
+                                {isFiniteNumber(benchmarkComparison.benchmark_rmse)
                                   ? benchmarkComparison.benchmark_rmse.toFixed(6)
                                   : "—"}
                               </Text>
@@ -1192,7 +1209,7 @@ export function ModelsView({ project }: ModelsViewProps) {
                             <VStack gap={0}>
                               <Text type="supporting">RMSE Improvement</Text>
                               <Text weight="bold">
-                                {typeof benchmarkComparison.rmse_improvement === "number"
+                                {isFiniteNumber(benchmarkComparison.rmse_improvement)
                                   ? `${(benchmarkComparison.rmse_improvement * 100).toFixed(2)}%`
                                   : "—"}
                               </Text>
@@ -1258,7 +1275,7 @@ export function ModelsView({ project }: ModelsViewProps) {
                             const metrics = periodItem?.metrics;
                             const benchMetrics = periodItem?.benchmark_metrics;
                             const comp = periodItem?.comparison;
-                            const rmseImpr = typeof comp?.rmse_improvement === "number"
+                            const rmseImpr = isFiniteNumber(comp?.rmse_improvement)
                               ? `${(comp.rmse_improvement * 100).toFixed(2)}%`
                               : "—";
                             return (
@@ -1456,7 +1473,7 @@ export function ModelsView({ project }: ModelsViewProps) {
                 label="Security Symbol"
                 isLabelHidden
                 value={selectedSymbol}
-                onChange={(val) => setSelectedSymbol(typeof val === "string" ? val.toUpperCase() : "")}
+                onChange={(val) => setSelectedSymbol(String(val ?? "").toUpperCase())}
                 placeholder="e.g. AAPL"
               />
             </VStack>
@@ -1514,7 +1531,7 @@ export function ModelsView({ project }: ModelsViewProps) {
                             onChange={(val) =>
                               setStrategyParams((prev) => ({
                                 ...prev,
-                                [param.name]: typeof val === "string" ? val : "",
+                                [param.name]: String(val ?? ""),
                               }))
                             }
                           />
@@ -1594,7 +1611,7 @@ export function ModelsView({ project }: ModelsViewProps) {
                             onChange={(val) =>
                               setPredictiveParams((previous) => ({
                                 ...previous,
-                                [parameter.name]: typeof val === "string" ? val : "",
+                                [parameter.name]: String(val ?? ""),
                               }))
                             }
                           />
@@ -1689,7 +1706,7 @@ export function ModelsView({ project }: ModelsViewProps) {
                             onChange={(val) =>
                               setParamValues((prev) => ({
                                 ...prev,
-                                [param.name]: typeof val === "string" ? val : "",
+                                [param.name]: String(val ?? ""),
                               }))
                             }
                           />
@@ -1732,7 +1749,7 @@ export function ModelsView({ project }: ModelsViewProps) {
             <TextInput
               label="Definition Name"
               value={definitionName}
-              onChange={(val) => setDefinitionName(typeof val === "string" ? val : "")}
+              onChange={(val) => setDefinitionName(String(val ?? ""))}
               placeholder="e.g. aapl_trend_crossover"
               isRequired
             />
