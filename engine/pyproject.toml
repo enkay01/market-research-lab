@@ -18,10 +18,10 @@ requires = ["hatchling>=1.25,<2"]
 build-backend = "hatchling.build"
 
 [project.scripts]
-market-research-lab-dev = "market_research_lab.commands:dev"
-market-research-lab-serve = "market_research_lab.commands:serve"
-market-research-lab-check = "market_research_lab.commands:check"
-market-research-lab-build = "market_research_lab.commands:build"
+dev = "market_research_lab.commands:dev"
+serve = "market_research_lab.commands:serve"
+check = "market_research_lab.commands:check"
+build = "market_research_lab.commands:build"
 
 [dependency-groups]
 dev = [

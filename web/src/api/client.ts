@@ -68,6 +68,7 @@ export class ApiError extends Error {
     public readonly status: number,
     message: string,
     public readonly cause?: unknown,
+    public readonly diagnosticId?: string,
   ) {
     super(message, cause !== undefined ? { cause } : undefined);
   }
@@ -114,7 +115,9 @@ async function dataOrThrow<T>(request: Promise<{ data?: T; error?: unknown; resp
   if (data !== undefined) return data;
   const fallback = response.statusText || `Request failed with status ${response.status}`;
   const message = parseErrorMessage(error, fallback);
-  throw new ApiError(response.status, message, error);
+  const diagnosticId = response.headers.get("X-Diagnostic-ID") ?? undefined;
+  const messageWithDiagnosticId = diagnosticId ? `${message} (Diagnostic ID: ${diagnosticId})` : message;
+  throw new ApiError(response.status, messageWithDiagnosticId, error, diagnosticId);
 }
 
 export const api = {
