@@ -74,6 +74,8 @@ function actionTokenColor(action: string): "green" | "red" | "default" {
 function alertFeedState(engineConnected: boolean, alerts: Signal[]): AlertFeedState {
   if (!engineConnected) return "offline-engine";
   if (alerts.length === 0) return "no-alerts";
+  // The Project store lists Signals newest-first by decision time, so the
+  // first row carries the freshest evaluation.
   return alerts[0].data_state === "stale-data" ? "stale-data" : "fresh";
 }
 
@@ -223,14 +225,14 @@ export function AlertsView({ project, engineConnected, onOpenSecurity }: AlertsV
                 status="warning"
                 title="Stale Data"
                 defaultIsExpanded
-                description="The latest eligible data behind the newest Alert is more than 7 days old. Refresh the Project datasets before trusting these Signals."
+                description="The latest eligible data behind the newest Alert is older than the Alert freshness window. Refresh the Project datasets before trusting these Signals."
               />
             )}
             {engineConnected && feedState === "fresh" && (
               <Banner
                 status="success"
                 title="Data Is Fresh"
-                description="The newest Alert was evaluated against data no older than 7 days."
+                description="The newest Alert was evaluated against eligible data inside the freshness window."
               />
             )}
 
@@ -313,7 +315,7 @@ export function AlertsView({ project, engineConnected, onOpenSecurity }: AlertsV
                         </Link>
                       </TableCell>
                       <TableCell>
-                        <HStack align="center" gap={2}>
+                        <VStack gap={1} align="start">
                           <Token label={signal.strategy_revision} color="purple" />
                           <Link
                             onClick={() => void openRevisionDetail(signal.strategy_revision)}
@@ -321,7 +323,7 @@ export function AlertsView({ project, engineConnected, onOpenSecurity }: AlertsV
                           >
                             Inspect
                           </Link>
-                        </HStack>
+                        </VStack>
                       </TableCell>
                       <TableCell>
                         <HStack align="center" gap={2}>
@@ -433,7 +435,7 @@ function EnabledStrategiesPanel({
   }, [project, refreshResult]);
 
   return (
-    <VStack gap={4} style={{ padding: "16px" }}>
+    <VStack gap={4} padding={4}>
       <Heading level={3}>Enabled Strategies</Heading>
       {error && (
         <Banner status="error" title="Load Failed">
@@ -452,9 +454,9 @@ function EnabledStrategiesPanel({
             <VStack
               key={`${item.name}:${item.revision}`}
               gap={1}
+              padding={3}
               style={{
-                padding: "12px",
-                borderRadius: "var(--radius-md, 6px)",
+                borderRadius: "var(--radius-element)",
                 backgroundColor: "var(--color-background-surface)",
                 border: "1px solid var(--color-border)",
               }}

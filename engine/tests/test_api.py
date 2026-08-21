@@ -1493,6 +1493,37 @@ def test_enable_and_refresh_produces_a_traceable_signal(tmp_path):
     assert alerts.json()[0]["data_state"] == "stale-data"
 
 
+def _import_bars_csv(client, csv_content: str) -> str:
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "test_provider"},
+        files={"file": ("bars.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
+    )
+    assert imported.status_code == 201
+    return imported.json()["dataset_version_id"]
+
+
+def _save_and_enable_strategy(client, project_id: str, dataset_version_id: str) -> str:
+    """Save one moving-average Strategy revision for AAPL and enable it."""
+    saved = client.post(
+        f"/api/projects/{project_id}/strategies/evaluate",
+        json={
+            "name": "long_flat_moving_average",
+            "dataset_version_id": dataset_version_id,
+            "symbol": "AAPL",
+            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+        },
+    )
+    assert saved.status_code == 201
+    definition_name = f"{saved.json()['strategy_name']} - {saved.json()['symbol']}"
+    enabled = client.post(
+        f"/api/projects/{project_id}/strategies/enable",
+        json={"name": definition_name, "revision": "v1"},
+    )
+    assert enabled.status_code == 201
+    return definition_name
+
+
 def test_listed_alerts_mark_recent_data_fresh(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
     project = client.post("/api/projects", json={"name": "Signals"}).json()
@@ -1511,27 +1542,9 @@ def test_listed_alerts_mark_recent_data_fresh(tmp_path):
         + "\n".join(rows)
         + "\n"
     )
-    imported = client.post(
-        "/api/datasets",
-        data={"source": "test_provider"},
-        files={"file": ("bars.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
-    )
-    dataset_version_id = imported.json()["dataset_version_id"]
+    dataset_version_id = _import_bars_csv(client, csv_content)
+    _save_and_enable_strategy(client, project["id"], dataset_version_id)
 
-    saved = client.post(
-        f"/api/projects/{project['id']}/strategies/evaluate",
-        json={
-            "name": "long_flat_moving_average",
-            "dataset_version_id": dataset_version_id,
-            "symbol": "AAPL",
-            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
-        },
-    )
-    definition_name = f"{saved.json()['strategy_name']} - {saved.json()['symbol']}"
-    client.post(
-        f"/api/projects/{project['id']}/strategies/enable",
-        json={"name": definition_name, "revision": "v1"},
-    )
     refreshed = client.post(f"/api/projects/{project['id']}/alerts/refresh")
     assert refreshed.status_code == 200
 
@@ -1552,25 +1565,8 @@ def test_alert_can_read_the_strategy_revision_behind_it(tmp_path):
         "AAPL,Apple Inc.,NASDAQ,2024-01-04,106,110,105,108,1100,2024-01-04T20:00:00Z\n"
         "AAPL,Apple Inc.,NASDAQ,2024-01-05,108,112,107,110,1300,2024-01-05T20:00:00Z\n"
     )
-    imported = client.post(
-        "/api/datasets",
-        data={"source": "test_provider"},
-        files={"file": ("bars.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
-    )
-    assert imported.status_code == 201
-    dataset_version_id = imported.json()["dataset_version_id"]
-
-    saved = client.post(
-        f"/api/projects/{project['id']}/strategies/evaluate",
-        json={
-            "name": "long_flat_moving_average",
-            "dataset_version_id": dataset_version_id,
-            "symbol": "AAPL",
-            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
-        },
-    )
-    assert saved.status_code == 201
-    definition_name = f"{saved.json()['strategy_name']} - {saved.json()['symbol']}"
+    dataset_version_id = _import_bars_csv(client, csv_content)
+    definition_name = _save_and_enable_strategy(client, project["id"], dataset_version_id)
 
     revision = client.get(
         f"/api/projects/{project['id']}/definitions/strategy/{definition_name}/v1"

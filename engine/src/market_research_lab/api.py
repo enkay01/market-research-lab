@@ -863,7 +863,7 @@ class SignalResponse(BaseModel):
 
 
 def signal_response(signal: dict[str, JsonValue]) -> SignalResponse:
-    """Build one Alert response with freshness classified at read time (ALT-004)."""
+    """Build one Signal response with freshness classified at read time (ALT-004)."""
     body = dict(signal)
     body["data_state"] = data_freshness_state(
         str(body.get("data_time", "")), now=datetime.now(UTC)
