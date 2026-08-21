@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from .json_types import JsonValue
@@ -30,6 +30,50 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_STALE_AFTER_DAYS = 7
+"""Daily bars older than this many days count as stale data for Alerts (ALT-004)."""
+
+DataFreshnessState = Literal["fresh", "stale-data"]
+
+
+def data_freshness_state(
+    data_time: str,
+    *,
+    now: datetime,
+    stale_after_days: int = DEFAULT_STALE_AFTER_DAYS,
+) -> DataFreshnessState:
+    """Classify one Signal's data time as fresh or stale relative to ``now``.
+
+    A bare session date counts as that day's midnight UTC. An unparseable data
+    time degrades to stale so the interface never claims freshness it cannot
+    prove.
+    """
+    parsed = _parse_data_time(data_time)
+    if parsed is None:
+        return "stale-data"
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    age = now - parsed
+    return "fresh" if age < timedelta(days=stale_after_days) else "stale-data"
+
+
+def _parse_data_time(data_time: str) -> datetime | None:
+    text = data_time.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        try:
+            parsed = datetime.strptime(text, "%Y-%m-%d").replace(tzinfo=UTC)
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 class InvalidStrategyDefinitionError(ValueError):

@@ -1,5 +1,6 @@
 import io
 import json
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 import pytest
@@ -1483,11 +1484,122 @@ def test_enable_and_refresh_produces_a_traceable_signal(tmp_path):
     assert signal["data_time"] == "2024-01-10T20:00:00Z"
     assert "long" in signal["rationale"]
     assert signal["dataset_version_id"] == dataset_version_id
+    assert signal["data_state"] == "stale-data"
 
     alerts = client.get(f"/api/projects/{project['id']}/alerts")
     assert alerts.status_code == 200
     assert len(alerts.json()) == 1
     assert alerts.json()[0]["signal_id"] == signal["signal_id"]
+    assert alerts.json()[0]["data_state"] == "stale-data"
+
+
+def test_listed_alerts_mark_recent_data_fresh(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Signals"}).json()
+
+    now = datetime.now(UTC)
+    rows = []
+    for offset in range(5, 0, -1):
+        session = now - timedelta(days=offset)
+        stamp = session.strftime("%Y-%m-%dT%H:%M:%SZ")
+        rows.append(
+            f"AAPL,Apple Inc.,NASDAQ,{session.date().isoformat()},"
+            f"{100 + offset},{105 + offset},{99 + offset},{102 + offset},1000,{stamp}"
+        )
+    csv_content = (
+        "symbol,name,exchange,session_date,open,high,low,close,volume,available_at\n"
+        + "\n".join(rows)
+        + "\n"
+    )
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "test_provider"},
+        files={"file": ("bars.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
+    )
+    dataset_version_id = imported.json()["dataset_version_id"]
+
+    saved = client.post(
+        f"/api/projects/{project['id']}/strategies/evaluate",
+        json={
+            "name": "long_flat_moving_average",
+            "dataset_version_id": dataset_version_id,
+            "symbol": "AAPL",
+            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+        },
+    )
+    definition_name = f"{saved.json()['strategy_name']} - {saved.json()['symbol']}"
+    client.post(
+        f"/api/projects/{project['id']}/strategies/enable",
+        json={"name": definition_name, "revision": "v1"},
+    )
+    refreshed = client.post(f"/api/projects/{project['id']}/alerts/refresh")
+    assert refreshed.status_code == 200
+
+    alerts = client.get(f"/api/projects/{project['id']}/alerts")
+    assert alerts.status_code == 200
+    assert len(alerts.json()) == 1
+    assert alerts.json()[0]["data_state"] == "fresh"
+
+
+def test_alert_can_read_the_strategy_revision_behind_it(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Signals"}).json()
+
+    csv_content = (
+        "symbol,name,exchange,session_date,open,high,low,close,volume,available_at\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-02,100,105,99,102,1000,2024-01-02T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-03,102,108,101,106,1200,2024-01-03T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-04,106,110,105,108,1100,2024-01-04T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-05,108,112,107,110,1300,2024-01-05T20:00:00Z\n"
+    )
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "test_provider"},
+        files={"file": ("bars.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
+    )
+    assert imported.status_code == 201
+    dataset_version_id = imported.json()["dataset_version_id"]
+
+    saved = client.post(
+        f"/api/projects/{project['id']}/strategies/evaluate",
+        json={
+            "name": "long_flat_moving_average",
+            "dataset_version_id": dataset_version_id,
+            "symbol": "AAPL",
+            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+        },
+    )
+    assert saved.status_code == 201
+    definition_name = f"{saved.json()['strategy_name']} - {saved.json()['symbol']}"
+
+    revision = client.get(
+        f"/api/projects/{project['id']}/definitions/strategy/{definition_name}/v1"
+    )
+    assert revision.status_code == 200
+    body = revision.json()
+    assert body["kind"] == "strategy"
+    assert body["name"] == definition_name
+    assert body["revision"] == "v1"
+    assert body["definition"]["strategy"] == "long_flat_moving_average"
+    assert body["definition"]["symbol"] == "AAPL"
+
+    # The draft route stays reachable; immutable-revision rules are enforced on enable.
+    draft = client.get(
+        f"/api/projects/{project['id']}/definitions/strategy/{definition_name}/draft"
+    )
+    assert draft.status_code == 200
+    assert draft.json()["name"] == definition_name
+
+    missing = client.get(
+        f"/api/projects/{project['id']}/definitions/strategy/{definition_name}/v9"
+    )
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "revision_not_found"
+
+    bad_kind = client.get(
+        f"/api/projects/{project['id']}/definitions/../secrets/{definition_name}/v1"
+    )
+    assert bad_kind.status_code in (404, 422)
 
 
 def test_refresh_preserves_failure_and_creates_no_partial_signal(tmp_path):

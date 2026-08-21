@@ -32,6 +32,12 @@ export function App() {
   const [selectedProject, setSelectedProject] = useState<Project | undefined>();
   const [engineConnected, setEngineConnected] = useState(false);
   const [statusText, setStatusText] = useState("Connecting…");
+  const [focusSecurityId, setFocusSecurityId] = useState<string | null>(null);
+
+  function openSecurity(securityId: string) {
+    setFocusSecurityId(securityId);
+    setActiveTab("research");
+  }
 
   // Project Creation Modal
   const [isNewProjectOpen, setIsNewProjectOpen] = useState(false);
@@ -208,12 +214,18 @@ export function App() {
     >
       {/* Domain View Switcher */}
       {activeTab === "data" && <DataView />}
-      {activeTab === "research" && <ResearchView project={selectedProject} />}
+      {activeTab === "research" && (
+        <ResearchView project={selectedProject} focusSecurityId={focusSecurityId} />
+      )}
       {activeTab === "valuation" && <ValuationView project={selectedProject} />}
       {activeTab === "models" && <ModelsView project={selectedProject} />}
       {activeTab === "backtest" && <BacktestView project={selectedProject} />}
       {activeTab === "alerts" && (
-        <AlertsView project={selectedProject} engineConnected={engineConnected} />
+        <AlertsView
+          project={selectedProject}
+          engineConnected={engineConnected}
+          onOpenSecurity={openSecurity}
+        />
       )}
       {activeTab === "study" && <StudyView project={selectedProject} />}
 

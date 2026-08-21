@@ -57,6 +57,12 @@ export type LedgerRow = components["schemas"]["LedgerRowResponse"];
 export type EquityPoint = components["schemas"]["EquityPointResponse"];
 export type BacktestSpecification = components["schemas"]["BacktestSpecificationResponse"];
 
+export type Signal = components["schemas"]["SignalResponse"];
+export type SignalRefreshFailure = components["schemas"]["SignalRefreshFailureResponse"];
+export type SignalRefresh = components["schemas"]["SignalRefreshResponse"];
+export type DefinitionRevision = components["schemas"]["DefinitionRevisionResponse"];
+export type EnabledStrategy = components["schemas"]["EnabledStrategyResponse"];
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -379,4 +385,28 @@ export const api = {
     `/api/projects/${encodeURIComponent(projectId)}/backtests/${encodeURIComponent(runId)}/export/${format}`,
   getValuationExportUrl: (projectId: string, runId: string, format: "html" | "csv" | "json") =>
     `/api/projects/${encodeURIComponent(projectId)}/valuations/${encodeURIComponent(runId)}/export/${format}`,
+  listAlerts: (projectId: string) =>
+    dataOrThrow(
+      client.GET("/api/projects/{project_id}/alerts", {
+        params: { path: { project_id: projectId } },
+      }),
+    ),
+  refreshAlerts: (projectId: string) =>
+    dataOrThrow(
+      client.POST("/api/projects/{project_id}/alerts/refresh", {
+        params: { path: { project_id: projectId } },
+      }),
+    ),
+  listEnabledStrategies: (projectId: string) =>
+    dataOrThrow(
+      client.GET("/api/projects/{project_id}/strategies/enabled", {
+        params: { path: { project_id: projectId } },
+      }),
+    ),
+  getDefinitionRevision: (projectId: string, kind: string, name: string, revision: string) =>
+    dataOrThrow(
+      client.GET("/api/projects/{project_id}/definitions/{kind}/{name}/{revision}", {
+        params: { path: { project_id: projectId, kind, name, revision } },
+      }),
+    ),
 };
