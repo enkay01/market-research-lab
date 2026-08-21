@@ -2848,12 +2848,19 @@ def create_app(
 
         valuations: list[dict[str, JsonValue]] = []
         runs: list[dict[str, JsonValue]] = []
+        alerts: list[dict[str, JsonValue]] = []
         if project_id:
             with contextlib.suppress(ProjectNotFoundError, OSError, KeyError):
                 valuations = store.list_valuations_for_security(
                     str(project_id), summary.security.security_id
                 )
                 runs = store.list_runs_for_security(str(project_id), summary.security.security_id)
+                alerts = [
+                    signal_response(s).model_dump(mode="json")
+                    for s in store.list_signals_for_security(
+                        str(project_id), summary.security.security_id
+                    )
+                ]
 
         return SecuritySummaryResponse(
             security=SecurityResponse(
@@ -2876,6 +2883,7 @@ def create_app(
             covering_dataset_versions=summary.covering_dataset_versions,
             valuations=valuations,
             runs=runs,
+            alerts=alerts,
         )
 
     @app.get(

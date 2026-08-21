@@ -74,9 +74,7 @@ function actionTokenColor(action: string): "green" | "red" | "default" {
 function alertFeedState(engineConnected: boolean, alerts: Signal[]): AlertFeedState {
   if (!engineConnected) return "offline-engine";
   if (alerts.length === 0) return "no-alerts";
-  // The Project store lists Signals newest-first by decision time, so the
-  // first row carries the freshest evaluation.
-  return alerts[0].data_state === "stale-data" ? "stale-data" : "fresh";
+  return alerts.some((alert) => alert.data_state === "stale-data") ? "stale-data" : "fresh";
 }
 
 export function AlertsView({ project, engineConnected, onOpenSecurity }: AlertsViewProps) {
@@ -164,7 +162,7 @@ export function AlertsView({ project, engineConnected, onOpenSecurity }: AlertsV
           <HStack justify="between" align="center" style={{ width: "100%" }}>
             <HStack align="center" gap={3}>
               <Heading level={2}>Alerts</Heading>
-              {alerts.length > 0 && <Badge label={`${alerts.length} Alerts`} variant="error" />}
+              {alerts.length > 0 && <Badge label={String(alerts.length)} variant="error" />}
               <HStack align="center" gap={1}>
                 <StatusDot
                   variant={engineConnected ? "success" : "error"}
@@ -225,14 +223,14 @@ export function AlertsView({ project, engineConnected, onOpenSecurity }: AlertsV
                 status="warning"
                 title="Stale Data"
                 defaultIsExpanded
-                description="The latest eligible data behind the newest Alert is older than the Alert freshness window. Refresh the Project datasets before trusting these Signals."
+                description="One or more active Alerts were evaluated against data older than the Alert freshness window. Refresh the Project datasets before trusting these Signals."
               />
             )}
             {engineConnected && feedState === "fresh" && (
               <Banner
                 status="success"
                 title="Data Is Fresh"
-                description="The newest Alert was evaluated against eligible data inside the freshness window."
+                description="All active Alerts were evaluated against eligible data inside the freshness window."
               />
             )}
 

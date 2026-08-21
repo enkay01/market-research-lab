@@ -84,6 +84,16 @@ class DailyBar:
     adjusted_low: float | None = None
     adjusted_close: float | None = None
 
+    def price_for_field(self, price_field: str) -> float:
+        """Return one OHLC price field from this bar."""
+        if price_field == "open":
+            return self.open
+        if price_field == "high":
+            return self.high
+        if price_field == "low":
+            return self.low
+        return self.close
+
 
 @dataclass(frozen=True)
 class CorporateAction:

@@ -1598,6 +1598,31 @@ def test_alert_can_read_the_strategy_revision_behind_it(tmp_path):
     assert bad_kind.status_code in (404, 422)
 
 
+def test_security_details_includes_live_alerts(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Signals"}).json()
+
+    csv_content = (
+        "symbol,name,exchange,session_date,open,high,low,close,volume,available_at\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-02,100,105,99,102,1000,2024-01-02T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-03,102,108,101,106,1200,2024-01-03T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-04,106,110,105,108,1100,2024-01-04T20:00:00Z\n"
+        "AAPL,Apple Inc.,NASDAQ,2024-01-05,108,112,107,110,1300,2024-01-05T20:00:00Z\n"
+    )
+    dataset_version_id = _import_bars_csv(client, csv_content)
+    _save_and_enable_strategy(client, project["id"], dataset_version_id)
+
+    client.post(f"/api/projects/{project['id']}/alerts/refresh")
+
+    details = client.get(f"/api/securities/AAPL?project_id={project['id']}")
+    assert details.status_code == 200
+    summary = details.json()
+    assert len(summary["alerts"]) == 1
+    assert summary["alerts"][0]["security_id"] == "AAPL"
+    assert summary["alerts"][0]["action"] == "long"
+    assert summary["alerts"][0]["data_state"] == "stale-data"
+
+
 def test_refresh_preserves_failure_and_creates_no_partial_signal(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
     project = client.post("/api/projects", json={"name": "Signals"}).json()

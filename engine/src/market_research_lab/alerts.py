@@ -181,16 +181,6 @@ def validate_strategy_definition(definition: JsonValue) -> None:
         raise InvalidStrategyDefinitionError(str(error)) from error
 
 
-def _price_for_field(bar: DailyBar, price_field: str) -> float:
-    if price_field == "open":
-        return bar.open
-    if price_field == "high":
-        return bar.high
-    if price_field == "low":
-        return bar.low
-    return bar.close
-
-
 def _action_for_weight(weight: float) -> str:
     if weight > 0:
         return "long"
@@ -305,7 +295,7 @@ def refresh_enabled_strategies(
             market_view = MarketView(
                 security_id=symbol,
                 session_dates=tuple(bar.session_date for bar in sorted_bars),
-                prices=tuple(_price_for_field(bar, price_field) for bar in sorted_bars),
+                prices=tuple(bar.price_for_field(price_field) for bar in sorted_bars),
             )
 
             signal = evaluate_signal(

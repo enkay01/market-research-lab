@@ -704,7 +704,11 @@ export function ResearchView({ project, focusSecurityId }: ResearchViewProps) {
                         {securitySummary?.alerts && securitySummary.alerts.length > 0 ? (
                           <VStack gap={1}>
                             {securitySummary.alerts.map((a, idx) => (
-                              <Token key={idx} label={String(a.name || "Alert")} color="yellow" />
+                              <Token
+                                key={idx}
+                                label={String(a.strategy_revision || a.name || "Alert")}
+                                color={a.action === "long" ? "green" : a.action === "short" ? "red" : "default"}
+                              />
                             ))}
                           </VStack>
                         ) : (
