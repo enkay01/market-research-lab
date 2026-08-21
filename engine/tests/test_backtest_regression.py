@@ -41,16 +41,10 @@ def _make_bar(
     session_date: str,
     open_p: float,
     close_p: float,
-    *,
-    high_p: float | None = None,
-    low_p: float | None = None,
-    volume: float = 1000.0,
-    available_at: str | None = None,
 ) -> DailyBar:
     """Build a DailyBar with point-in-time eligibility timestamp."""
-    high = high_p if high_p is not None else max(open_p, close_p)
-    low = low_p if low_p is not None else min(open_p, close_p)
-    avail = available_at if available_at is not None else f"{session_date}T21:00:00Z"
+    high = max(open_p, close_p)
+    low = min(open_p, close_p)
     return DailyBar(
         security_id=symbol,
         session_date=session_date,
@@ -58,10 +52,10 @@ def _make_bar(
         high=high,
         low=low,
         close=close_p,
-        volume=volume,
+        volume=1000.0,
         source="synthetic_test",
         retrieval_time="",
-        available_at=avail,
+        available_at=f"{session_date}T21:00:00Z",
         eligibility_provenance="synthetic_test",
     )
 

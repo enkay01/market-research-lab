@@ -113,8 +113,8 @@ export function ValuationView({ project }: ValuationViewProps) {
           setTargetId((current) => current || available[0].security_id);
         }
       })
-      .catch((error: unknown) => {
-        setMessage(error instanceof Error ? error.message : "Could not load local Securities.");
+      .catch((cause: unknown) => {
+        setMessage(cause instanceof Error ? cause.message : "Could not load local Securities.");
         setBannerType("warning");
       });
   }, []);
@@ -126,8 +126,8 @@ export function ValuationView({ project }: ValuationViewProps) {
       .then((valuations) => {
         setSavedValuations(valuations);
       })
-      .catch((error: unknown) => {
-        setMessage(error instanceof Error ? error.message : "Could not reload saved Valuations.");
+      .catch((cause: unknown) => {
+        setMessage(cause instanceof Error ? cause.message : "Could not reload saved Valuations.");
         setBannerType("warning");
       });
   };
@@ -308,7 +308,10 @@ export function ValuationView({ project }: ValuationViewProps) {
               <SegmentedControl
                 label="Valuation view"
                 value={activeTab}
-                onChange={(value) => setActiveTab(value as "fcff_dcf" | "comparables" | "comparison")}
+                onChange={(value) => {
+                  // SAFETY: Value is constrained by SegmentedControlItem options
+                  setActiveTab(value as "fcff_dcf" | "comparables" | "comparison");
+                }}
               >
                 <SegmentedControlItem value="fcff_dcf" label="FCFF DCF" />
                 <SegmentedControlItem value="comparables" label="Comparables" />
@@ -389,61 +392,61 @@ export function ValuationView({ project }: ValuationViewProps) {
                     <TextInput
                       label="Base Revenue ($M)"
                       value={baseRevenue}
-                      onChange={(val) => setBaseRevenue(typeof val === "string" ? val : "")}
+                      onChange={(val) => setBaseRevenue(String(val ?? ""))}
                     />
                     <TextInput
                       label="Revenue Growth Rate (%)"
                       value={revenueGrowth}
-                      onChange={(val) => setRevenueGrowth(typeof val === "string" ? val : "")}
+                      onChange={(val) => setRevenueGrowth(String(val ?? ""))}
                     />
                     <TextInput
                       label="Operating Margin (%)"
                       value={operatingMargin}
-                      onChange={(val) => setOperatingMargin(typeof val === "string" ? val : "")}
+                      onChange={(val) => setOperatingMargin(String(val ?? ""))}
                     />
                     <TextInput
                       label="Effective Tax Rate (%)"
                       value={taxRate}
-                      onChange={(val) => setTaxRate(typeof val === "string" ? val : "")}
+                      onChange={(val) => setTaxRate(String(val ?? ""))}
                     />
                   </HStack>
                   <HStack gap={3}>
                     <TextInput
                       label="Reinvestment Rate (% NOPAT)"
                       value={reinvestmentRate}
-                      onChange={(val) => setReinvestmentRate(typeof val === "string" ? val : "")}
+                      onChange={(val) => setReinvestmentRate(String(val ?? ""))}
                     />
                     <TextInput
                       label="WACC / Discount Rate (%)"
                       value={wacc}
-                      onChange={(val) => setWacc(typeof val === "string" ? val : "")}
+                      onChange={(val) => setWacc(String(val ?? ""))}
                     />
                     <TextInput
                       label="Terminal Growth Rate (%)"
                       value={terminalGrowth}
-                      onChange={(val) => setTerminalGrowth(typeof val === "string" ? val : "")}
+                      onChange={(val) => setTerminalGrowth(String(val ?? ""))}
                     />
                     <TextInput
                       label="Shares Outstanding (M)"
                       value={sharesOutstanding}
-                      onChange={(val) => setSharesOutstanding(typeof val === "string" ? val : "")}
+                      onChange={(val) => setSharesOutstanding(String(val ?? ""))}
                     />
                   </HStack>
                   <HStack gap={3}>
                     <TextInput
                       label="Total Debt ($M)"
                       value={totalDebt}
-                      onChange={(val) => setTotalDebt(typeof val === "string" ? val : "")}
+                      onChange={(val) => setTotalDebt(String(val ?? ""))}
                     />
                     <TextInput
                       label="Cash & Equivalents ($M)"
                       value={cash}
-                      onChange={(val) => setCash(typeof val === "string" ? val : "")}
+                      onChange={(val) => setCash(String(val ?? ""))}
                     />
                     <TextInput
                       label="Forecast Horizon (Years)"
                       value={forecastYears}
-                      onChange={(val) => setForecastYears(typeof val === "string" ? val : "")}
+                      onChange={(val) => setForecastYears(String(val ?? ""))}
                     />
                   </HStack>
                 </VStack>
@@ -684,6 +687,7 @@ export function ValuationView({ project }: ValuationViewProps) {
                   <SegmentedControl
                     value={compareMethodFilter}
                     onChange={(val) => {
+                      // SAFETY: Value is constrained by SegmentedControlItem options
                       setCompareMethodFilter(val as "fcff_dcf" | "trading_comparables");
                       setSelectedRunIds([]);
                       setComparisonResult(null);
@@ -706,7 +710,8 @@ export function ValuationView({ project }: ValuationViewProps) {
                         hasDividers
                       >
                         {filteredValuations.map((val) => {
-                          const res = val.result as any;
+                          // SAFETY: Valuation result structure contains optional target or symbol payload
+                          const res = val.result as { symbol?: string; target?: { symbol?: string } } | undefined;
                           const sym = res?.symbol || res?.target?.symbol || "Unknown";
                           return (
                             <CheckboxListItem

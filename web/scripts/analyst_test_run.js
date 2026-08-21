@@ -1,7 +1,6 @@
 import { chromium } from "playwright";
 import fs from "fs";
 import net from "net";
-import os from "os";
 import path from "path";
 import { execFileSync, spawn } from "child_process";
 import { fileURLToPath } from "url";
@@ -20,7 +19,7 @@ async function findFreePort(environmentVariable) {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
-      const port = typeof address === "object" && address ? String(address.port) : null;
+      const port = address && !Array.isArray(address) ? String(address.port) : null;
       server.close((error) => {
         if (error) reject(error);
         else if (port) resolve(port);

@@ -23,10 +23,8 @@ def make_bar(
     open: float,
     close: float,
     symbol: str = "AAPL",
-    available_at: str | None = None,
 ) -> DailyBar:
     """Build a DailyBar with full point-in-time eligibility metadata."""
-    avail = available_at if available_at is not None else f"{session_date}T21:00:00Z"
     return DailyBar(
         security_id=symbol,
         session_date=session_date,
@@ -37,7 +35,7 @@ def make_bar(
         volume=10000.0,
         source="test",
         retrieval_time="",
-        available_at=avail,
+        available_at=f"{session_date}T21:00:00Z",
         eligibility_provenance="test",
     )
 
@@ -299,7 +297,7 @@ def test_point_in_time_excludes_future_corporate_actions() -> None:
         make_bar(dates[2], 12.0, 12.0),
         make_bar(dates[3], 13.0, 13.0),
         make_bar(dates[4], 13.0, 13.0),
-        make_bar(dates[5], 13.0, 13.0, available_at="2024-01-09T21:00:00Z"),
+        make_bar(dates[5], 13.0, 13.0),
     ]
     # Corporate action retrieval timestamp is in the future (2024-01-15)
     future_split = CorporateAction(

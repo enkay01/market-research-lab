@@ -67,30 +67,53 @@ export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
-    public readonly errorBody?: unknown,
+    public readonly cause?: unknown,
   ) {
-    super(message);
+    super(message, cause !== undefined ? { cause } : undefined);
   }
 }
 
 const client = createClient<paths>({ baseUrl: "" });
 
+interface ApiErrorPayload {
+  message?: string;
+  detail?: string | Array<{ msg?: string } | string>;
+}
+
+function parseErrorMessage(cause: unknown, fallback: string): string {
+  if (cause instanceof Error) {
+    return cause.message;
+  }
+  if (cause && Object.prototype.toString.call(cause) === "[object Object]") {
+    // SAFETY: Verified cause is an error payload object
+    const payload = cause as ApiErrorPayload;
+    if (payload.message) {
+      return String(payload.message);
+    }
+    if (payload.detail) {
+      if (Array.isArray(payload.detail)) {
+        return payload.detail
+          .map((item) => {
+            if (item && Object.prototype.toString.call(item) === "[object Object]") {
+              // SAFETY: Item is a validation error object with msg field
+              const errObj = item as { msg?: string };
+              return errObj.msg ? String(errObj.msg) : JSON.stringify(item);
+            }
+            return String(item);
+          })
+          .join("; ");
+      }
+      return String(payload.detail);
+    }
+  }
+  return fallback;
+}
+
 async function dataOrThrow<T>(request: Promise<{ data?: T; error?: unknown; response: Response }>): Promise<T> {
   const { data, error, response } = await request;
   if (data !== undefined) return data;
-  let message = response.statusText || `Request failed with status ${response.status}`;
-  if (typeof error === "object" && error !== null) {
-    if ("message" in error && typeof (error as any).message === "string") {
-      message = (error as any).message;
-    } else if ("detail" in error) {
-      const detail = (error as any).detail;
-      if (typeof detail === "string") {
-        message = detail;
-      } else if (Array.isArray(detail)) {
-        message = detail.map((d: any) => (typeof d === "object" && d?.msg ? d.msg : JSON.stringify(d))).join("; ");
-      }
-    }
-  }
+  const fallback = response.statusText || `Request failed with status ${response.status}`;
+  const message = parseErrorMessage(error, fallback);
   throw new ApiError(response.status, message, error);
 }
 
@@ -124,8 +147,10 @@ export const api = {
     formData.append("file", file);
     return dataOrThrow(
       client.POST("/api/datasets", {
-        body: formData as unknown as components["schemas"]["Body_import_dataset_api_datasets_post"],
-        bodySerializer: (body) => body as unknown as FormData,
+        // SAFETY: openapi-fetch requires Body_import_dataset type but multipart FormData is serialized directly
+        body: formData as components["schemas"]["Body_import_dataset_api_datasets_post"],
+        // SAFETY: FormData is serialized directly by the browser fetch runtime
+        bodySerializer: (body) => body as FormData,
       }),
     );
   },
@@ -143,11 +168,12 @@ export const api = {
     ),
   listDatasets: () => dataOrThrow(client.GET("/api/datasets")),
   getPreview: (datasetVersionId: string) =>
+    // SAFETY: Preview endpoint returns a list of dynamic row objects
     dataOrThrow(
       client.GET("/api/datasets/{dataset_version_id}/preview", {
         params: { path: { dataset_version_id: datasetVersionId } },
       }),
-    ) as Promise<Record<string, unknown>[]>,
+    ) as Promise<Record<string, string | number | boolean | null>[]>,
   getHistory: (datasetVersionId: string, params?: { as_of?: string; symbol?: string }) =>
     dataOrThrow(
       client.GET("/api/datasets/{dataset_version_id}/history", {
@@ -228,8 +254,6 @@ export const api = {
         body: request,
       }),
     ),
-  getValuationExportUrl: (projectId: string, runId: string, format: "html" | "csv" | "json") =>
-    `/api/projects/${projectId}/valuations/${runId}/export/${format}`,
   listValuations: (projectId: string) =>
     dataOrThrow(
       client.GET("/api/projects/{project_id}/valuations", {

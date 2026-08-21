@@ -27,6 +27,8 @@ interface PitQueryDialogProps {
   datasetVersions: CoverageResponse[];
 }
 
+type PitRecord = Record<string, string | number | boolean | null>;
+
 export function PitQueryDialog({ isOpen, onClose, datasetVersions }: PitQueryDialogProps) {
   const [selectedVersionId, setSelectedVersionId] = useState(
     datasetVersions[0]?.id || "",
@@ -35,7 +37,7 @@ export function PitQueryDialog({ isOpen, onClose, datasetVersions }: PitQueryDia
   const [asOf, setAsOf] = useState(new Date().toISOString().slice(0, 16));
   const [symbol, setSymbol] = useState("");
   const [isQuerying, setIsQuerying] = useState(false);
-  const [results, setResults] = useState<Record<string, unknown>[] | null>(null);
+  const [results, setResults] = useState<PitRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   if (!isOpen) return null;
@@ -52,20 +54,23 @@ export function PitQueryDialog({ isOpen, onClose, datasetVersions }: PitQueryDia
     setResults(null);
 
     try {
-      let data: Record<string, unknown>[] = [];
+      let data: PitRecord[] = [];
       const params = { as_of: asOf || undefined, symbol: symbol || undefined };
 
       if (queryType === "history") {
-        data = (await api.getHistory(selectedVersionId, params)) as Record<string, unknown>[];
+        // SAFETY: getHistory returns historical bar rows conforming to tabular maps
+        data = (await api.getHistory(selectedVersionId, params)) as PitRecord[];
       } else if (queryType === "fundamentals") {
-        data = (await api.getFundamentals(selectedVersionId, params)) as Record<string, unknown>[];
+        // SAFETY: getFundamentals returns fundamental facts conforming to tabular maps
+        data = (await api.getFundamentals(selectedVersionId, params)) as PitRecord[];
       } else {
-        data = (await api.getCorporateActions(selectedVersionId, params)) as Record<string, unknown>[];
+        // SAFETY: getCorporateActions returns corporate actions conforming to tabular maps
+        data = (await api.getCorporateActions(selectedVersionId, params)) as PitRecord[];
       }
 
       setResults(data);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Point-in-time query failed.";
+    } catch (cause: unknown) {
+      const message = cause instanceof Error ? cause.message : "Point-in-time query failed.";
       setError(message);
     } finally {
       setIsQuerying(false);
@@ -114,7 +119,10 @@ export function PitQueryDialog({ isOpen, onClose, datasetVersions }: PitQueryDia
               <SegmentedControl
                 label="Record Type"
                 value={queryType}
-                onChange={(val) => setQueryType(val as "history" | "fundamentals" | "actions")}
+                onChange={(val) => {
+                  // SAFETY: Value is constrained by SegmentedControlItem options
+                  setQueryType(val as "history" | "fundamentals" | "actions");
+                }}
               >
                 <SegmentedControlItem value="history" label="Daily Bars" />
                 <SegmentedControlItem value="fundamentals" label="Facts" />
@@ -128,7 +136,7 @@ export function PitQueryDialog({ isOpen, onClose, datasetVersions }: PitQueryDia
               <TextInput
                 label="As-Of Timestamp (ISO)"
                 value={asOf}
-                onChange={(val) => setAsOf(typeof val === "string" ? val : "")}
+                onChange={(val) => setAsOf(String(val ?? ""))}
                 placeholder="2024-01-01T00:00:00"
               />
             </VStack>
@@ -136,7 +144,7 @@ export function PitQueryDialog({ isOpen, onClose, datasetVersions }: PitQueryDia
               <TextInput
                 label="Filter Symbol (optional)"
                 value={symbol}
-                onChange={(val) => setSymbol(typeof val === "string" ? val : "")}
+                onChange={(val) => setSymbol(String(val ?? ""))}
                 placeholder="e.g. AAPL"
               />
             </VStack>

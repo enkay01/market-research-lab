@@ -131,9 +131,9 @@ export function ResearchView({ project, focusSecurityId }: ResearchViewProps) {
           setSelectedSecurity(null);
         }
       })
-      .catch((err: unknown) => {
+      .catch((cause: unknown) => {
         if (!isMounted) return;
-        console.error("Failed to load watchlist:", err);
+        console.error("Failed to load watchlist:", cause);
       })
       .finally(() => {
         if (isMounted) setIsLoadingWatchlist(false);
@@ -164,9 +164,9 @@ export function ResearchView({ project, focusSecurityId }: ResearchViewProps) {
         setSecuritySummary(summary);
         setSelectedSecurity(summary.security);
       })
-      .catch((err: unknown) => {
+      .catch((cause: unknown) => {
         if (!isMounted) return;
-        console.error("Failed to load security details:", err);
+        console.error("Failed to load security details:", cause);
       });
 
     void api
@@ -200,9 +200,9 @@ export function ResearchView({ project, focusSecurityId }: ResearchViewProps) {
         if (!isMounted) return;
         setCatalogueResults(res);
       })
-      .catch((err: unknown) => {
+      .catch((cause: unknown) => {
         if (!isMounted) return;
-        console.error("Failed to search catalogue:", err);
+        console.error("Failed to search catalogue:", cause);
       })
       .finally(() => {
         if (isMounted) setIsSearchingCatalogue(false);
@@ -339,7 +339,7 @@ export function ResearchView({ project, focusSecurityId }: ResearchViewProps) {
                 isLabelHidden
                 placeholder="Filter watchlist…"
                 value={searchQuery}
-                onChange={(val) => setSearchQuery(typeof val === "string" ? val : "")}
+                onChange={(val) => setSearchQuery(String(val ?? ""))}
                 width={180}
               />
               <Selector
@@ -513,7 +513,10 @@ export function ResearchView({ project, focusSecurityId }: ResearchViewProps) {
                   <HStack gap={2} align="center">
                     <SegmentedControl
                       value={thesisMode}
-                      onChange={(val) => setThesisMode(val as "edit" | "preview")}
+                      onChange={(val) => {
+                        // SAFETY: Value is constrained by SegmentedControlItem options
+                        setThesisMode(val as "edit" | "preview");
+                      }}
                       size="sm"
                     >
                       <SegmentedControlItem value="edit" label="Edit" />
@@ -552,7 +555,7 @@ export function ResearchView({ project, focusSecurityId }: ResearchViewProps) {
                     label="Markdown Research Thesis"
                     isLabelHidden
                     value={thesisContent}
-                    onChange={(val) => setThesisContent(typeof val === "string" ? val : "")}
+                    onChange={(val) => setThesisContent(String(val ?? ""))}
                     rows={14}
                     placeholder="Enter thesis markdown with ## Summary, ## Evidence, ## Risks, ## Catalysts..."
                   />
@@ -754,7 +757,7 @@ export function ResearchView({ project, focusSecurityId }: ResearchViewProps) {
             label="Search Catalogue"
             placeholder="Search symbol or name (e.g. AAPL, Apple, MSFT)…"
             value={addSearchQuery}
-            onChange={(val) => setAddSearchQuery(typeof val === "string" ? val : "")}
+            onChange={(val) => setAddSearchQuery(String(val ?? ""))}
             hasAutoFocus
           />
 
