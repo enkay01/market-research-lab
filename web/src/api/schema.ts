@@ -315,6 +315,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/backtests/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Compare Backtests */
+        post: operations["compare_backtests_api_projects__project_id__backtests_compare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/securities/{security_id}": {
         parameters: {
             query?: never;
@@ -833,6 +850,51 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** BacktestComparisonItemResponse */
+        BacktestComparisonItemResponse: {
+            /** Run Id */
+            run_id: string;
+            /** Strategy Name */
+            strategy_name: string;
+            /** Strategy Revision */
+            strategy_revision: string;
+            /** Universe */
+            universe: string[];
+            /** Start Date */
+            start_date: string;
+            /** End Date */
+            end_date: string;
+            /** Starting Cash */
+            starting_cash: number;
+            /** Benchmark Security Id */
+            benchmark_security_id?: string | null;
+            /** Parameters */
+            parameters?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            execution: components["schemas"]["ExecutionModelAssumptionsResponse"];
+            metrics: components["schemas"]["BacktestMetricsResponse"];
+            /** Costs */
+            costs?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Warnings */
+            warnings?: string[];
+            /** Dataset Version Ids */
+            dataset_version_ids?: string[];
+        };
+        /** BacktestComparisonRequest */
+        BacktestComparisonRequest: {
+            /** Run Ids */
+            run_ids: string[];
+        };
+        /** BacktestComparisonResponse */
+        BacktestComparisonResponse: {
+            /** Items */
+            items: components["schemas"]["BacktestComparisonItemResponse"][];
+            /** Compared At */
+            compared_at: string;
+        };
         /** BacktestMetricsResponse */
         BacktestMetricsResponse: {
             /** Total Return */
@@ -3405,6 +3467,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compare_backtests_api_projects__project_id__backtests_compare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BacktestComparisonRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BacktestComparisonResponse"];
                 };
             };
             /** @description Validation Error */

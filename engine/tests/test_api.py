@@ -1655,3 +1655,95 @@ def test_backtest_run_with_corporate_actions_and_calendar(tmp_path):
         "2024-01-12",
         "2024-01-16",
     ]
+
+
+def test_backtest_run_compare(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Compare Project"}).json()
+
+    csv_content = (
+        "symbol,date,open,high,low,close,volume,available_at\n"
+        "AAPL,2024-01-02,100,105,99,102,1000,2024-01-02T20:00:00Z\n"
+        "AAPL,2024-01-03,102,108,101,106,1200,2024-01-03T20:00:00Z\n"
+        "AAPL,2024-01-04,106,110,105,108,1100,2024-01-04T20:00:00Z\n"
+        "AAPL,2024-01-05,108,112,107,110,1300,2024-01-05T20:00:00Z\n"
+        "AAPL,2024-01-08,110,114,109,112,1500,2024-01-08T20:00:00Z\n"
+        "AAPL,2024-01-09,112,116,111,114,1400,2024-01-09T20:00:00Z\n"
+        "AAPL,2024-01-10,114,118,113,116,1600,2024-01-10T20:00:00Z\n"
+    )
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "test_source"},
+        files={"file": ("bars.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
+    )
+    assert imported.status_code == 201
+    version_id = imported.json()["dataset_version_id"]
+
+    res1 = client.post(
+        f"/api/projects/{project['id']}/backtests",
+        json={
+            "strategy_name": "long_flat_moving_average",
+            "strategy_revision": "long_flat_moving_average:v1",
+            "dataset_version_id": version_id,
+            "symbol": "AAPL",
+            "start_date": "2024-01-02",
+            "end_date": "2024-01-10",
+            "starting_cash": 100000,
+            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+        },
+    )
+    assert res1.status_code == 201
+    run_id_1 = res1.json()["run_id"]
+
+    res2 = client.post(
+        f"/api/projects/{project['id']}/backtests",
+        json={
+            "strategy_name": "long_flat_moving_average",
+            "strategy_revision": "long_flat_moving_average:v2",
+            "dataset_version_id": version_id,
+            "symbol": "AAPL",
+            "start_date": "2024-01-02",
+            "end_date": "2024-01-10",
+            "starting_cash": 50000,
+            "parameters": {"fast_period": 3, "slow_period": 5, "ma_type": "sma"},
+            "execution": {"commission_rate": 0.002},
+        },
+    )
+    assert res2.status_code == 201
+    run_id_2 = res2.json()["run_id"]
+
+    # Compare both runs
+    cmp_res = client.post(
+        f"/api/projects/{project['id']}/backtests/compare",
+        json={"run_ids": [run_id_1, run_id_2]},
+    )
+    assert cmp_res.status_code == 200
+    cmp_data = cmp_res.json()
+    assert len(cmp_data["items"]) == 2
+    assert cmp_data["compared_at"]
+
+    item1 = next(item for item in cmp_data["items"] if item["run_id"] == run_id_1)
+    item2 = next(item for item in cmp_data["items"] if item["run_id"] == run_id_2)
+
+    assert item1["strategy_revision"] == "long_flat_moving_average:v1"
+    assert item1["starting_cash"] == 100000.0
+    assert item1["universe"] == ["AAPL"]
+    assert "total_return" in item1["metrics"]
+
+    assert item2["strategy_revision"] == "long_flat_moving_average:v2"
+    assert item2["starting_cash"] == 50000.0
+    assert item2["execution"]["commission_rate"] == 0.002
+
+    # Validation check: empty run_ids rejected
+    empty_cmp = client.post(
+        f"/api/projects/{project['id']}/backtests/compare",
+        json={"run_ids": []},
+    )
+    assert empty_cmp.status_code == 422
+
+    # Validation check: non-existent run_id returns 404
+    missing_cmp = client.post(
+        f"/api/projects/{project['id']}/backtests/compare",
+        json={"run_ids": ["non-existent-run-id"]},
+    )
+    assert missing_cmp.status_code == 404

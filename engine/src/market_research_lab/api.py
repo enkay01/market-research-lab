@@ -1045,6 +1045,32 @@ class BacktestResultResponse(BaseModel):
     rejections: list[ConstraintRejectionResponse] = Field(default_factory=list)
 
 
+class BacktestComparisonItemResponse(BaseModel):
+    run_id: str
+    strategy_name: str
+    strategy_revision: str
+    universe: list[str]
+    start_date: str
+    end_date: str
+    starting_cash: float
+    benchmark_security_id: str | None = None
+    parameters: dict[str, JsonValue] = Field(default_factory=dict)
+    execution: ExecutionModelAssumptionsResponse
+    metrics: BacktestMetricsResponse
+    costs: dict[str, JsonValue] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    dataset_version_ids: list[str] = Field(default_factory=list)
+
+
+class BacktestComparisonRequest(BaseModel):
+    run_ids: list[str] = Field(min_length=1)
+
+
+class BacktestComparisonResponse(BaseModel):
+    items: list[BacktestComparisonItemResponse]
+    compared_at: str
+
+
 def _backtest_result_response(
     result: dict[str, JsonValue],
     *,
@@ -2712,6 +2738,55 @@ def create_app(
             content=artifact.content,
             media_type=artifact.media_type,
             headers={"Content-Disposition": f'attachment; filename="{artifact.filename}"'},
+        )
+
+    @app.post(
+        "/api/projects/{project_id}/backtests/compare",
+        response_model=BacktestComparisonResponse,
+        tags=["backtests"],
+    )
+    def compare_backtests(
+        project_id: UUID, request: BacktestComparisonRequest
+    ) -> BacktestComparisonResponse:
+        store.get_project(str(project_id))
+        items: list[BacktestComparisonItemResponse] = []
+        for run_id in request.run_ids:
+            entry = store.get_backtest_result(str(project_id), run_id)
+            if entry is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Backtest Run '{run_id}' not found.",
+                )
+            result_obj = _backtest_result_response(
+                entry["result"],
+                run_id=entry["run_id"],
+                strategy_revision=entry["strategy_revision"],
+            )
+            raw_costs = result_obj.manifest.get("costs")
+            costs_dict = raw_costs if isinstance(raw_costs, dict) else {}
+
+            items.append(
+                BacktestComparisonItemResponse(
+                    run_id=result_obj.run_id or run_id,
+                    strategy_name=result_obj.specification.strategy_name,
+                    strategy_revision=result_obj.strategy_revision or "",
+                    universe=result_obj.specification.universe,
+                    start_date=result_obj.specification.start_date,
+                    end_date=result_obj.specification.end_date,
+                    starting_cash=result_obj.specification.starting_cash,
+                    benchmark_security_id=result_obj.specification.benchmark_security_id,
+                    parameters=result_obj.specification.parameters,
+                    execution=result_obj.specification.execution,
+                    metrics=result_obj.metrics,
+                    costs=costs_dict,
+                    warnings=result_obj.warnings,
+                    dataset_version_ids=entry.get("dataset_version_ids", []),
+                )
+            )
+
+        return BacktestComparisonResponse(
+            items=items,
+            compared_at=datetime.now(UTC).isoformat(),
         )
 
     @app.get(
