@@ -426,11 +426,29 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List Project Runs */
+        get: operations["list_project_runs_api_projects__project_id__runs_get"];
         put?: never;
         /** Create Run */
         post: operations["create_run_api_projects__project_id__runs_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Project Run */
+        delete: operations["delete_project_run_api_projects__project_id__runs__run_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -449,6 +467,23 @@ export interface paths {
         /** Import Dataset */
         post: operations["import_dataset_api_datasets_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/datasets/{dataset_version_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Dataset */
+        delete: operations["delete_dataset_api_datasets__dataset_version_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2344,6 +2379,21 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** RunSummaryResponse */
+        RunSummaryResponse: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Status */
+            status: string;
+            /** Created At */
+            created_at: string;
+            /** Dataset Version Ids */
+            dataset_version_ids?: string[];
+            /** Definition Revisions */
+            definition_revisions?: string[];
+        };
         /** SavedStrategyEvaluationResponse */
         SavedStrategyEvaluationResponse: {
             /** Strategy Name */
@@ -3800,6 +3850,37 @@ export interface operations {
             };
         };
     };
+    list_project_runs_api_projects__project_id__runs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunSummaryResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_run_api_projects__project_id__runs_post: {
         parameters: {
             query?: {
@@ -3822,6 +3903,36 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["RunResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_project_run_api_projects__project_id__runs__run_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -3875,6 +3986,35 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["DatasetImportResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_dataset_api_datasets__dataset_version_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

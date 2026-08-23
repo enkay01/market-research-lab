@@ -117,11 +117,11 @@ Saving a revision writes a complete new directory and then atomically updates th
 
 ### Projects
 
-`projects.py` hides paths, atomic writes, revision numbering, and Run directory creation behind operations to create/open a Project, save a revision, and create/read a Run. Tests exercise the same operations used by the application interface.
+`projects.py` hides paths, atomic writes, revision numbering, and Run directory creation behind operations to create/open a Project, save a revision, create/read a Run, list Project Runs, and delete a Run. Tests exercise the same operations used by the application interface. Run deletion accepts only one Run ID inside the selected Project directory.
 
 ### Market data
 
-`market_data.py` owns ingestion, validation, Dataset Version creation, coverage inspection, and point-in-time queries. Provider-specific parsing remains internal until more than one provider requires a real seam.
+`market_data.py` owns ingestion, validation, Dataset Version creation, coverage inspection, point-in-time queries, and deletion of Dataset Version metadata plus owned Parquet files. Provider-specific parsing remains internal until more than one provider requires a real seam. The application interface checks Project Run references before it calls Dataset Version deletion.
 
 Its important interface is behavioral rather than class-heavy:
 
@@ -221,7 +221,7 @@ Allow one heavy task at a time initially. Use a standard-library subprocess only
 
 ## Frontend
 
-The interface has seven focused areas:
+The interface has eight focused areas:
 
 1. Project overview and watchlist
 2. Data coverage and import/download
@@ -230,6 +230,8 @@ The interface has seven focused areas:
 5. Indicators and Predictive Models
 6. Backtests and reports
 7. Alerts
+
+The Cleanup view lists Project Runs and shared Dataset Versions. It requires an explicit confirmation for deletion. A Dataset Version that a Run references stays protected until the Analyst deletes that Run. Deleting a Project remains the Project-level option for removing all Project files together.
 
 Forms are generated from typed parameter metadata where practical. Curated visualizations consume backend result tables. The browser may format values for display but does not calculate valuations, indicators, model metrics, or backtest results.
 
@@ -255,4 +257,3 @@ Every money or temporal defect receives a regression check at the deepest module
 - Cloud synchronization and collaboration
 - Mobile application and broker execution
 - Paid providers, intraday data, derivatives, and multi-asset accounting
-

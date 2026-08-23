@@ -67,6 +67,7 @@ def test_predictive_model_run_persists_artifact_predictions_and_provenance(
     assert (run_root / "status.json").read_text(encoding="utf-8").find('"completed"') >= 0
     manifest = json.loads((run_root / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["kind"] == "predictive_model"
+    assert manifest["created_at"]
     assert manifest["definition_revisions"] == ["momentum_return_regression:v1"]
     assert manifest["dataset_versions"] == ["dataset-v1"]
     assert manifest["completed_at"] == "2024-01-03T12:00:00+00:00"

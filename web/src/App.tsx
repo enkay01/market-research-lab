@@ -23,8 +23,17 @@ import { ModelsView } from "./views/ModelsView";
 import { BacktestView } from "./views/BacktestView";
 import { AlertsView } from "./views/AlertsView";
 import { StudyView } from "./views/StudyView";
+import { CleanupView } from "./views/CleanupView";
 
-export type DomainTab = "data" | "research" | "valuation" | "models" | "backtest" | "alerts" | "study";
+export type DomainTab =
+  | "data"
+  | "research"
+  | "valuation"
+  | "models"
+  | "backtest"
+  | "alerts"
+  | "study"
+  | "cleanup";
 
 export function App() {
   const [activeTab, setActiveTab] = useState<DomainTab>("data");
@@ -79,6 +88,13 @@ export function App() {
     } finally {
       setIsCreatingProject(false);
     }
+  }
+
+  function handleProjectDeleted(projectId: string) {
+    const remaining = projects.filter((project) => project.id !== projectId);
+    setProjects(remaining);
+    setSelectedProject(remaining[0]);
+    setActiveTab("data");
   }
 
   const projectOptions = projects.map((p) => ({
@@ -163,6 +179,12 @@ export function App() {
                 onClick={() => setActiveTab("study")}
                 as="button"
               />
+              <TopNavItem
+                label="Cleanup"
+                isSelected={activeTab === "cleanup"}
+                onClick={() => setActiveTab("cleanup")}
+                as="button"
+              />
             </HStack>
           }
           endContent={
@@ -228,6 +250,9 @@ export function App() {
         />
       )}
       {activeTab === "study" && <StudyView project={selectedProject} />}
+      {activeTab === "cleanup" && (
+        <CleanupView project={selectedProject} onProjectDeleted={handleProjectDeleted} />
+      )}
 
 
       {/* New Project Dialog */}
@@ -276,4 +301,3 @@ export function App() {
     </AppShell>
   );
 }
-

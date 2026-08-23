@@ -24,6 +24,10 @@ class ProjectNotFoundError(Exception):
     """Raised when a requested Project does not exist."""
 
 
+class RunNotFoundError(Exception):
+    """Raised when a requested Project Run does not exist."""
+
+
 class RevisionNotFoundError(Exception):
     """Raised when a requested immutable Definition Revision does not exist."""
 
@@ -33,6 +37,7 @@ class RevisionNotImmutableError(Exception):
 
 
 _REVISION_REGEX = re.compile(r"^v[1-9][0-9]*$")
+_RUN_ID_REGEX = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 
 
 @dataclass(frozen=True)
@@ -40,6 +45,18 @@ class Project:
     id: str
     name: str
     created_at: str
+
+
+@dataclass(frozen=True)
+class RunSummary:
+    """Small cleanup record for one Project Run."""
+
+    id: str
+    kind: str
+    status: str
+    created_at: str
+    dataset_version_ids: list[str]
+    definition_revisions: list[str]
 
 
 def _timestamp() -> str:
@@ -166,6 +183,76 @@ class ProjectStore:
             key=lambda project: project.created_at,
             reverse=True,
         )
+
+    def list_run_summaries(self, project_id: str) -> list[RunSummary]:
+        """List all generated Runs, including failed Runs, for one Project."""
+        self.get_project(project_id)
+        runs_root = self._directory(project_id) / "runs"
+        if not runs_root.is_dir():
+            return []
+
+        summaries: list[RunSummary] = []
+        for run_directory in runs_root.iterdir():
+            if not run_directory.is_dir():
+                continue
+            manifest = self._read_json_object(run_directory / "manifest.json")
+            status = self._read_json_object(run_directory / "status.json")
+            summaries.append(
+                RunSummary(
+                    id=run_directory.name,
+                    kind=str(manifest.get("kind", "unknown")),
+                    status=str(status.get("status", "unknown")),
+                    created_at=str(manifest.get("created_at", "")),
+                    dataset_version_ids=self._string_list(manifest.get("dataset_versions")),
+                    definition_revisions=self._string_list(
+                        manifest.get("definition_revisions")
+                    ),
+                )
+            )
+        return sorted(
+            summaries,
+            key=lambda summary: (summary.created_at, summary.id),
+            reverse=True,
+        )
+
+    def delete_run(self, project_id: str, run_id: str) -> None:
+        """Delete one complete generated Run directory from a Project."""
+        self.get_project(project_id)
+        if not _RUN_ID_REGEX.fullmatch(run_id):
+            raise RunNotFoundError(run_id)
+        run_directory = self._directory(project_id) / "runs" / run_id
+        if not run_directory.is_dir():
+            raise RunNotFoundError(run_id)
+        shutil.rmtree(run_directory)
+
+    def find_runs_referencing_dataset(
+        self, dataset_version_id: str
+    ) -> list[dict[str, JsonValue]]:
+        """Find Project Runs that would lose provenance if data were deleted."""
+        if not self.projects_root.is_dir():
+            return []
+
+        references: list[dict[str, JsonValue]] = []
+        for project_directory in self.projects_root.iterdir():
+            if not project_directory.is_dir():
+                continue
+            project_file = project_directory / "project.json"
+            project_payload = self._read_json_object(project_file)
+            project_id = str(project_payload.get("id", project_directory.name))
+            project_name = str(project_payload.get("name", project_id))
+            with contextlib.suppress(ProjectNotFoundError):
+                for summary in self.list_run_summaries(project_id):
+                    if dataset_version_id in summary.dataset_version_ids:
+                        references.append(
+                            {
+                                "project_id": project_id,
+                                "project_name": project_name,
+                                "run_id": summary.id,
+                                "kind": summary.kind,
+                                "status": summary.status,
+                            }
+                        )
+        return references
 
     def save_revision(
         self, project_id: str, *, kind: str, name: str, definition: dict[str, JsonValue]
@@ -352,9 +439,12 @@ class ProjectStore:
             {"strategies": strategies},
         )
 
-    def create_run(self, project_id: str) -> str:
+    def create_run(
+        self, project_id: str, *, dataset_version_ids: list[str] | None = None
+    ) -> str:
         self.get_project(project_id)
         run_id = str(uuid4())
+        created_at = _timestamp()
         run_directory = self._directory(project_id) / "runs" / run_id
         (run_directory / "artifacts").mkdir(parents=True)
         self._write_json(run_directory / "status.json", {"id": run_id, "status": "pending"})
@@ -362,8 +452,9 @@ class ProjectStore:
             run_directory / "manifest.json",
             {
                 "id": run_id,
+                "created_at": created_at,
                 "definition_revisions": [],
-                "dataset_versions": [],
+                "dataset_versions": list(dataset_version_ids or []),
                 "parameters": {},
                 "software_revision": "uncommitted",
                 "environment": {"python": os.sys.version},
@@ -393,6 +484,7 @@ class ProjectStore:
         run_directory = self._directory(project_id) / "runs" / run_id
         manifest = {
             "id": run_id,
+            "created_at": self._run_created_at(run_directory),
             "kind": "valuation",
             "definition_revisions": [record.method_revision],
             "dataset_versions": record.dataset_version_ids,
@@ -509,6 +601,7 @@ class ProjectStore:
         run_directory = self._directory(project_id) / "runs" / run_id
         manifest = {
             "id": run_id,
+            "created_at": self._run_created_at(run_directory),
             "kind": "backtest",
             "definition_revisions": [record.strategy_revision],
             "dataset_versions": record.dataset_version_ids,
@@ -538,11 +631,12 @@ class ProjectStore:
         project_id: str,
         record: FailedBacktestRunRecord,
     ) -> str:
-        """Persist a failed Backtest run recording its error and logs without partial artifacts (CORE-008)."""
+        """Persist a failed Backtest run without partial artifacts (CORE-008)."""
         run_id = self.create_run(project_id)
         run_directory = self._directory(project_id) / "runs" / run_id
         manifest = {
             "id": run_id,
+            "created_at": self._run_created_at(run_directory),
             "kind": "backtest",
             "definition_revisions": [record.strategy_revision],
             "dataset_versions": record.dataset_version_ids,
@@ -576,6 +670,7 @@ class ProjectStore:
         evaluation_summary.pop("folds", None)
         manifest = {
             "id": run_id,
+            "created_at": self._run_created_at(run_directory),
             "kind": "predictive_model",
             "definition_revisions": [record.model_revision],
             "dataset_versions": record.dataset_version_ids,
@@ -653,6 +748,7 @@ class ProjectStore:
         run_directory = self._directory(project_id) / "runs" / run_id
         manifest = {
             "id": run_id,
+            "created_at": self._run_created_at(run_directory),
             "kind": "predictive_model",
             "definition_revisions": [record.model_revision],
             "dataset_versions": record.dataset_version_ids,
@@ -1047,6 +1143,24 @@ class ProjectStore:
 
     def _directory(self, project_id: str) -> Path:
         return self.projects_root / project_id
+
+    def _run_created_at(self, run_directory: Path) -> str:
+        manifest = self._read_json_object(run_directory / "manifest.json")
+        return str(manifest.get("created_at") or _timestamp())
+
+    @staticmethod
+    def _read_json_object(path: Path) -> dict[str, JsonValue]:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _string_list(value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(item) for item in value if isinstance(item, (str, int, float))]
 
     @staticmethod
     def _next_revision_number(definition_root: Path) -> int:
