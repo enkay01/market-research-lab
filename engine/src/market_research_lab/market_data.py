@@ -23,6 +23,10 @@ class InadequateTemporalProvenanceError(ValueError):
     """Raised when market observations lack required point-in-time eligibility timestamps."""
 
 
+class DatasetVersionNotFoundError(ValueError):
+    """Raised when a requested Dataset Version does not exist."""
+
+
 TEMPORAL_PROVENANCE_ERROR_MESSAGE = (
     "Market observations lack required point-in-time eligibility timestamps "
     "('available_at') for historical use."
@@ -1016,6 +1020,30 @@ class MarketDataStore:
             if path.exists():
                 path.unlink()
 
+    def delete_dataset_version(self, dataset_version_id: str) -> None:
+        """Delete one Dataset Version and the Parquet files that it owns."""
+        datasets_root = self.datasets_dir.resolve()
+        with duckdb.connect(str(self.db_path)) as con:
+            row = con.execute(
+                "SELECT files FROM dataset_versions WHERE id = ?",
+                (dataset_version_id,),
+            ).fetchone()
+            if not row:
+                raise DatasetVersionNotFoundError(
+                    f"Dataset Version '{dataset_version_id}' does not exist."
+                )
+            raw_files = row[0]
+            files = json.loads(raw_files) if isinstance(raw_files, str) else raw_files
+            file_names = [str(file_name) for file_name in files] if isinstance(files, list) else []
+            paths = [(self.datasets_dir / file_name).resolve() for file_name in file_names]
+            if any(path.parent != datasets_root for path in paths):
+                raise ValueError("Dataset Version contains an unsafe file path.")
+            con.execute("DELETE FROM dataset_versions WHERE id = ?", (dataset_version_id,))
+
+        for path in paths:
+            if path.is_file():
+                path.unlink()
+
     @staticmethod
     def _coverage_from_row(row: tuple) -> CoverageReport:
         (
@@ -1059,7 +1087,9 @@ class MarketDataStore:
             )
             row = con.fetchone()
             if not row:
-                raise ValueError(f"DatasetVersion {dataset_version_id} not found")
+                raise DatasetVersionNotFoundError(
+                    f"Dataset Version '{dataset_version_id}' does not exist."
+                )
             return self._coverage_from_row(row)
 
     def list_dataset_versions(self) -> list[CoverageReport]:

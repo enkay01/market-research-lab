@@ -61,6 +61,7 @@ from .json_types import JsonValue
 from .market_data import (
     DATASET_TYPE_CORPORATE_ACTIONS,
     CoverageReport,
+    DatasetVersionNotFoundError,
     InadequateTemporalProvenanceError,
     IngestionRequest,
     MarketDataStore,
@@ -91,6 +92,7 @@ from .projects import (
     ProjectStore,
     RevisionNotFoundError,
     RevisionNotImmutableError,
+    RunNotFoundError,
     ValuationRunRecord,
 )
 from .provider_routes import register_provider_download_route
@@ -129,6 +131,23 @@ class SecurityNotFoundError(Exception):
     def __init__(self, identifier: str) -> None:
         super().__init__(f"Security '{identifier}' was not found in the local catalogue.")
         self.identifier = identifier
+
+
+class DatasetVersionInUseError(Exception):
+    """Raised when a Dataset Version is still referenced by a Project Run."""
+
+    def __init__(self, dataset_version_id: str, references: list[dict[str, JsonValue]]) -> None:
+        self.dataset_version_id = dataset_version_id
+        self.references = references
+        reference_labels = ", ".join(
+            f"{reference.get('project_name', 'Project')} / Run {reference.get('run_id', 'unknown')}"
+            for reference in references
+        )
+        super().__init__(
+            f"Dataset Version '{dataset_version_id}' is referenced by "
+            f"{len(references)} Project Run(s): {reference_labels}. "
+            "Delete those Runs first."
+        )
 
 
 class ErrorResponse(BaseModel):
@@ -193,6 +212,15 @@ class DefinitionResponse(BaseModel):
 class RunResponse(BaseModel):
     id: str
     status: str
+
+
+class RunSummaryResponse(BaseModel):
+    id: str
+    kind: str
+    status: str
+    created_at: str
+    dataset_version_ids: list[str] = Field(default_factory=list)
+    definition_revisions: list[str] = Field(default_factory=list)
 
 
 class DatasetImportResponse(BaseModel):
@@ -1995,6 +2023,41 @@ def create_app(
             ).model_dump(),
         )
 
+    @app.exception_handler(RunNotFoundError)
+    async def run_not_found(_: Request, error: RunNotFoundError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=ErrorResponse(
+                code="run_not_found",
+                message=f"The requested Run '{error}' does not exist.",
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(DatasetVersionNotFoundError)
+    async def dataset_version_not_found(
+        _: Request, error: DatasetVersionNotFoundError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=ErrorResponse(
+                code="dataset_version_not_found", message=str(error), details={}
+            ).model_dump(),
+        )
+
+    @app.exception_handler(DatasetVersionInUseError)
+    async def dataset_version_in_use(
+        _: Request, error: DatasetVersionInUseError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=ErrorResponse(
+                code="dataset_version_in_use",
+                message=str(error),
+                details={"references": error.references},
+            ).model_dump(),
+        )
+
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Request, error: RequestValidationError) -> JSONResponse:
         return JSONResponse(
@@ -2521,7 +2584,10 @@ def create_app(
                 status_code=422,
                 detail={
                     "code": "incompatible_valuation_methods",
-                    "message": f"Cannot compare incompatible valuation methods side by side: {', '.join(sorted(methods_present))}.",
+                    "message": (
+                        "Cannot compare incompatible valuation methods side by side: "
+                        f"{', '.join(sorted(methods_present))}."
+                    ),
                     "details": {"methods": sorted(methods_present)},
                 },
             )
@@ -2656,7 +2722,8 @@ def create_app(
 
             for ver_cov in market_store.list_dataset_versions():
                 if ver_cov.id != request.dataset_version_id and (
-                    ver_cov.dataset_type == DATASET_TYPE_CORPORATE_ACTIONS or ver_cov.is_corporate_actions
+                    ver_cov.dataset_type == DATASET_TYPE_CORPORATE_ACTIONS
+                    or ver_cov.is_corporate_actions
                 ):
                     for sec in resolved_securities:
                         actions_sec = market_store.corporate_actions(
@@ -2986,7 +3053,43 @@ def create_app(
             )
         if historical and dataset_version_id is not None:
             market_store.ensure_historical_eligibility(dataset_version_id)
-        return RunResponse(id=store.create_run(str(project_id)), status="pending")
+        dataset_version_ids = [dataset_version_id] if dataset_version_id else []
+        return RunResponse(
+            id=store.create_run(
+                str(project_id), dataset_version_ids=dataset_version_ids
+            ),
+            status="pending",
+        )
+
+    @app.get(
+        "/api/projects/{project_id}/runs",
+        response_model=list[RunSummaryResponse],
+        tags=["runs"],
+    )
+    def list_project_runs(project_id: UUID) -> list[RunSummaryResponse]:
+        return [
+            RunSummaryResponse(
+                id=summary.id,
+                kind=summary.kind,
+                status=summary.status,
+                created_at=summary.created_at,
+                dataset_version_ids=summary.dataset_version_ids,
+                definition_revisions=summary.definition_revisions,
+            )
+            for summary in store.list_run_summaries(str(project_id))
+        ]
+
+    @app.delete(
+        "/api/projects/{project_id}/runs/{run_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        tags=["runs"],
+    )
+    def delete_project_run(
+        project_id: UUID,
+        run_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,128}$"),
+    ) -> Response:
+        store.delete_run(str(project_id), run_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.post(
         "/api/datasets",
@@ -3046,6 +3149,21 @@ def create_app(
     )
     def list_datasets() -> list[CoverageResponse]:
         return [_coverage_response(report) for report in market_store.list_dataset_versions()]
+
+    @app.delete(
+        "/api/datasets/{dataset_version_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        tags=["datasets"],
+    )
+    def delete_dataset(
+        dataset_version_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,128}$"),
+    ) -> Response:
+        market_store.coverage(dataset_version_id)
+        references = store.find_runs_referencing_dataset(dataset_version_id)
+        if references:
+            raise DatasetVersionInUseError(dataset_version_id, references)
+        market_store.delete_dataset_version(dataset_version_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get(
         "/api/datasets/{dataset_version_id}/coverage",

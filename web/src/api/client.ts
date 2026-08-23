@@ -56,6 +56,7 @@ export type Trade = components["schemas"]["TradeResponse"];
 export type LedgerRow = components["schemas"]["LedgerRowResponse"];
 export type EquityPoint = components["schemas"]["EquityPointResponse"];
 export type BacktestSpecification = components["schemas"]["BacktestSpecificationResponse"];
+export type RunSummary = components["schemas"]["RunSummaryResponse"];
 
 export type Signal = components["schemas"]["SignalResponse"];
 export type SignalRefreshFailure = components["schemas"]["SignalRefreshFailureResponse"];
@@ -112,6 +113,10 @@ function parseErrorMessage(cause: unknown, fallback: string): string {
 async function dataOrThrow<T>(request: Promise<{ data?: T; error?: unknown; response: Response }>): Promise<T> {
   const { data, error, response } = await request;
   if (data !== undefined) return data;
+  if (response.ok) {
+    // SAFETY: Successful 204 responses have no body and callers only use the completion signal.
+    return undefined as T;
+  }
   const fallback = response.statusText || `Request failed with status ${response.status}`;
   const message = parseErrorMessage(error, fallback);
   throw new ApiError(response.status, message, error);
@@ -141,6 +146,18 @@ export const api = {
         params: { path: { project_id: projectId } },
       }),
     ),
+  listRuns: (projectId: string) =>
+    dataOrThrow(
+      client.GET("/api/projects/{project_id}/runs", {
+        params: { path: { project_id: projectId } },
+      }),
+    ),
+  deleteRun: (projectId: string, runId: string) =>
+    dataOrThrow(
+      client.DELETE("/api/projects/{project_id}/runs/{run_id}", {
+        params: { path: { project_id: projectId, run_id: runId } },
+      }),
+    ),
   importDataset: (source: string, file: File) => {
     const formData = new FormData();
     formData.append("source", source);
@@ -167,6 +184,12 @@ export const api = {
       }),
     ),
   listDatasets: () => dataOrThrow(client.GET("/api/datasets")),
+  deleteDataset: (datasetVersionId: string) =>
+    dataOrThrow(
+      client.DELETE("/api/datasets/{dataset_version_id}", {
+        params: { path: { dataset_version_id: datasetVersionId } },
+      }),
+    ),
   getPreview: (datasetVersionId: string) =>
     // SAFETY: Preview endpoint returns a list of dynamic row objects
     dataOrThrow(

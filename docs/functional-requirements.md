@@ -29,6 +29,7 @@ This document is the source of truth for product behavior. Domain terms are defi
 | PRJ-004 | Saving a draft must copy its complete reproducible definition into the next revision directory. |
 | PRJ-005 | A revision referenced by a Run must be read-only through the application. |
 | PRJ-006 | Run artifacts must live in a dedicated directory identified by a stable Run ID. |
+| PRJ-007 | The Analyst must be able to list and delete generated Runs, including failed Runs, from a Project. Deletion must remove the Run directory and its reports, manifests, logs, and artifacts. |
 
 Completion criterion: a Project can be created, receive a revised definition, execute a Run, close, reopen, and display the same revision and artifacts.
 
@@ -46,6 +47,7 @@ Completion criterion: a Project can be created, receive a revised definition, ex
 | DATA-008 | Point-in-time queries must exclude observations whose eligibility time is later than the requested as-of time. |
 | DATA-009 | Data lacking sufficient temporal provenance may support current research but must be rejected from affected historical Runs. |
 | DATA-010 | Raw prices, adjusted values, and corporate actions must remain distinguishable. |
+| DATA-011 | The Analyst must be able to delete an imported or downloaded Dataset Version. The application must remove its catalogue record and owned Parquet files, and must reject deletion while a Project Run references the Dataset Version. |
 
 Completion criterion: an imported or downloaded dataset can be inspected, versioned, queried as of a historical time, and rejected by a synthetic future-data test.
 
@@ -149,4 +151,3 @@ Completion criterion: refreshing eligible data can produce a traceable in-app Al
 | AGT-004 | The implementation must be ordinary product code and must remain inactive until its tests and reproducible example Run pass. |
 
 Completion criterion: an agent can implement a documented technique end to end without adding an agent runtime or general plugin platform to the product.
-
