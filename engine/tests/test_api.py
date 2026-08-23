@@ -105,6 +105,53 @@ def test_project_can_be_renamed_and_deleted(tmp_path):
     assert not (tmp_path / "projects" / project_id).exists()
 
 
+def test_cleanup_api_protects_run_provenance_before_deleting_data(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Cleanup API"}).json()
+
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "cleanup-source"},
+        files={
+            "file": (
+                "bars.csv",
+                b"symbol,date,open,high,low,close,volume\n"
+                b"AAPL,2024-01-02,100,101,99,100.5,1000\n",
+                "text/csv",
+            )
+        },
+    )
+    assert imported.status_code == 201
+    dataset_id = imported.json()["dataset_version_id"]
+    parquet_files = list((tmp_path / "datasets").glob("*.parquet"))
+    assert len(parquet_files) == 1
+
+    created_run = client.post(
+        f"/api/projects/{project['id']}/runs",
+        params={"dataset_version_id": dataset_id},
+    )
+    assert created_run.status_code == 201
+    run_id = created_run.json()["id"]
+
+    listed = client.get(f"/api/projects/{project['id']}/runs")
+    assert listed.status_code == 200
+    assert listed.json()[0]["dataset_version_ids"] == [dataset_id]
+
+    blocked = client.delete(f"/api/datasets/{dataset_id}")
+    assert blocked.status_code == 409
+    assert blocked.json()["code"] == "dataset_version_in_use"
+    assert run_id in blocked.json()["message"]
+    assert blocked.json()["details"]["references"][0]["run_id"] == run_id
+    assert parquet_files[0].exists()
+
+    deleted_run = client.delete(f"/api/projects/{project['id']}/runs/{run_id}")
+    assert deleted_run.status_code == 204
+    deleted_dataset = client.delete(f"/api/datasets/{dataset_id}")
+    assert deleted_dataset.status_code == 204
+    assert client.get("/api/datasets").json() == []
+    assert not parquet_files[0].exists()
+
+
 def test_validation_errors_return_a_stable_error_response(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
 

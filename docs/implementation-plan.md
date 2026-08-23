@@ -116,6 +116,20 @@ Stories:
 
 Done when fresh data produces a traceable Alert and the codebase contains no route to broker execution.
 
+## Epic 8 — Workspace cleanup
+
+Outcome: the Analyst can remove app-owned generated Runs and imported or downloaded Dataset Versions without breaking Run provenance by accident.
+
+Stories:
+
+1. Add Project Run summaries and deletion behind the ProjectStore seam.
+2. Add guarded Dataset Version deletion for catalogue metadata and owned Parquet files.
+3. Add Cleanup view actions for Project Runs, Dataset Versions, and whole Projects.
+4. Add confirmation and clear errors for missing items and Dataset Versions still referenced by Runs.
+5. Add API and storage regression checks for successful deletion, reference protection, and file cleanup.
+
+Done when the Analyst can remove a failed or completed Run, remove an unused imported or downloaded Dataset Version, and delete a whole Project from the interface.
+
 ## Definition of done for every story
 
 - The relevant requirement IDs are named in the change plan.
@@ -124,4 +138,3 @@ Done when fresh data produces a traceable Alert and the codebase contains no rou
 - New domain language is reflected in `CONTEXT.md`.
 - Durable trade-offs that meet the ADR threshold are recorded once.
 - Documentation describes only behavior or reasoning that the code cannot state reliably itself.
-
