@@ -14,6 +14,29 @@ def test_cash_interest_request_rejects_non_finite_values():
         ExecutionModelAssumptionsRequest.model_validate({"cash_interest_rate": float("nan")})
 
 
+def test_unexpected_api_error_has_a_diagnostic_id_and_traceback(tmp_path):
+    app = create_app(workspace_root=tmp_path, static_dir=tmp_path / "missing-interface")
+
+    @app.get("/api/test-unexpected-error")
+    def raise_unexpected_error() -> None:
+        raise RuntimeError("diagnostic test failure")
+
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.get("/api/test-unexpected-error")
+
+    assert response.status_code == 500
+    diagnostic_id = response.headers["X-Diagnostic-ID"]
+    assert response.json() == {
+        "code": "unexpected_error",
+        "message": "The application could not complete this request.",
+        "details": {},
+        "diagnostic_id": diagnostic_id,
+    }
+    application_log = (tmp_path / "logs" / "application.log").read_text(encoding="utf-8")
+    assert f"diagnostic_id={diagnostic_id}" in application_log
+    assert "RuntimeError: diagnostic test failure" in application_log
+
+
 def _tiingo_prices_fetch_json(url: str, _headers: dict[str, str]) -> dict:
     if "/prices" not in url:
         return {"ticker": "AAPL", "name": "Apple Inc.", "exchangeCode": "NASDAQ"}
@@ -1331,6 +1354,9 @@ def test_backtest_run_rejects_start_after_end(tmp_path):
         (failed_run / "artifacts" / "error.json").read_text(encoding="utf-8")
     )
     assert "start_date must not be after end_date" in error_artifact["error"]
+    run_log = (failed_run / "logs.txt").read_text(encoding="utf-8")
+    assert "Backtest Run failed" in run_log
+    assert f"diagnostic_id={response.headers['X-Diagnostic-ID']}" in run_log
 
 
 def test_backtest_run_exports_html_csv_json(tmp_path):

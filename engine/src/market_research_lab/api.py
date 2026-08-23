@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import shutil
 import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Annotated, Literal, NamedTuple
 from uuid import UUID
 
@@ -58,6 +60,13 @@ from .indicators import (
     list_indicators,
 )
 from .json_types import JsonValue
+from .logging_setup import (
+    DIAGNOSTIC_ID_HEADER,
+    configure_logging,
+    diagnostic_context,
+    new_diagnostic_id,
+    run_log_context,
+)
 from .market_data import (
     DATASET_TYPE_CORPORATE_ACTIONS,
     CoverageReport,
@@ -125,6 +134,9 @@ from .valuation import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 class SecurityNotFoundError(Exception):
     """Raised when a security is not found in the local catalogue."""
 
@@ -154,6 +166,7 @@ class ErrorResponse(BaseModel):
     code: str
     message: str
     details: dict[str, JsonValue] = Field(default_factory=dict)
+    diagnostic_id: str | None = None
 
 
 class HealthResponse(BaseModel):
@@ -1421,9 +1434,9 @@ def _persist_failed_predictive_model_run(
     project_id: UUID,
     request: PredictiveModelRunRequest,
     error: Exception,
-) -> None:
+) -> str:
     """Preserve a failed saved-model request before returning its original error."""
-    store.create_failed_predictive_model_run(
+    return store.create_failed_predictive_model_run(
         str(project_id),
         FailedPredictiveModelRunRecord(
             model_revision=f"{request.name}:{request.symbol}:failed",
@@ -1433,6 +1446,25 @@ def _persist_failed_predictive_model_run(
             error_message=str(error),
         ),
     )
+
+
+def _log_run_event(project_id: UUID | str, run_id: str, message: str) -> None:
+    with run_log_context(str(project_id), run_id):
+        logger.info(message)
+
+
+def _log_failed_run(
+    project_id: UUID | str,
+    run_id: str,
+    message: str,
+    *,
+    include_traceback: bool,
+) -> None:
+    with run_log_context(str(project_id), run_id):
+        if include_traceback:
+            logger.exception(message)
+        else:
+            logger.warning(message)
 
 
 def _strategy_param_response(param: StrategyParameter) -> StrategyParameterResponse:
@@ -1999,6 +2031,7 @@ def create_app(
     workspace_root = workspace_root or repository_root / "workspace"
     store = ProjectStore(workspace_root)
     market_store = MarketDataStore(workspace_root)
+    configure_logging(workspace_root / "logs", write_run_log=store.append_run_log)
     app = FastAPI(title="Market Research Lab", version="0.1.0")
     env_candidates = [
         workspace_root / ".env.local",
@@ -2013,6 +2046,35 @@ def create_app(
         credentials=load_provider_credentials(env_file),
         provider_fetch_json=provider_fetch_json,
     )
+
+    @app.middleware("http")
+    async def log_request(request: Request, call_next):
+        request_diagnostic_id = new_diagnostic_id()
+        with diagnostic_context(request_diagnostic_id):
+            started_at = perf_counter()
+            logger.info("Request started: %s %s", request.method, request.url.path)
+            try:
+                response = await call_next(request)
+            except Exception:
+                logger.exception("Unexpected API failure: %s %s", request.method, request.url.path)
+                response = JSONResponse(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    content=ErrorResponse(
+                        code="unexpected_error",
+                        message="The application could not complete this request.",
+                        diagnostic_id=request_diagnostic_id,
+                    ).model_dump(),
+                )
+            response.headers[DIAGNOSTIC_ID_HEADER] = request_diagnostic_id
+            elapsed_ms = (perf_counter() - started_at) * 1000
+            logger.info(
+                "Request finished: %s %s status=%s duration_ms=%.1f",
+                request.method,
+                request.url.path,
+                response.status_code,
+                elapsed_ms,
+            )
+            return response
 
     @app.exception_handler(ProjectNotFoundError)
     async def project_not_found(_: Request, error: ProjectNotFoundError) -> JSONResponse:
@@ -2419,6 +2481,7 @@ def create_app(
                 result=_comparable_valuation_response(result).model_dump(),
             ),
         )
+        _log_run_event(project_id, run_id, "Valuation Run completed.")
         return _comparable_valuation_response(
             result, method_revision=method_revision, run_id=run_id
         )
@@ -2482,6 +2545,7 @@ def create_app(
                 result=_dcf_valuation_response(result).model_dump(),
             ),
         )
+        _log_run_event(project_id, run_id, "Valuation Run completed.")
         return _dcf_valuation_response(result, method_revision=method_revision, run_id=run_id)
 
     @app.post(
@@ -2644,7 +2708,7 @@ def create_app(
     ) -> BacktestResultResponse:
         store.get_project(str(project_id))
         if request.start_date > request.end_date:
-            store.create_failed_backtest_run(
+            run_id = store.create_failed_backtest_run(
                 str(project_id),
                 FailedBacktestRunRecord(
                     strategy_revision=request.strategy_revision,
@@ -2652,6 +2716,12 @@ def create_app(
                     parameters=dict(request.parameters),
                     error_message="start_date must not be after end_date.",
                 ),
+            )
+            _log_failed_run(
+                project_id,
+                run_id,
+                "Backtest Run failed: start date must not be after end date.",
+                include_traceback=False,
             )
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -2664,7 +2734,7 @@ def create_app(
         for sym in target_symbols:
             sec = market_store.get_security(sym)
             if not sec:
-                store.create_failed_backtest_run(
+                run_id = store.create_failed_backtest_run(
                     str(project_id),
                     FailedBacktestRunRecord(
                         strategy_revision=request.strategy_revision,
@@ -2673,6 +2743,12 @@ def create_app(
                         error_message=f"Security not found: {sym}",
                     ),
                 )
+                _log_failed_run(
+                    project_id,
+                    run_id,
+                    f"Backtest Run failed: Security not found: {sym}",
+                    include_traceback=False,
+                )
                 raise SecurityNotFoundError(sym)
             resolved_securities.append(sec)
 
@@ -2680,7 +2756,7 @@ def create_app(
         if request.benchmark_symbol:
             bench_sec = market_store.get_security(request.benchmark_symbol)
             if not bench_sec:
-                store.create_failed_backtest_run(
+                run_id = store.create_failed_backtest_run(
                     str(project_id),
                     FailedBacktestRunRecord(
                         strategy_revision=request.strategy_revision,
@@ -2688,6 +2764,16 @@ def create_app(
                         parameters=dict(request.parameters),
                         error_message=f"Benchmark security not found: {request.benchmark_symbol}",
                     ),
+                )
+                message = (
+                    "Backtest Run failed: Benchmark security not found: "
+                    f"{request.benchmark_symbol}"
+                )
+                _log_failed_run(
+                    project_id,
+                    run_id,
+                    message,
+                    include_traceback=False,
                 )
                 raise SecurityNotFoundError(request.benchmark_symbol)
 
@@ -2762,7 +2848,7 @@ def create_app(
             )
             result = run_backtest(spec, bars=all_bars, corporate_actions=all_corp_actions)
         except Exception as error:
-            store.create_failed_backtest_run(
+            run_id = store.create_failed_backtest_run(
                 str(project_id),
                 FailedBacktestRunRecord(
                     strategy_revision=request.strategy_revision,
@@ -2770,6 +2856,12 @@ def create_app(
                     parameters=dict(request.parameters),
                     error_message=str(error),
                 ),
+            )
+            _log_failed_run(
+                project_id,
+                run_id,
+                f"Backtest Run failed: {error}",
+                include_traceback=True,
             )
             raise
 
@@ -2782,6 +2874,7 @@ def create_app(
                 result=result.to_json(),
             ),
         )
+        _log_run_event(project_id, run_id, "Backtest Run completed.")
         return _backtest_result_response(
             result.to_json(),
             run_id=run_id,
@@ -3364,7 +3457,13 @@ def create_app(
             model_revision = f"{calculation.metadata.name}:{request.symbol}:{revision}"
         except Exception as error:
             try:
-                _persist_failed_predictive_model_run(store, project_id, request, error)
+                run_id = _persist_failed_predictive_model_run(store, project_id, request, error)
+                _log_failed_run(
+                    project_id,
+                    run_id,
+                    f"Predictive Model Run failed: {error}",
+                    include_traceback=True,
+                )
             except Exception as persist_error:
                 error.add_note(f"Failed to persist the Predictive Model error: {persist_error}")
             raise
@@ -3399,6 +3498,7 @@ def create_app(
                 folds=[fold.to_json() for fold in calculation.evaluation.folds],
             ),
         )
+        _log_run_event(project_id, run_id, "Predictive Model Run completed.")
         return base_response.model_copy(update={"run_id": run_id})
 
     @app.get(

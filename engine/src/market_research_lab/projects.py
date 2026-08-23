@@ -463,6 +463,15 @@ class ProjectStore:
         (run_directory / "logs.txt").write_text("", encoding="utf-8")
         return run_id
 
+    def append_run_log(self, project_id: str, run_id: str, message: str) -> None:
+        """Append one already-formatted diagnostic line to an existing Run log."""
+        self.get_project(project_id)
+        log_path = self._directory(project_id) / "runs" / run_id / "logs.txt"
+        if not log_path.is_file():
+            raise FileNotFoundError(f"Run {run_id} does not have a log file.")
+        with log_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(f"{message}\n")
+
     def create_valuation_result(
         self,
         project_id: str,
