@@ -36,7 +36,7 @@ def _option_rows() -> list[dict[str, JsonValue]]:
         rows.extend(
             [
                 {
-                    "record_type": "stock_bar",
+                    "record_type": "underlying_bar",
                     "security_id": "SPY",
                     "timestamp": timestamp,
                     "open": 100,

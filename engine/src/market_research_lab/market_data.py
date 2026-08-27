@@ -158,7 +158,7 @@ class OptionTrade:
 
 
 @dataclass(frozen=True)
-class StockMinuteBar:
+class UnderlyingMinuteBar:
     """One point-in-time eligible underlying minute bar."""
 
     security_id: str
@@ -190,7 +190,7 @@ class OptionMarketData:
 
     contracts: tuple[OptionContract, ...]
     option_trades: tuple[OptionTrade, ...]
-    stock_bars: tuple[StockMinuteBar, ...]
+    underlying_bars: tuple[UnderlyingMinuteBar, ...]
     daily_bars: tuple[DailyBar, ...]
     earnings: tuple[EarningsEvent, ...]
     dataset_version_id: str
@@ -200,14 +200,13 @@ class OptionMarketData:
         self,
         contracts: Sequence[OptionContract] = (),
         option_trades: Sequence[OptionTrade] = (),
-        stock_bars: Sequence[StockMinuteBar] = (),
+        underlying_bars: Sequence[UnderlyingMinuteBar] = (),
         daily_bars: Sequence[DailyBar] = (),
         earnings: Sequence[EarningsEvent] = (),
         dataset_version_id: str = "",
         provider: str = "alpaca",
         *,
         trades: Sequence[OptionTrade] | None = None,
-        underlying_bars: Sequence[StockMinuteBar] | None = None,
     ) -> None:
         object.__setattr__(self, "contracts", tuple(contracts))
         object.__setattr__(
@@ -215,8 +214,8 @@ class OptionMarketData:
         )
         object.__setattr__(
             self,
-            "stock_bars",
-            tuple(underlying_bars if underlying_bars is not None else stock_bars),
+            "underlying_bars",
+            tuple(underlying_bars),
         )
         object.__setattr__(self, "daily_bars", tuple(daily_bars))
         object.__setattr__(self, "earnings", tuple(earnings))
@@ -226,10 +225,6 @@ class OptionMarketData:
     @property
     def trades(self) -> tuple[OptionTrade, ...]:
         return self.option_trades
-
-    @property
-    def underlying_bars(self) -> tuple[StockMinuteBar, ...]:
-        return self.stock_bars
 
 
 @dataclass(frozen=True)
@@ -616,12 +611,13 @@ class MarketDataStore:
                     if record_type not in {
                         "contract",
                         "trade",
-                        "stock_bar",
+                        "underlying_bar",
                         "daily_bar",
                         "earnings",
                     }:
                         raise ValueError(
-                            "record_type must be contract, trade, stock_bar, daily_bar, or earnings"
+                            "record_type must be contract, trade, underlying_bar, "
+                            "daily_bar, or earnings"
                         )
                     if record_type == "contract":
                         for field_name in (
@@ -648,7 +644,7 @@ class MarketDataStore:
                         raw["price"] = self._finite_raw_number(raw.get("price"), "price")
                         if raw.get("size") is not None:
                             raw["size"] = self._finite_raw_number(raw["size"], "size")
-                    elif record_type == "stock_bar":
+                    elif record_type == "underlying_bar":
                         for field_name in (
                             "security_id",
                             "timestamp",
@@ -1581,7 +1577,7 @@ class MarketDataStore:
 
         contracts: list[OptionContract] = []
         trades: list[OptionTrade] = []
-        stock_bars: list[StockMinuteBar] = []
+        underlying_bars: list[UnderlyingMinuteBar] = []
         daily_bars: list[DailyBar] = []
         earnings: list[EarningsEvent] = []
         for _, row in dataframe.iterrows():
@@ -1621,9 +1617,9 @@ class MarketDataStore:
                         dividend_yield=number(row, "dividend_yield", default=0.0) or 0.0,
                     )
                 )
-            elif record_type == "stock_bar":
-                stock_bars.append(
-                    StockMinuteBar(
+            elif record_type == "underlying_bar":
+                underlying_bars.append(
+                    UnderlyingMinuteBar(
                         security_id=text(row, "security_id", "symbol") or "",
                         timestamp=text(row, "timestamp") or "",
                         open=number(row, "open", default=0.0) or 0.0,
@@ -1667,7 +1663,7 @@ class MarketDataStore:
         return OptionMarketData(
             contracts=contracts,
             option_trades=trades,
-            stock_bars=stock_bars,
+            underlying_bars=underlying_bars,
             daily_bars=daily_bars,
             earnings=earnings,
             dataset_version_id=dataset_version_id,

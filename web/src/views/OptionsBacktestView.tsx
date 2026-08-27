@@ -172,6 +172,8 @@ export function OptionsBacktestView({ project, onBackToStandard }: OptionsBackte
             <MetricCard label="Data reliability" value={`${result.summary.overall_reliability_pct.toFixed(1)}%`} negative={result.summary.overall_reliability_pct < 99} />
           </Grid>
 
+          <Card padding={3}><VStack gap={1}><Heading level={4}>Run provenance</Heading><Text size="sm" type="supporting">Run {result.run_id ?? "unsaved"} · Provider {String(result.manifest.provider ?? "unknown")} · Dataset {result.specification.dataset_version_id}</Text><Text size="sm" type="supporting">Strategy revision {result.specification.strategy_revision} · Source {String(result.manifest.source_sha256 ?? "not recorded")}</Text></VStack></Card>
+
           {result.warnings.length > 0 && <Banner status="warning" title="Run warnings">{result.warnings.join(" ")}</Banner>}
 
           {selectedPosition && (
@@ -191,7 +193,7 @@ export function OptionsBacktestView({ project, onBackToStandard }: OptionsBackte
                 <HStack gap={3} wrap>
                   <Text type="supporting">Entry {selectedPosition.open_timestamp}</Text>
                   <Text type="supporting">Credit ${selectedPosition.entry_credit.toFixed(2)}</Text>
-                  <Text type="supporting">Margin at risk ${selectedPosition.margin_required.toFixed(2)}</Text>
+                  <Text type="supporting">Full Possible Loss ${selectedPosition.full_possible_loss.toFixed(2)}</Text>
                   <Text type="supporting">Stop changes {selectedPosition.stop_movements.length}</Text>
                   <Text type="supporting">Missing minutes {selectedPosition.missing_minutes_count}</Text>
                 </HStack>
@@ -208,7 +210,7 @@ export function OptionsBacktestView({ project, onBackToStandard }: OptionsBackte
                   <TableHeaderCell>Security / expiry</TableHeaderCell>
                   <TableHeaderCell>Strikes</TableHeaderCell>
                   <TableHeaderCell>Credit</TableHeaderCell>
-                  <TableHeaderCell>Margin at risk</TableHeaderCell>
+                  <TableHeaderCell>Full Possible Loss</TableHeaderCell>
                   <TableHeaderCell>ROM</TableHeaderCell>
                   <TableHeaderCell>Worst PnL</TableHeaderCell>
                   <TableHeaderCell>Best PnL</TableHeaderCell>
@@ -220,7 +222,7 @@ export function OptionsBacktestView({ project, onBackToStandard }: OptionsBackte
                     <TableCell><Text weight="bold">{position.security_id}</Text><Text size="sm" type="supporting">{position.expiration}</Text></TableCell>
                     <TableCell>${position.short_strike} / ${position.long_strike}</TableCell>
                     <TableCell>${position.entry_credit.toFixed(2)}</TableCell>
-                    <TableCell>${position.margin_required.toFixed(2)}</TableCell>
+                    <TableCell>${position.full_possible_loss.toFixed(2)}</TableCell>
                     <TableCell style={{ color: position.return_on_margin_pct < 0 ? "var(--color-text-red)" : "var(--color-text-green)" }}>{percent(position.return_on_margin_pct)}</TableCell>
                     <TableCell style={{ color: position.worst_net_pnl < 0 ? "var(--color-text-red)" : "var(--color-text-green)" }}>{money(position.worst_net_pnl)}</TableCell>
                     <TableCell style={{ color: position.best_net_pnl < 0 ? "var(--color-text-red)" : "var(--color-text-green)" }}>{money(position.best_net_pnl)}</TableCell>

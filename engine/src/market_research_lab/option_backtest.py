@@ -21,7 +21,7 @@ from .market_data import (
     OptionContract,
     OptionMarketData,
     OptionTrade,
-    StockMinuteBar,
+    UnderlyingMinuteBar,
 )
 
 NEW_YORK = ZoneInfo("America/New_York")
@@ -275,6 +275,7 @@ class _OpenPosition:
     close_rule: str = "Open Position"
     last_greeks: OptionGreeks | None = None
     entry_greeks: OptionGreeks | None = None
+    mid_greeks: OptionGreeks | None = None
 
 
 def _json_value(value: JsonValue) -> JsonValue:
@@ -447,7 +448,7 @@ def eligible_option_market_data(
     cutoff = _timestamp(as_of) if isinstance(as_of, str) else as_of.astimezone(NEW_YORK)
     eligible_stocks = tuple(
         bar
-        for bar in market_data.stock_bars
+        for bar in market_data.underlying_bars
         if bar.available_at is not None and _timestamp(bar.available_at) <= cutoff
     )
     eligible_daily = tuple(
@@ -458,7 +459,7 @@ def eligible_option_market_data(
     return OptionMarketData(
         contracts=eligible_option_contracts(market_data.contracts, cutoff),
         option_trades=eligible_option_trades(market_data.option_trades, cutoff),
-        stock_bars=eligible_stocks,
+        underlying_bars=eligible_stocks,
         daily_bars=eligible_daily,
         earnings=tuple(
             event
@@ -490,9 +491,9 @@ def _trade_ranges(
     return ranges
 
 
-def _stock_by_minute(data: OptionMarketData) -> dict[tuple[str, datetime], StockMinuteBar]:
-    result: dict[tuple[str, datetime], StockMinuteBar] = {}
-    for bar in data.stock_bars:
+def _stock_by_minute(data: OptionMarketData) -> dict[tuple[str, datetime], UnderlyingMinuteBar]:
+    result: dict[tuple[str, datetime], UnderlyingMinuteBar] = {}
+    for bar in data.underlying_bars:
         bar_minute = _minute(bar.timestamp)
         if bar.available_at is None or _timestamp(bar.available_at) > bar_minute + timedelta(
             minutes=1
@@ -706,6 +707,17 @@ def _fixed_candidate(
     )
     if short is None or long is None:
         raise OptionBacktestError("The fixed Put Credit Spread contract IDs were not found.")
+    if (
+        short.right != "put"
+        or long.right != "put"
+        or short.security_id != long.security_id
+        or short.expiration != long.expiration
+        or short.strike <= long.strike
+    ):
+        raise OptionBacktestError(
+            "Fixed contracts must be two puts for the same Security and expiration, "
+            "with the short strike above the long strike."
+        )
     ranges = _trade_ranges(data, as_of=when + timedelta(minutes=1))
     minute = when.replace(second=0, microsecond=0)
     short_range, long_range = (
@@ -769,7 +781,10 @@ def _similarity(data: OptionMarketData, first: str, second: str, when: datetime)
         return {
             bar.session_date: bar.close
             for bar in data.daily_bars
-            if bar.security_id == symbol and bar.session_date < when.date().isoformat()
+            if bar.security_id == symbol
+            and bar.session_date < when.date().isoformat()
+            and bar.available_at is not None
+            and _timestamp(bar.available_at) <= when
         }
 
     left, right = closes(first), closes(second)
@@ -882,7 +897,7 @@ def _validate_specification(
             raise OptionBacktestError(
                 "Historical option trades require available_at eligibility timestamps."
             )
-    for bar in data.stock_bars:
+    for bar in data.underlying_bars:
         if bar.available_at is None:
             raise OptionBacktestError(
                 "Historical stock minute bars require available_at eligibility timestamps."
@@ -1005,7 +1020,7 @@ def _path_position(
         stop_movements=tuple(position.stop_movements),
         greeks={
             "entry": position.entry_greeks,
-            "mid": position.last_greeks,
+            "mid": position.mid_greeks or position.last_greeks,
             "exit": position.last_greeks,
         },
         counterfactual=counterfactual,
@@ -1018,7 +1033,7 @@ def _path_position(
                 close=bar.close,
                 volume=bar.volume,
             )
-            for bar in data.stock_bars
+            for bar in data.underlying_bars
             if bar.security_id == candidate.short_contract.security_id
             and _timestamp(bar.timestamp).date() >= first_day
             and (position.exit_timestamp is None or _timestamp(bar.timestamp).date() <= last_day)
@@ -1124,6 +1139,8 @@ def _simulate_path(
             position.last_greeks = black_scholes_greeks(
                 pricing, black_scholes_iv(short_price, pricing)
             )
+            if position.mid_greeks is None and minute > _minute(position.entry_timestamp):
+                position.mid_greeks = position.last_greeks
             position.trajectory.append(
                 TrajectoryPoint(_minute_text(minute), stock_price, worst, best, position.stop_level)
             )

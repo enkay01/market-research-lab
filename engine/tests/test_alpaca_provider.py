@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -85,7 +85,9 @@ def test_alpaca_builds_bounded_endpoints_and_normalizes_options_records():
     contract_query = parse_qs(urlparse(calls[1][0]).query)
     assert contract_query["underlying_symbols"] == ["SPY"]
     assert contract_query["expiration_date_gte"] == ["2024-01-02"]
-    assert contract_query["expiration_date_lte"] == ["2024-01-03"]
+    assert contract_query["expiration_date_lte"] == [
+        (date(2024, 1, 3) + timedelta(days=45)).isoformat()
+    ]
     trade_query = parse_qs(urlparse(calls[2][0]).query)
     assert trade_query["start"] == ["2024-01-02"]
     assert trade_query["end"] == ["2024-01-03"]
@@ -98,7 +100,7 @@ def test_alpaca_builds_bounded_endpoints_and_normalizes_options_records():
     assert all("secret" not in url for url, _ in calls)
 
     assert {row["record_type"] for row in result.options_records} == {
-        "stock_bar",
+        "underlying_bar",
         "contract",
         "trade",
     }
@@ -110,7 +112,7 @@ def test_alpaca_builds_bounded_endpoints_and_normalizes_options_records():
     trade = next(row for row in result.options_records if row["record_type"] == "trade")
     assert trade["contract_id"] == "contract-id"
     assert trade["price"] == 2.5
-    assert trade["available_at"] == ALPACA_RETRIEVAL_TIME
+    assert trade["available_at"] == "2024-01-02T14:31:00+00:00"
 
 
 def test_alpaca_download_persists_one_options_dataset_version(tmp_path):

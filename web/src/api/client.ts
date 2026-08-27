@@ -213,7 +213,12 @@ export interface OptionsBacktestResult {
   best_positions: OptionsSpreadPosition[];
   blocked_candidates: Array<{ timestamp: string; security_id: string; reason: string; rule: string }>;
   warnings: string[];
-  manifest: object;
+  manifest: {
+    kind?: string;
+    provider?: string;
+    source_sha256?: string;
+    input_dataset_versions?: Record<string, string>;
+  };
   equity_curve: object[];
   benchmark_equity_curve: object[];
 }

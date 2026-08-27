@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Callable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
@@ -294,10 +294,12 @@ def _alpaca_pages(
         page_token = next_page_token
 
 
-def _alpaca_available_at(retrieval_time: str) -> str:
-    # Alpaca responses expose event time, not a historical publication time.
-    # Retrieval time is the conservative point-in-time boundary for this snapshot.
-    return retrieval_time
+def _alpaca_available_at(event_time: str) -> str:
+    """Use the completed minute as the earliest usable historical boundary."""
+    parsed = datetime.fromisoformat(event_time.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return (parsed + timedelta(minutes=1)).isoformat()
 
 
 def download_alpaca(
@@ -332,7 +334,7 @@ def download_alpaca(
     }
     start = request.start_date.isoformat()
     end = request.end_date.isoformat()
-    available_at = _alpaca_available_at(retrieval_time)
+    contract_available_at = f"{start}T00:00:00+00:00"
     result = ProviderDownload(
         securities=[Security(security_id=symbol, symbol=symbol, name=symbol, currency="USD")]
     )
@@ -358,7 +360,7 @@ def download_alpaca(
         for bar in bars:
             result.options_records.append(
                 {
-                    "record_type": "stock_bar",
+                    "record_type": "underlying_bar",
                     "security_id": symbol,
                     "timestamp": bar.timestamp,
                     "open": bar.open,
@@ -366,8 +368,8 @@ def download_alpaca(
                     "low": bar.low,
                     "close": bar.close,
                     "volume": bar.volume,
-                    "available_at": available_at,
-                    "eligibility_provenance": "retrieval_time_snapshot",
+                    "available_at": _alpaca_available_at(bar.timestamp),
+                    "eligibility_provenance": "completed_minute",
                     "source": "alpaca",
                     "retrieval_time": retrieval_time,
                 }
@@ -376,7 +378,9 @@ def download_alpaca(
     contract_query = {
         "underlying_symbols": symbol,
         "expiration_date_gte": start,
-        "expiration_date_lte": end,
+        "expiration_date_lte": (
+            request.end_date + timedelta(days=45)
+        ).isoformat(),
         "limit": "1000",
     }
     contracts: list[AlpacaOptionContractResponse] = []
@@ -410,8 +414,8 @@ def download_alpaca(
                 "multiplier": contract.multiplier,
                 "exercise_style": contract.exercise_style.lower(),
                 "settlement_type": "physical",
-                "available_at": available_at,
-                "eligibility_provenance": "retrieval_time_snapshot",
+                "available_at": contract_available_at,
+                "eligibility_provenance": "contract_snapshot",
                 "source": "alpaca",
                 "retrieval_time": retrieval_time,
             }
@@ -450,8 +454,8 @@ def download_alpaca(
                             "timestamp": trade.timestamp,
                             "price": trade.price,
                             "size": trade.size,
-                            "available_at": available_at,
-                            "eligibility_provenance": "retrieval_time_snapshot",
+                            "available_at": _alpaca_available_at(trade.timestamp),
+                            "eligibility_provenance": "completed_minute",
                             "source": "alpaca",
                             "retrieval_time": retrieval_time,
                         }

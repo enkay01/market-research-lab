@@ -2789,7 +2789,7 @@ def create_app(
             market_data = OptionMarketData(
                 contracts=market_data.contracts,
                 option_trades=market_data.option_trades,
-                stock_bars=market_data.stock_bars,
+                underlying_bars=market_data.underlying_bars,
                 daily_bars=daily_bars,
                 earnings=market_data.earnings,
                 dataset_version_id=request.dataset_version_id,

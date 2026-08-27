@@ -4,7 +4,7 @@ from market_research_lab.market_data import (
     OptionContract,
     OptionMarketData,
     OptionTrade,
-    StockMinuteBar,
+    UnderlyingMinuteBar,
 )
 from market_research_lab.option_backtest import (
     OptionPricingInputs,
@@ -31,7 +31,9 @@ def _data(prices: list[tuple[float, float]], *, delayed_trade: bool = False) -> 
             "2024-01-02T16:00:00Z" if delayed_trade and index == 1 else stock_available_at
         )
         stocks.append(
-            StockMinuteBar("SPY", timestamp, 100.0, 101.0, 99.0, 100.0, 1000.0, stock_available_at)
+            UnderlyingMinuteBar(
+                "SPY", timestamp, 100.0, 101.0, 99.0, 100.0, 1000.0, stock_available_at
+            )
         )
         trades.extend(
             [
@@ -42,7 +44,7 @@ def _data(prices: list[tuple[float, float]], *, delayed_trade: bool = False) -> 
     return OptionMarketData(
         contracts=[short, long],
         trades=trades,
-        stock_bars=stocks,
+        underlying_bars=stocks,
         dataset_version_id="options-v1",
     )
 
@@ -81,7 +83,7 @@ def test_worst_and_best_paths_use_the_completed_trade_range():
             OptionTrade("short", first_minute, 2.2, 100.0, available),
             OptionTrade("long", first_minute, 0.8, 100.0, available),
         ],
-        stock_bars=data.stock_bars,
+        underlying_bars=data.underlying_bars,
         dataset_version_id="options-v1",
     )
     result = run_option_backtest(_spec(), market_data=data)
@@ -123,7 +125,7 @@ def test_same_minute_without_both_legs_cannot_open():
     data = OptionMarketData(
         contracts=data.contracts,
         trades=data.trades[:1],
-        stock_bars=data.stock_bars,
+        underlying_bars=data.underlying_bars,
         dataset_version_id="options-v1",
     )
     result = run_option_backtest(_spec(), market_data=data)
