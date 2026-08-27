@@ -1446,6 +1446,7 @@ def generate_options_backtest_csv(result_data: dict[str, JsonValue]) -> str:
     if isinstance(positions, list):
         for position in positions:
             if isinstance(position, dict):
+                stop_movements = position.get("stop_movements", [])
                 writer.writerow(
                     [
                         position.get("security_id", ""),
@@ -1458,7 +1459,7 @@ def generate_options_backtest_csv(result_data: dict[str, JsonValue]) -> str:
                         position.get("full_possible_loss", ""),
                         position.get("return_on_margin_pct", ""),
                         position.get("reliability_pct", ""),
-                        len(position.get("stop_movements", [])) if isinstance(position.get("stop_movements", []), list) else 0,
+                        len(stop_movements) if isinstance(stop_movements, list) else 0,
                         position.get("counterfactual", ""),
                         position.get("close_rule", ""),
                     ]
@@ -1487,11 +1488,13 @@ def generate_options_backtest_html(
             "<tr>"
             f"<td>{html.escape(str(position.get('security_id', '')))}</td>"
             f"<td>{html.escape(str(position.get('expiration', '')))}</td>"
-            f"<td>{html.escape(str(position.get('short_strike', '')))} / {html.escape(str(position.get('long_strike', '')))}</td>"
+            f"<td>{html.escape(str(position.get('short_strike', '')))} / "
+            f"{html.escape(str(position.get('long_strike', '')))}</td>"
             f"<td>{html.escape(str(position.get('worst_net_pnl', '')))}</td>"
             f"<td>{html.escape(str(position.get('best_net_pnl', '')))}</td>"
             f"<td>{html.escape(str(position.get('close_rule', '')))}</td></tr>"
-            for position in positions if isinstance(position, dict)
+            for position in positions
+            if isinstance(position, dict)
         )
     warnings = result_data.get("warnings", [])
     warning_html = (
@@ -1503,7 +1506,10 @@ def generate_options_backtest_html(
         "<!doctype html><html lang='en'><head><meta charset='utf-8'><title>"
         f"Options Backtest {run_id}</title></head><body><h1>Options Backtest {run_id}</h1>"
         f"<p>Provider: {html.escape(str(manifest_data.get('provider', 'unknown')))}</p>"
-        f"<p>Strategy revision: {html.escape(str(manifest_data.get('strategy_revision', 'unknown')))}</p>"
-        f"<table>{rows}</table><h2>Positions</h2><table><tr><th>Security</th><th>Expiry</th><th>Strikes</th><th>Worst PnL</th><th>Best PnL</th><th>Close Rule</th></tr>{position_rows}</table>"
+        f"<p>Strategy revision: "
+        f"{html.escape(str(manifest_data.get('strategy_revision', 'unknown')))}</p>"
+        f"<table>{rows}</table><h2>Positions</h2><table>"
+        f"<tr><th>Security</th><th>Expiry</th><th>Strikes</th><th>Worst PnL</th>"
+        f"<th>Best PnL</th><th>Close Rule</th></tr>{position_rows}</table>"
         f"<h2>Warnings</h2><ul>{warning_html}</ul></body></html>"
     )

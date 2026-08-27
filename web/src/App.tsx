@@ -35,16 +35,19 @@ export type DomainTab =
   | "study"
   | "cleanup";
 
+function isDomainTab(value: string | null): value is DomainTab {
+  return value !== null && ["data", "research", "valuation", "models", "backtest", "alerts", "study", "cleanup"].includes(value);
+}
+
 export function App() {
   const [activeTab, setActiveTab] = useState<DomainTab>(() => {
     const params = new URLSearchParams(window.location.search);
-    // SAFETY: Query param tab is validated against known domain tab strings below
-    const tabParam = params.get("tab") as DomainTab | null;
+    const tabParam = params.get("tab");
     const hasVariant = params.has("variant");
     if (hasVariant || tabParam === "backtest") {
       return "backtest";
     }
-    if (tabParam && ["data", "research", "valuation", "models", "backtest", "alerts", "study", "cleanup"].includes(tabParam)) {
+    if (isDomainTab(tabParam)) {
       return tabParam;
     }
     return "data";

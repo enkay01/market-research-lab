@@ -1421,7 +1421,29 @@ def _simulate_path(
                 if risk_per_spread <= EPS:
                     continue
                 # Do not reuse a prior option mark for entry sizing.
-                portfolio_value = cash
+                has_current_marks = all(
+                    open_position.trajectory[-1].minute == _minute_text(minute)
+                    for open_position in open_positions.values()
+                )
+                if not has_current_marks:
+                    rejection_counts["stale_open_mark"] = (
+                        rejection_counts.get("stale_open_mark", 0) + 1
+                    )
+                    block_candidate(
+                        _minute_text(minute),
+                        security_id,
+                        "stale_open_mark",
+                        "Entry is blocked because an open spread has no current supported mark.",
+                    )
+                    continue
+                open_value = sum(
+                    (entry.spread_worst if path == "worst" else entry.spread_best)
+                    * open_position.quantity
+                    * open_position.candidate.short_contract.multiplier
+                    for open_position in open_positions.values()
+                    for entry in [open_position.trajectory[-1]]
+                )
+                portfolio_value = cash - open_value
                 open_risk = sum(
                     max(
                         0.0,
@@ -1537,6 +1559,34 @@ def _simulate_path(
     )
 
 
+def _benchmark_curve(
+    specification: OptionsBacktestSpecification, data: OptionMarketData
+) -> tuple[dict[str, JsonValue], ...]:
+    if not specification.benchmark_security_id:
+        return ()
+    bars = sorted(
+        (
+            bar
+            for bar in data.underlying_bars
+            if bar.security_id == specification.benchmark_security_id
+            and specification.start_date
+            <= _timestamp(bar.timestamp).date().isoformat()
+            <= specification.end_date
+        ),
+        key=lambda bar: _timestamp(bar.timestamp),
+    )
+    if not bars or bars[0].close <= 0.0:
+        return ()
+    opening_price = bars[0].close
+    return tuple(
+        {
+            "timestamp": bar.timestamp,
+            "equity": round(specification.starting_cash * bar.close / opening_price, 4),
+        }
+        for bar in bars
+    )
+
+
 def _max_drawdown(rows: Sequence[dict[str, JsonValue]]) -> float:
     peak = 0.0
     worst = 0.0
@@ -1572,10 +1622,13 @@ def run_option_backtest(
     merged: list[SpreadPosition] = []
     for worst in worst_positions:
         best = by_id_best.get(worst.id)
+        best_pnl = best.best_net_pnl if best else worst.worst_net_pnl
         merged.append(
             replace(
                 worst,
-                best_net_pnl=best.best_net_pnl if best else worst.worst_net_pnl,
+                best_net_pnl=best_pnl,
+                bid_ask_spread_drag=0.0,
+                slippage_cost=round(abs(best_pnl - worst.worst_net_pnl), 4),
             )
         )
     worst_pnl = sum(position.worst_net_pnl for position in merged)
@@ -1657,5 +1710,5 @@ def run_option_backtest(
         manifest,
         tuple(best_positions),
         tuple(worst_curve),
-        tuple(best_curve),
+        _benchmark_curve(specification, market_data),
     )

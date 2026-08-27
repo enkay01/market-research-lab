@@ -2897,6 +2897,7 @@ def create_app(
         result_manifest = result_payload.get("manifest")
         if isinstance(result_manifest, dict):
             result_manifest["source_sha256"] = store.source_fingerprint()
+            result_manifest["input_dataset_versions"] = input_dataset_versions
         run_id = store.create_options_backtest_result(
             str(project_id),
             OptionsBacktestRunRecord(
