@@ -349,7 +349,7 @@ def download_alpaca(
     }
     for payload in _alpaca_pages(
         fetch,
-        "data.alpaca.markets/v2/stocks/" + quote(symbol) + "/bars",
+        "data.alpaca.markets/v2/stocks/" + quote(symbol, safe="") + "/bars",
         underlying_query,
         headers,
     ):

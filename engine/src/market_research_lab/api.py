@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -954,7 +955,9 @@ class OptionsBacktestRunRequest(BaseModel):
     daily_dataset_version_id: str | None = Field(default=None, min_length=1)
     strategy_name: str = Field(default="put_credit_spread", min_length=1, max_length=64)
     strategy_revision: str = Field(default="v1", min_length=1, max_length=64)
-    symbol: str | None = Field(default=None, min_length=1, max_length=32)
+    symbol: str | None = Field(
+        default=None, min_length=1, max_length=32, pattern=r"^[A-Za-z][A-Za-z0-9._-]*$"
+    )
     symbols: list[str] | None = Field(default=None, min_length=1, max_length=20)
     watchlist: list[str] | None = Field(default=None, min_length=1, max_length=20)
     start_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
@@ -962,8 +965,12 @@ class OptionsBacktestRunRequest(BaseModel):
     starting_cash: float = Field(default=100000.0, gt=0)
     path: Literal["worst", "best"] = "worst"
     automatic_selection: bool | None = None
-    fixed_short_contract_id: str | None = None
-    fixed_long_contract_id: str | None = None
+    fixed_short_contract_id: str | None = Field(
+        default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"
+    )
+    fixed_long_contract_id: str | None = Field(
+        default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"
+    )
     dte_min: int = Field(default=30, ge=0, le=365)
     dte_max: int = Field(default=45, ge=0, le=365)
     delta_min: float = Field(default=0.15, ge=0, le=1)
@@ -982,6 +989,24 @@ class OptionsBacktestRunRequest(BaseModel):
     risk_free_rate: float = Field(default=0.0, allow_inf_nan=False)
     dividend_yield: float = Field(default=0.0, allow_inf_nan=False)
     cash_interest_rate: float = Field(default=0.0, allow_inf_nan=False)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, value: str | None) -> str | None:
+        return value.strip().upper() if value is not None else None
+
+    @field_validator("symbols", "watchlist")
+    @classmethod
+    def normalize_symbol_list(cls, values: list[str] | None) -> list[str] | None:
+        if values is None:
+            return None
+        cleaned = list(dict.fromkeys(value.strip().upper() for value in values if value.strip()))
+        if any(re.fullmatch(r"[A-Z][A-Z0-9._-]*", value) is None for value in cleaned):
+            raise ValueError(
+                "Security symbols may contain only letters, numbers, dots, underscores, "
+                "and hyphens."
+            )
+        return cleaned
 
     @model_validator(mode="after")
     def validate_symbols(self) -> "OptionsBacktestRunRequest":

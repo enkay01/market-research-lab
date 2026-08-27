@@ -685,6 +685,7 @@ def select_put_credit_spread(
     return min(
         candidates,
         key=lambda item: (
+            0 if math.isclose(item.width, specification.preferred_width, abs_tol=1e-8) else 1,
             abs(abs(item.short_delta) - specification.target_delta),
             item.short_trade_price - item.long_trade_price,
             item.short_contract.expiration,
@@ -721,6 +722,17 @@ def _fixed_candidate(
         or short.security_id != long.security_id
         or short.expiration != long.expiration
         or short.strike <= long.strike
+        or not math.isclose(
+            short.strike - long.strike,
+            specification.preferred_width,
+            abs_tol=1e-8,
+        )
+        and not math.isclose(
+            short.strike - long.strike,
+            specification.fallback_width,
+            abs_tol=1e-8,
+        )
+        or not math.isclose(short.multiplier, long.multiplier, abs_tol=1e-8)
     ):
         raise OptionBacktestError(
             "Fixed contracts must be two puts for the same Security and expiration, "
@@ -946,8 +958,15 @@ def _path_position(
     days_held = max(0, (last_day - first_day).days)
     rom = pnl / full_loss if full_loss > EPS else 0.0
     annualized = (1.0 + rom) ** (365.0 / max(days_held, 1)) - 1.0 if rom > -1.0 else -1.0
+    stop_levels = {item.minute: item.stop_level for item in position.trajectory}
     points = [
-        TrajectoryPoint(_minute_text(minute), stock, worst, best, position.stop_level)
+        TrajectoryPoint(
+            _minute_text(minute),
+            stock,
+            worst,
+            best,
+            stop_levels.get(_minute_text(minute), position.stop_level),
+        )
         for minute, stock, worst, best in all_values
     ]
     values_after = [
@@ -1401,14 +1420,8 @@ def _simulate_path(
                 risk_per_spread = max(0.0, candidate.width - credit_unit) * multiplier
                 if risk_per_spread <= EPS:
                     continue
-                open_value = sum(
-                    (entry.spread_worst if path == "worst" else entry.spread_best)
-                    * open_position.quantity
-                    * open_position.candidate.short_contract.multiplier
-                    for open_position in open_positions.values()
-                    for entry in [open_position.trajectory[-1]]
-                )
-                portfolio_value = cash - open_value
+                # Do not reuse a prior option mark for entry sizing.
+                portfolio_value = cash
                 open_risk = sum(
                     max(
                         0.0,

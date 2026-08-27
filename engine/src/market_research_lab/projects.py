@@ -915,10 +915,17 @@ class ProjectStore:
 
         run_id = self.create_run(project_id, dataset_version_ids=record.dataset_version_ids)
         run_directory = self._directory(project_id) / "runs" / run_id
+        result_manifest = record.result.get("manifest")
+        provider = (
+            result_manifest.get("provider", "unknown")
+            if isinstance(result_manifest, dict)
+            else "unknown"
+        )
         manifest: dict[str, JsonValue] = {
             "id": run_id,
             "created_at": self._run_created_at(run_directory),
             "kind": "options_backtest",
+            "provider": provider,
             "definition_revisions": [record.strategy_revision],
             "dataset_versions": record.dataset_version_ids,
             "input_dataset_versions": record.input_dataset_versions,

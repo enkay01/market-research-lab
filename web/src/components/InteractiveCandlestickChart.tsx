@@ -24,13 +24,15 @@ interface HoverState {
   low: number;
   close: number;
   spreadWorst?: number;
+  spreadBest?: number;
   stopLevel?: number;
   delta?: number;
 }
 
 function chartTime(value: string): Time {
-  // SAFETY: API candles use ISO date/time strings accepted by Lightweight Charts.
-  return value as Time;
+  const timestamp = Date.parse(value);
+  // SAFETY: API timestamps are ISO values and Lightweight Charts accepts Unix seconds.
+  return Math.floor(timestamp / 1000) as Time;
 }
 
 export function InteractiveCandlestickChart({ position }: InteractiveCandlestickChartProps) {
@@ -77,9 +79,10 @@ export function InteractiveCandlestickChart({ position }: InteractiveCandlestick
     series.createPriceLine({ price: position.short_strike, color: orange, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: `Short $${position.short_strike}` });
     series.createPriceLine({ price: position.long_strike, color: blue, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: `Long $${position.long_strike}` });
     if (candles.length > 0) {
-      const entry = candles.find((candle) => String(candle.time) === position.open_timestamp)?.time ?? candles[0].time;
-      const exitTimestamp = position.close_timestamp ?? String(candles[candles.length - 1].time);
-      const exit = candles.find((candle) => String(candle.time) === exitTimestamp)?.time ?? candles[candles.length - 1].time;
+      const entry = candles.find((candle) => candle.time === chartTime(position.open_timestamp))?.time ?? candles[0].time;
+      const exit = position.close_timestamp
+        ? candles.find((candle) => candle.time === chartTime(position.close_timestamp))?.time ?? candles[candles.length - 1].time
+        : candles[candles.length - 1].time;
       const markers: SeriesMarker<Time>[] = [
         { time: entry, position: "belowBar", color: blue, ["shape"]: "arrowUp", text: "Entry" },
         { time: exit, position: "aboveBar", color: position.worst_net_pnl < 0 ? red : green, ["shape"]: "arrowDown", text: "Exit" },
@@ -95,8 +98,8 @@ export function InteractiveCandlestickChart({ position }: InteractiveCandlestick
       // SAFETY: CandlestickSeries data always has OHLC fields after the guard above.
       const bar = raw as { open: number; high: number; low: number; close: number };
       const minute = String(param.time);
-      const point = position.trajectory_points.find((item) => minute === item.minute || minute.includes(item.minute));
-      setHover({ time: minute, open: bar.open, high: bar.high, low: bar.low, close: bar.close, spreadWorst: point?.spread_worst, stopLevel: point?.stop_level, delta: position.short_delta });
+      const point = position.trajectory_points.find((item) => String(chartTime(item.minute)) === minute);
+      setHover({ time: minute, open: bar.open, high: bar.high, low: bar.low, close: bar.close, spreadWorst: point?.spread_worst, spreadBest: point?.spread_best, stopLevel: point?.stop_level, delta: position.short_delta });
     });
     chart.timeScale().fitContent();
     const resize = () => chart.applyOptions({ width: container.clientWidth });
@@ -113,7 +116,7 @@ export function InteractiveCandlestickChart({ position }: InteractiveCandlestick
       <Card padding={2}>
         <HStack justify="between" align="center" wrap gap={2}>
           <Text size="sm" type="supporting">{hover?.time ?? "Hover a candlestick to inspect the market state"}</Text>
-          {hover && <HStack gap={3} wrap><Text size="sm">O {hover.open.toFixed(2)}</Text><Text size="sm">H {hover.high.toFixed(2)}</Text><Text size="sm">L {hover.low.toFixed(2)}</Text><Text size="sm">C {hover.close.toFixed(2)}</Text><Text size="sm">Spread {hover.spreadWorst?.toFixed(2) ?? "n/a"}</Text><Text size="sm">Stop {hover.stopLevel?.toFixed(2) ?? "n/a"}</Text><Text size="sm">Delta {hover.delta?.toFixed(3) ?? "n/a"}</Text></HStack>}
+          {hover && <HStack gap={3} wrap><Text size="sm">O {hover.open.toFixed(2)}</Text><Text size="sm">H {hover.high.toFixed(2)}</Text><Text size="sm">L {hover.low.toFixed(2)}</Text><Text size="sm">C {hover.close.toFixed(2)}</Text><Text size="sm">Spread worst {hover.spreadWorst?.toFixed(2) ?? "n/a"}</Text><Text size="sm">Spread best {hover.spreadBest?.toFixed(2) ?? "n/a"}</Text><Text size="sm">Stop {hover.stopLevel?.toFixed(2) ?? "n/a"}</Text><Text size="sm">Delta {hover.delta?.toFixed(3) ?? "n/a"}</Text></HStack>}
         </HStack>
       </Card>
       <Card ref={containerRef} padding={0} style={{ width: "100%", height: "320px", overflow: "hidden", border: "1px solid var(--color-border)" }} />
