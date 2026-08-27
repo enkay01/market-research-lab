@@ -11,7 +11,7 @@ import math
 import statistics
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, time, timedelta
-from typing import Literal, NamedTuple, Sequence
+from typing import Literal, Mapping, NamedTuple, Sequence
 from zoneinfo import ZoneInfo
 
 from .json_types import JsonValue
@@ -250,6 +250,14 @@ class _SimulationResult:
     rejection_counts: dict[str, int]
     equity_curve: list[dict[str, JsonValue]]
     warnings: list[str]
+    entry_plan: dict[tuple[str, str], tuple[str, str, int]]
+
+
+@dataclass(frozen=True)
+class _SimulationOptions:
+    symbols: Sequence[str]
+    path: str
+    entry_plan: Mapping[tuple[str, str], tuple[str, str, int]] | None = None
 
 
 @dataclass
@@ -1075,9 +1083,10 @@ def _earnings_exit_due(events: Sequence[object], security_id: str, minute: datet
 def _simulate_path(
     specification: OptionsBacktestSpecification,
     data: OptionMarketData,
-    symbols: Sequence[str],
-    path: str,
+    options: _SimulationOptions,
 ) -> _SimulationResult:
+    symbols = options.symbols
+    path = options.path
     ranges = _trade_ranges(data)
     stock = _stock_by_minute(data)
     first = _timestamp(specification.start_date + "T00:00:00-05:00")
@@ -1096,6 +1105,13 @@ def _simulate_path(
     stopped_dates: set[tuple[str, str]] = set()
     equity_rows: list[dict[str, JsonValue]] = []
     warnings: list[str] = []
+
+    def block_candidate(timestamp: str, security_id: str, rule: str, reason: str) -> None:
+        if len(blocked) < 500:
+            blocked.append(BlockedCandidate(timestamp, security_id, reason, rule))
+
+    planned_entries = dict(options.entry_plan or {})
+    actual_entries: dict[tuple[str, str], tuple[str, str, int]] = {}
     cash = specification.starting_cash
     locked_collateral = 0.0
     position_counter = 0
@@ -1282,7 +1298,7 @@ def _simulate_path(
                 del open_positions[security_id]
 
         # Scan entries after managing existing positions.
-        if minute.timetz().replace(tzinfo=None) <= time(15, 30):
+        if time(10, 0) <= minute.timetz().replace(tzinfo=None) <= time(15, 30):
             for security_id in symbols:
                 if security_id in open_positions:
                     continue
@@ -1290,19 +1306,44 @@ def _simulate_path(
                     rejection_counts["same_day_stop_cooldown"] = (
                         rejection_counts.get("same_day_stop_cooldown", 0) + 1
                     )
+                    block_candidate(
+                        _minute_text(minute),
+                        security_id,
+                        "same_day_stop_cooldown",
+                        "A Security cannot re-enter on the day of a Stop Level exit.",
+                    )
                     continue
                 if _earnings_exit_day(data.earnings, security_id, minute):
                     rejection_counts["pre_earnings_exit_day"] = (
                         rejection_counts.get("pre_earnings_exit_day", 0) + 1
                     )
-                    continue
-                candidate = (
-                    _fixed_candidate(specification, data, minute)
-                    if not specification.automatic_selection
-                    else select_put_credit_spread(
-                        specification, market_data=data, security_id=security_id, at=minute
+                    block_candidate(
+                        _minute_text(minute),
+                        security_id,
+                        "pre_earnings_exit_day",
+                        "Entry is blocked on the required pre-earnings exit day.",
                     )
-                )
+                    continue
+                planned = planned_entries.get((security_id, date_text))
+                if planned:
+                    candidate = _fixed_candidate(
+                        replace(
+                            specification,
+                            automatic_selection=False,
+                            fixed_short_contract_id=planned[0],
+                            fixed_long_contract_id=planned[1],
+                        ),
+                        data,
+                        minute,
+                    )
+                else:
+                    candidate = (
+                        _fixed_candidate(specification, data, minute)
+                        if not specification.automatic_selection
+                        else select_put_credit_spread(
+                            specification, market_data=data, security_id=security_id, at=minute
+                        )
+                    )
                 if candidate is None:
                     key = "no_eligible_spread"
                     rejection_counts[key] = rejection_counts.get(key, 0) + 1
@@ -1323,6 +1364,12 @@ def _simulate_path(
                     rejection_counts["max_open_securities"] = (
                         rejection_counts.get("max_open_securities", 0) + 1
                     )
+                    block_candidate(
+                        _minute_text(minute),
+                        security_id,
+                        "max_open_securities",
+                        "The Portfolio already has the maximum number of open Securities.",
+                    )
                     continue
                 if any(
                     _similarity(data, security_id, other, minute) > specification.similarity_limit
@@ -1331,30 +1378,70 @@ def _simulate_path(
                     rejection_counts["similarity_limit"] = (
                         rejection_counts.get("similarity_limit", 0) + 1
                     )
+                    block_candidate(
+                        _minute_text(minute),
+                        security_id,
+                        "similarity_limit",
+                        "The Security is too similar to an existing open position.",
+                    )
                     continue
                 credit_unit = _entry_credit(candidate, ranges, minute, path)
                 if credit_unit <= EPS:
                     rejection_counts["nonpositive_entry_credit"] = (
                         rejection_counts.get("nonpositive_entry_credit", 0) + 1
                     )
+                    block_candidate(
+                        _minute_text(minute),
+                        security_id,
+                        "nonpositive_entry_credit",
+                        "The worst supported Entry Credit is not positive.",
+                    )
                     continue
                 multiplier = candidate.short_contract.multiplier
                 risk_per_spread = max(0.0, candidate.width - credit_unit) * multiplier
                 if risk_per_spread <= EPS:
                     continue
-                equity = cash
+                open_value = sum(
+                    (entry.spread_worst if path == "worst" else entry.spread_best)
+                    * open_position.quantity
+                    * open_position.candidate.short_contract.multiplier
+                    for open_position in open_positions.values()
+                    for entry in [open_position.trajectory[-1]]
+                )
+                portfolio_value = cash - open_value
+                open_risk = sum(
+                    max(
+                        0.0,
+                        open_position.candidate.width
+                        - open_position.entry_credit
+                        / open_position.quantity
+                        / open_position.candidate.short_contract.multiplier,
+                    )
+                    * open_position.quantity
+                    * open_position.candidate.short_contract.multiplier
+                    for open_position in open_positions.values()
+                )
                 qty_by_position = math.floor(
-                    max(0.0, equity * specification.risk_per_position) / risk_per_spread
+                    max(0.0, portfolio_value * specification.risk_per_position) / risk_per_spread
                 )
                 qty_by_portfolio = math.floor(
-                    max(0.0, equity * specification.max_open_risk - locked_collateral)
+                    max(0.0, portfolio_value * specification.max_open_risk - open_risk)
                     / risk_per_spread
                 )
                 quantity = min(qty_by_position, qty_by_portfolio)
+                if planned:
+                    quantity = planned[2]
                 collateral = candidate.width * multiplier * quantity
                 if quantity < 1 or cash - locked_collateral < collateral:
                     rejection_counts["collateral_limit"] = (
                         rejection_counts.get("collateral_limit", 0) + 1
+                    )
+                    block_candidate(
+                        _minute_text(minute),
+                        security_id,
+                        "collateral_limit",
+                        "The Portfolio cannot fund the required spread collateral or "
+                        "Full Possible Loss.",
                     )
                     continue
                 position_counter += 1
@@ -1396,6 +1483,11 @@ def _simulate_path(
                     )
                 )
                 open_positions[security_id] = position
+                actual_entries[(security_id, date_text)] = (
+                    candidate.short_contract.contract_id,
+                    candidate.long_contract.contract_id,
+                    quantity,
+                )
 
         open_value = sum(
             (entry.spread_worst if path == "worst" else entry.spread_best)
@@ -1427,7 +1519,9 @@ def _simulate_path(
         warnings.append(
             "One or more positions have more than five missing matching minutes and are unreliable."
         )
-    return _SimulationResult(tuple(positions), blocked, rejection_counts, equity_rows, warnings)
+    return _SimulationResult(
+        tuple(positions), blocked, rejection_counts, equity_rows, warnings, actual_entries
+    )
 
 
 def _max_drawdown(rows: Sequence[dict[str, JsonValue]]) -> float:
@@ -1446,8 +1540,12 @@ def run_option_backtest(
 ) -> OptionsBacktestResult:
     """Replay one Put Credit Spread strategy on best and worst supported paths."""
     symbols = _validate_specification(specification, market_data)
-    worst_result = _simulate_path(specification, market_data, symbols, "worst")
-    best_result = _simulate_path(specification, market_data, symbols, "best")
+    worst_result = _simulate_path(specification, market_data, _SimulationOptions(symbols, "worst"))
+    best_result = _simulate_path(
+        specification,
+        market_data,
+        _SimulationOptions(symbols, "best", worst_result.entry_plan),
+    )
     worst_positions = worst_result.positions
     blocked = worst_result.blocked
     rejections = worst_result.rejection_counts

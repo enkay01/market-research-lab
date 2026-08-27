@@ -432,11 +432,7 @@ def generate_predictive_model_html_report(
     benchmark_complete = is_naive_benchmark_comparison_complete(benchmark)
     bench_name = html.escape(
         str(
-            (
-                benchmark.get("display_name")
-                or benchmark.get("name")
-                or "Naive Benchmark"
-            )
+            (benchmark.get("display_name") or benchmark.get("name") or "Naive Benchmark")
             if benchmark_complete
             else "Not evaluated"
         )
@@ -444,7 +440,7 @@ def generate_predictive_model_html_report(
     bench_desc = html.escape(str(benchmark.get("description") or ""))
     benchmark_summary = (
         f'  <div class="benchmark-box"><strong>Naive Benchmark Comparison:</strong> '
-        f'{bench_name}<br><small>{bench_desc}</small></div>'
+        f"{bench_name}<br><small>{bench_desc}</small></div>"
         if benchmark_complete
         else '  <p class="note"><strong>Naive Benchmark Comparison:</strong> '
         "Not evaluated for this Run. Strategy use is blocked until the comparison "
@@ -497,21 +493,21 @@ def generate_predictive_model_html_report(
         "<body>",
         f"  <h1>{model_name}</h1>",
         f'  <div class="meta"><strong>Run:</strong> {run_id}<br>'
-        f'<strong>Definition Revision:</strong> {revision}<br>'
-        f'<strong>Dataset Versions:</strong> '
-        f'{html.escape(", ".join(str(dataset) for dataset in datasets))}<br>'
-        f'<strong>Evaluation Mode:</strong> {evaluation_mode}<br>'
-        f'<strong>Naive Benchmark:</strong> {bench_name}<br>'
-        f'<strong>Strategy Eligibility:</strong> '
-        f'{"Eligible" if strategy_eligible is True else "Blocked"}<br>'
-        '<strong>Metric Scope:</strong> In-sample training; held-out validation and '
-        'out-of-sample test</div>',
+        f"<strong>Definition Revision:</strong> {revision}<br>"
+        f"<strong>Dataset Versions:</strong> "
+        f"{html.escape(', '.join(str(dataset) for dataset in datasets))}<br>"
+        f"<strong>Evaluation Mode:</strong> {evaluation_mode}<br>"
+        f"<strong>Naive Benchmark:</strong> {bench_name}<br>"
+        f"<strong>Strategy Eligibility:</strong> "
+        f"{'Eligible' if strategy_eligible is True else 'Blocked'}<br>"
+        "<strong>Metric Scope:</strong> In-sample training; held-out validation and "
+        "out-of-sample test</div>",
         '  <p class="note">The initial fit uses training observations only. Each later '
-        'fold uses only data available before its decision session.</p>',
+        "fold uses only data available before its decision session.</p>",
         benchmark_summary,
         f'  <p class="note"><strong>Strategy eligibility:</strong> '
-        f'{html.escape("Eligible" if strategy_eligible is True else "Blocked")}. '
-        f'{eligibility_reason}</p>',
+        f"{html.escape('Eligible' if strategy_eligible is True else 'Blocked')}. "
+        f"{eligibility_reason}</p>",
         "  <h2>Chronological Periods</h2>",
         "  <table>",
         "    <thead><tr><th>Period</th><th>Target Dates</th><th>Feature Dates</th>"
@@ -578,11 +574,11 @@ def generate_predictive_model_html_report(
         ]
         if benchmark_complete
         else [
-            "  <p class=\"note\">Model-versus-benchmark metrics are not available "
+            '  <p class="note">Model-versus-benchmark metrics are not available '
             "because the comparison is incomplete.</p>"
         ]
     )
-    for period_metric in (period_metrics if benchmark_complete else []):
+    for period_metric in period_metrics if benchmark_complete else []:
         if not isinstance(period_metric, dict):
             continue
         metric_values = period_metric.get("metrics")
@@ -613,11 +609,7 @@ def generate_predictive_model_html_report(
                 "</tr>"
             )
     doc.extend(
-        (
-            ["    </tbody>", "  </table>"]
-            if benchmark_complete
-            else []
-        )
+        (["    </tbody>", "  </table>"] if benchmark_complete else [])
         + ["  <h2>Assumptions and Provenance</h2>", "  <table>"]
     )
     doc.append("    <tbody>")
@@ -629,8 +621,7 @@ def generate_predictive_model_html_report(
         ("Preprocessing", preprocessing),
     ):
         doc.append(
-            f"      <tr><th>{html.escape(label)}</th>"
-            f"<td>{html.escape(str(value))}</td></tr>"
+            f"      <tr><th>{html.escape(label)}</th><td>{html.escape(str(value))}</td></tr>"
         )
     doc.extend(["    </tbody>", "  </table>"])
 
@@ -702,7 +693,7 @@ def generate_predictive_model_csv(result_data: dict[str, JsonValue]) -> str:
     )
     metrics_raw = evaluation.get("period_metrics") or result_data.get("period_metrics")
     period_metrics = metrics_raw if isinstance(metrics_raw, list) else []
-    for period_metric in (period_metrics if benchmark_complete else []):
+    for period_metric in period_metrics if benchmark_complete else []:
         if not isinstance(period_metric, dict):
             continue
         values = period_metric.get("metrics")
@@ -875,9 +866,7 @@ def generate_backtest_html_report(
     costs_raw = result_manifest.get("costs")
     costs = costs_raw if isinstance(costs_raw, dict) else {}
     portfolio_impact_raw = costs.get("portfolio_impact")
-    portfolio_impact = (
-        portfolio_impact_raw if isinstance(portfolio_impact_raw, dict) else {}
-    )
+    portfolio_impact = portfolio_impact_raw if isinstance(portfolio_impact_raw, dict) else {}
 
     hit_rate_str = f"{float(hit_rate) * 100:.1f}%" if hit_rate is not None else "—"
     bench_rel_str = f"{float(bench_rel) * 100:+.2f}%" if bench_rel is not None else "—"
@@ -1040,10 +1029,18 @@ def generate_backtest_html_report(
     maint_margin = float(execution.get("maintenance_margin", 0.25))
     leverage_mode = html.escape(str(execution.get("leverage_mode") or "reject"))
 
-    doc.append(f'      <tr><td>Max Leverage Limit</td><td class="num">{max_leverage:.2f}x ({max_leverage * 100:.0f}% gross exposure)</td></tr>')
-    doc.append(f'      <tr><td>Margin Requirement</td><td class="num">{margin_req * 100:.1f}%</td></tr>')
-    doc.append(f'      <tr><td>Maintenance Margin</td><td class="num">{maint_margin * 100:.1f}%</td></tr>')
-    doc.append(f'      <tr><td>Leverage Constraint Mode</td><td class="num">{leverage_mode}</td></tr>')
+    doc.append(
+        f'      <tr><td>Max Leverage Limit</td><td class="num">{max_leverage:.2f}x ({max_leverage * 100:.0f}% gross exposure)</td></tr>'
+    )
+    doc.append(
+        f'      <tr><td>Margin Requirement</td><td class="num">{margin_req * 100:.1f}%</td></tr>'
+    )
+    doc.append(
+        f'      <tr><td>Maintenance Margin</td><td class="num">{maint_margin * 100:.1f}%</td></tr>'
+    )
+    doc.append(
+        f'      <tr><td>Leverage Constraint Mode</td><td class="num">{leverage_mode}</td></tr>'
+    )
 
     params_raw = spec.get("parameters")
     if isinstance(params_raw, dict):
@@ -1259,9 +1256,7 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
     costs_raw = result_manifest.get("costs")
     costs = costs_raw if isinstance(costs_raw, dict) else {}
     portfolio_impact_raw = costs.get("portfolio_impact")
-    portfolio_impact = (
-        portfolio_impact_raw if isinstance(portfolio_impact_raw, dict) else {}
-    )
+    portfolio_impact = portfolio_impact_raw if isinstance(portfolio_impact_raw, dict) else {}
     writer.writerow(["Cost Attribution", ""])
     writer.writerow(["Total Commission", costs.get("total_commission", 0.0)])
     writer.writerow(["Total Slippage", costs.get("total_slippage", 0.0)])
@@ -1424,3 +1419,67 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
             )
 
     return output.getvalue()
+
+
+def generate_options_backtest_csv(result_data: dict[str, JsonValue]) -> str:
+    """Generate a compact options spread ledger export."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "Security",
+            "Expiration",
+            "Short Strike",
+            "Long Strike",
+            "Entry Credit",
+            "Worst PnL",
+            "Best PnL",
+            "Close Rule",
+        ]
+    )
+    positions = result_data.get("positions", [])
+    if isinstance(positions, list):
+        for position in positions:
+            if isinstance(position, dict):
+                writer.writerow(
+                    [
+                        position.get("security_id", ""),
+                        position.get("expiration", ""),
+                        position.get("short_strike", ""),
+                        position.get("long_strike", ""),
+                        position.get("entry_credit", ""),
+                        position.get("worst_net_pnl", ""),
+                        position.get("best_net_pnl", ""),
+                        position.get("close_rule", ""),
+                    ]
+                )
+    return output.getvalue()
+
+
+def generate_options_backtest_html(
+    result_data: dict[str, JsonValue], manifest_data: dict[str, JsonValue]
+) -> str:
+    """Generate a self-contained options result report."""
+    run_id = html.escape(str(result_data.get("run_id") or manifest_data.get("id") or "N/A"))
+    summary = result_data.get("summary", {})
+    rows = (
+        "".join(
+            f"<tr><th>{html.escape(str(key))}</th><td>{html.escape(str(value))}</td></tr>"
+            for key, value in summary.items()
+        )
+        if isinstance(summary, dict)
+        else ""
+    )
+    warnings = result_data.get("warnings", [])
+    warning_html = (
+        "".join(f"<li>{html.escape(str(item))}</li>" for item in warnings)
+        if isinstance(warnings, list)
+        else ""
+    )
+    return (
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'><title>"
+        f"Options Backtest {run_id}</title></head><body><h1>Options Backtest {run_id}</h1>"
+        f"<p>Provider: {html.escape(str(manifest_data.get('provider', 'unknown')))}</p>"
+        f"<p>Strategy revision: {html.escape(str(manifest_data.get('strategy_revision', 'unknown')))}</p>"
+        f"<table>{rows}</table><h2>Warnings</h2><ul>{warning_html}</ul></body></html>"
+    )

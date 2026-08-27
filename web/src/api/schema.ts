@@ -2100,6 +2100,45 @@ export interface components {
              */
             completed: boolean;
         };
+        /** OptionsBacktestResponse */
+        OptionsBacktestResponse: {
+            /** Run Id */
+            run_id?: string | null;
+            /** Specification */
+            specification: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Summary */
+            summary: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Positions */
+            positions: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            }[];
+            /** Best Positions */
+            best_positions?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            }[];
+            /** Blocked Candidates */
+            blocked_candidates?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            }[];
+            /** Warnings */
+            warnings?: string[];
+            /** Manifest */
+            manifest: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Equity Curve */
+            equity_curve?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            }[];
+            /** Benchmark Equity Curve */
+            benchmark_equity_curve?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            }[];
+        };
         /** OptionsBacktestRunRequest */
         OptionsBacktestRunRequest: {
             /** Dataset Version Id */
@@ -3711,9 +3750,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: components["schemas"]["JsonValue-Output"];
-                    }[];
+                    "application/json": components["schemas"]["OptionsBacktestResponse"][];
                 };
             };
             /** @description Validation Error */
@@ -3748,9 +3785,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: components["schemas"]["JsonValue-Output"];
-                    };
+                    "application/json": components["schemas"]["OptionsBacktestResponse"];
                 };
             };
             /** @description Validation Error */
@@ -3782,9 +3817,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: components["schemas"]["JsonValue-Output"];
-                    };
+                    "application/json": components["schemas"]["OptionsBacktestResponse"];
                 };
             };
             /** @description Validation Error */
@@ -3816,9 +3849,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: components["schemas"]["JsonValue-Output"];
-                    };
+                    "application/json": components["schemas"]["OptionsBacktestResponse"];
                 };
             };
             /** @description Validation Error */

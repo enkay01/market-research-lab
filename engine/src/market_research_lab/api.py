@@ -7,7 +7,7 @@ import logging
 import shutil
 import tempfile
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from time import perf_counter
 from typing import Annotated, Awaitable, Callable, Literal, NamedTuple
@@ -985,6 +985,13 @@ class OptionsBacktestRunRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_symbols(self) -> "OptionsBacktestRunRequest":
+        try:
+            start = date.fromisoformat(self.start_date)
+            end = date.fromisoformat(self.end_date)
+        except ValueError as error:
+            raise ValueError("start_date and end_date must be valid calendar dates.") from error
+        if start > end:
+            raise ValueError("start_date must be on or before end_date.")
         if not self.symbol and not self.symbols and not self.watchlist:
             raise ValueError("Either 'symbol', 'symbols', or 'watchlist' must be provided.")
         if self.symbols and self.watchlist:
@@ -998,6 +1005,19 @@ class OptionsBacktestRunRequest(BaseModel):
         if bool(self.fixed_short_contract_id) != bool(self.fixed_long_contract_id):
             raise ValueError("Both fixed contract IDs are required together.")
         return self
+
+
+class OptionsBacktestResponse(BaseModel):
+    run_id: str | None = None
+    specification: dict[str, JsonValue]
+    summary: dict[str, JsonValue]
+    positions: list[dict[str, JsonValue]]
+    best_positions: list[dict[str, JsonValue]] = Field(default_factory=list)
+    blocked_candidates: list[dict[str, JsonValue]] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    manifest: dict[str, JsonValue]
+    equity_curve: list[dict[str, JsonValue]] = Field(default_factory=list)
+    benchmark_equity_curve: list[dict[str, JsonValue]] = Field(default_factory=list)
 
 
 class BacktestRunRequest(BaseModel):
@@ -2760,7 +2780,7 @@ def create_app(
 
     @app.post(
         "/api/projects/{project_id}/options-backtests",
-        response_model=dict[str, JsonValue],
+        response_model=OptionsBacktestResponse,
         status_code=status.HTTP_201_CREATED,
         tags=["options-backtests"],
     )
@@ -2868,7 +2888,7 @@ def create_app(
 
     @app.get(
         "/api/projects/{project_id}/options-backtests",
-        response_model=list[dict[str, JsonValue]],
+        response_model=list[OptionsBacktestResponse],
         tags=["options-backtests"],
     )
     def list_project_options_backtests(project_id: UUID) -> list[dict[str, JsonValue]]:
@@ -2876,10 +2896,13 @@ def create_app(
 
     @app.get(
         "/api/projects/{project_id}/options-backtests/{run_id}",
-        response_model=dict[str, JsonValue],
+        response_model=OptionsBacktestResponse,
         tags=["options-backtests"],
     )
-    def get_project_options_backtest(project_id: UUID, run_id: str) -> dict[str, JsonValue]:
+    def get_project_options_backtest(
+        project_id: UUID,
+        run_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,128}$"),
+    ) -> dict[str, JsonValue]:
         item = store.get_options_backtest_result(str(project_id), run_id)
         if item is None:
             raise HTTPException(
@@ -2889,10 +2912,13 @@ def create_app(
 
     @app.get(
         "/api/projects/{project_id}/runs/{run_id}/options_backtest",
-        response_model=dict[str, JsonValue],
+        response_model=OptionsBacktestResponse,
         tags=["options-backtests"],
     )
-    def get_run_options_backtest(project_id: UUID, run_id: str) -> dict[str, JsonValue]:
+    def get_run_options_backtest(
+        project_id: UUID,
+        run_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,128}$"),
+    ) -> dict[str, JsonValue]:
         return get_project_options_backtest(project_id, run_id)
 
     @app.get(

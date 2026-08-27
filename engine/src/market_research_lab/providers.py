@@ -46,7 +46,7 @@ class TiingoPriceResponse(BaseModel):
     split_factor: float = Field(default=1, alias="splitFactor")
 
 
-class AlpacaStockBarResponse(BaseModel):
+class AlpacaUnderlyingBarResponse(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     timestamp: str = Field(alias="t")
@@ -78,10 +78,10 @@ class AlpacaOptionContractResponse(BaseModel):
     multiplier: float = Field(default=100.0, alias="size")
 
 
-class AlpacaStockBarsResponse(BaseModel):
+class AlpacaUnderlyingBarsResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    bars: list[AlpacaStockBarResponse] = Field(default_factory=list)
+    bars: list[AlpacaUnderlyingBarResponse] = Field(default_factory=list)
     next_page_token: str | None = None
 
 
@@ -339,7 +339,7 @@ def download_alpaca(
         securities=[Security(security_id=symbol, symbol=symbol, name=symbol, currency="USD")]
     )
 
-    stock_query = {
+    underlying_query = {
         "timeframe": "1Min",
         "start": start,
         "end": end,
@@ -350,11 +350,11 @@ def download_alpaca(
     for payload in _alpaca_pages(
         fetch,
         "data.alpaca.markets/v2/stocks/" + quote(symbol) + "/bars",
-        stock_query,
+        underlying_query,
         headers,
     ):
         try:
-            bars = AlpacaStockBarsResponse.model_validate(payload).bars
+            bars = AlpacaUnderlyingBarsResponse.model_validate(payload).bars
         except ValidationError as error:
             raise ProviderDownloadError("Alpaca returned invalid stock bars.") from error
         for bar in bars:
@@ -378,9 +378,7 @@ def download_alpaca(
     contract_query = {
         "underlying_symbols": symbol,
         "expiration_date_gte": start,
-        "expiration_date_lte": (
-            request.end_date + timedelta(days=45)
-        ).isoformat(),
+        "expiration_date_lte": (request.end_date + timedelta(days=45)).isoformat(),
         "limit": "1000",
     }
     contracts: list[AlpacaOptionContractResponse] = []

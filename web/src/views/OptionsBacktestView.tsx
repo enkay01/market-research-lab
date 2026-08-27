@@ -202,7 +202,7 @@ export function OptionsBacktestView({ project, onBackToStandard }: OptionsBackte
             </Card>
           )}
 
-          <Card padding={3}>
+          <Card padding={3} style={{ overflowX: "auto" }}>
             <VStack gap={2}>
               <Heading level={3}>Spread ledger</Heading>
               <Table style={{ minWidth: "1180px" }}>
@@ -249,7 +249,7 @@ function AuditTray({ position }: { position: OptionsSpreadPosition }) {
       <Card padding={3}>
         <VStack gap={2}>
           <Heading level={4}>Stop Ratchet history</Heading>
-          {position.stop_movements.length === 0 ? <Text type="supporting">No Stop Level movement was recorded.</Text> : position.stop_movements.map((movement) => <Text key={`${movement.timestamp}-${movement.new_stop}`} size="sm" type="supporting">{movement.timestamp} · stop ${movement.new_stop.toFixed(2)} · stock ${movement.underlying_price.toFixed(2)} · {movement.trigger_rule}</Text>)}
+          {position.stop_movements.length === 0 ? <Text type="supporting">No Stop Level movement was recorded.</Text> : position.stop_movements.map((movement) => <Text key={`${movement.timestamp}-${movement.new_stop}`} size="sm" type="supporting">{movement.timestamp} · stop ${movement.new_stop.toFixed(2)} · underlying ${movement.underlying_price.toFixed(2)} · {movement.trigger_rule}</Text>)}
         </VStack>
       </Card>
       <Card padding={3}>

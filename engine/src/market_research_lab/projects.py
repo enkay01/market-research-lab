@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import contextlib
-import csv
 import hashlib
-import html
-import io
 import json
 import os
 import re
@@ -914,6 +911,8 @@ class ProjectStore:
         self, project_id: str, record: OptionsBacktestRunRecord
     ) -> str:
         """Persist an options Backtest artifact with named input provenance."""
+        from .reporting import generate_options_backtest_csv, generate_options_backtest_html
+
         run_id = self.create_run(project_id, dataset_version_ids=record.dataset_version_ids)
         run_directory = self._directory(project_id) / "runs" / run_id
         manifest: dict[str, JsonValue] = {
@@ -931,7 +930,34 @@ class ProjectStore:
         self._write_json(run_directory / "manifest.json", manifest)
         persisted_result = dict(record.result)
         persisted_result["run_id"] = run_id
-        self._write_json(run_directory / "artifacts" / "options_backtest.json", persisted_result)
+        temporary_artifacts = run_directory / "artifacts.tmp"
+        temporary_artifacts.mkdir()
+        try:
+            self._write_json(temporary_artifacts / "options_backtest.json", persisted_result)
+            self._write_json(
+                temporary_artifacts / "options_backtest_export.json",
+                {"manifest": manifest, "options_backtest": persisted_result},
+            )
+            (temporary_artifacts / "options_backtest.csv").write_text(
+                generate_options_backtest_csv(persisted_result), encoding="utf-8"
+            )
+            (temporary_artifacts / "options_backtest.html").write_text(
+                generate_options_backtest_html(persisted_result, manifest), encoding="utf-8"
+            )
+            shutil.rmtree(run_directory / "artifacts")
+            temporary_artifacts.rename(run_directory / "artifacts")
+        except Exception as error:
+            shutil.rmtree(temporary_artifacts, ignore_errors=True)
+            (run_directory / "artifacts").mkdir(exist_ok=True)
+            self._write_json(
+                run_directory / "artifacts" / "error.json",
+                {"run_id": run_id, "error": str(error)},
+            )
+            self._write_json(
+                run_directory / "status.json",
+                {"id": run_id, "status": "failed", "error": str(error)},
+            )
+            raise
         self._write_json(run_directory / "status.json", {"id": run_id, "status": "completed"})
         return run_id
 
@@ -1010,67 +1036,25 @@ class ProjectStore:
         item = self._read_options_backtest_result(run_directory)
         if item is None:
             raise FileNotFoundError(f"Options Backtest Run {run_id} not found.")
-        format_name = format_type.lower()
-        payload = {"manifest": item["manifest"], "options_backtest": item["result"]}
-        if format_name in {"json", "manifest"}:
-            return ExportArtifact(
-                content=json.dumps(payload, indent=2),
-                media_type="application/json",
-                filename=f"options_backtest_{run_id}.json",
-            )
-        if format_name == "csv":
-            result = item["result"]
-            summary = result.get("summary", {})
-            rows = [["field", "value"]]
-            if isinstance(summary, dict):
-                rows.extend([[str(key), str(value)] for key, value in summary.items()])
-            positions = result.get("positions", [])
-            if isinstance(positions, list):
-                rows.append([])
-                rows.append(
-                    [
-                        "security_id",
-                        "expiration",
-                        "entry_credit",
-                        "worst_net_pnl",
-                        "best_net_pnl",
-                        "close_rule",
-                    ]
-                )
-                for position in positions:
-                    if isinstance(position, dict):
-                        rows.append(
-                            [
-                                str(position.get("security_id", "")),
-                                str(position.get("expiration", "")),
-                                str(position.get("entry_credit", "")),
-                                str(position.get("worst_net_pnl", "")),
-                                str(position.get("best_net_pnl", "")),
-                                str(position.get("close_rule", "")),
-                            ]
-                        )
-            output = io.StringIO()
-            csv.writer(output).writerows(rows)
-            return ExportArtifact(output.getvalue(), "text/csv", f"options_backtest_{run_id}.csv")
-        if format_name == "html":
-            result = item["result"]
-            summary = result.get("summary", {})
-            cells = (
-                "".join(
-                    f"<tr><th>{html.escape(str(key))}</th><td>{html.escape(str(value))}</td></tr>"
-                    for key, value in summary.items()
-                )
-                if isinstance(summary, dict)
-                else ""
-            )
-            document = (
-                "<!doctype html><html><head><meta charset='utf-8'><title>"
-                f"Options Backtest {html.escape(run_id)}</title></head><body><h1>"
-                f"Options Backtest {html.escape(run_id)}</h1><table>{cells}</table>"
-                "</body></html>"
-            )
-            return ExportArtifact(document, "text/html", f"options_backtest_{run_id}.html")
-        raise ValueError("Options Backtest exports support json, csv, and html.")
+        artifacts = {
+            "json": ("options_backtest_export.json", "application/json"),
+            "manifest": ("manifest.json", "application/json"),
+            "csv": ("options_backtest.csv", "text/csv"),
+            "html": ("options_backtest.html", "text/html"),
+        }
+        artifact = artifacts.get(format_type.lower())
+        if artifact is None:
+            raise ValueError("Options Backtest exports support json, csv, and html.")
+        artifact_path = run_directory / "artifacts" / artifact[0]
+        if format_type.lower() == "manifest":
+            artifact_path = run_directory / artifact[0]
+        if not artifact_path.is_file():
+            raise FileNotFoundError(f"Options Backtest {format_type} export not found.")
+        return ExportArtifact(
+            artifact_path.read_text(encoding="utf-8"),
+            artifact[1],
+            f"options_backtest_{run_id}.{format_type.lower()}",
+        )
 
     def source_fingerprint(self) -> str:
         """Return the fingerprint used to identify the engine source in Runs."""
