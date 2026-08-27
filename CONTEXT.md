@@ -91,3 +91,31 @@ _Avoid_: Signal, order
 **Definition Revision**:
 An immutable, sequentially numbered snapshot of a Valuation, Indicator, Predictive Model, or Strategy definition that can be referenced by results and reproduced later.
 _Avoid_: Draft, Git commit, Dataset Version
+
+**Option Contract**:
+One listed put or call contract with a Security, strike, expiration, multiplier, exercise style, and settlement type.
+_Avoid_: Option position, leg
+
+**Put Credit Spread**:
+One short put and one lower-strike long put with the same Security and expiration.
+_Avoid_: Credit spread without naming the legs
+
+**Entry Credit**:
+The money received when a Put Credit Spread opens.
+_Avoid_: Premium yield
+
+**Spread Value**:
+The cost to close both legs at a supported historical minute price.
+_Avoid_: Option price
+
+**Stop Level**:
+The Spread Value that tells the Strategy to close a spread.
+_Avoid_: Stop order
+
+**Full Possible Loss**:
+The spread width less Entry Credit, multiplied by contract quantity and multiplier.
+_Avoid_: Margin at risk
+
+**Option Dataset Version**:
+An immutable Dataset Version containing timestamped Option Contracts, option trades, underlying minute bars, and any event facts used by an options Backtest Run.
+_Avoid_: Options feed

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Callable, Mapping
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from pydantic import (
@@ -44,6 +44,61 @@ class TiingoPriceResponse(BaseModel):
     adjusted_close: float | None = Field(default=None, alias="adjClose")
     dividend_cash: float = Field(default=0, alias="divCash")
     split_factor: float = Field(default=1, alias="splitFactor")
+
+
+class AlpacaStockBarResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    timestamp: str = Field(alias="t")
+    open: float = Field(alias="o")
+    high: float = Field(alias="h")
+    low: float = Field(alias="l")
+    close: float = Field(alias="c")
+    volume: float = Field(alias="v")
+
+
+class AlpacaOptionTradeResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    timestamp: str = Field(alias="t")
+    price: float = Field(alias="p")
+    size: float = Field(alias="s")
+
+
+class AlpacaOptionContractResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    contract_id: str | None = Field(default=None, alias="id")
+    contract_symbol: str = Field(alias="symbol")
+    underlying_symbol: str = Field(alias="underlying_symbol")
+    expiration: str = Field(alias="expiration_date")
+    strike: float = Field(alias="strike_price")
+    right: str = Field(alias="type")
+    exercise_style: str = Field(default="american", alias="style")
+    multiplier: float = Field(default=100.0, alias="size")
+
+
+class AlpacaStockBarsResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    bars: list[AlpacaStockBarResponse] = Field(default_factory=list)
+    next_page_token: str | None = None
+
+
+class AlpacaOptionTradesResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    trades: list[AlpacaOptionTradeResponse] | dict[str, list[AlpacaOptionTradeResponse]] = Field(
+        default_factory=list
+    )
+    next_page_token: str | None = None
+
+
+class AlpacaOptionContractsResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    option_contracts: list[AlpacaOptionContractResponse] = Field(default_factory=list)
+    next_page_token: str | None = None
 
 
 class TiingoMetadataResponse(BaseModel):
@@ -143,6 +198,14 @@ class SecSubmissions(BaseModel):
 
 
 @dataclass(frozen=True)
+class AlpacaCredentials:
+    """Alpaca credentials held by the local process, never by the API response."""
+
+    api_key: str | None = None
+    api_secret: str | None = None
+
+
+@dataclass(frozen=True)
 class TiingoDownloadSpec:
     symbols: tuple[str, ...]
     start_date: date | None = None
@@ -157,9 +220,17 @@ class SecEdgarDownloadSpec:
 
 
 @dataclass(frozen=True)
+class AlpacaDownloadSpec:
+    symbol: str
+    start_date: date
+    end_date: date
+
+
+@dataclass(frozen=True)
 class ProviderCredentials:
-    tiingo_api_token: str | None = None
-    sec_edgar_user_agent: str | None = None
+    tiingo_api_token: str = ""
+    sec_edgar_user_agent: str = ""
+    alpaca: AlpacaCredentials = field(default_factory=AlpacaCredentials)
 
 
 @dataclass
@@ -169,6 +240,7 @@ class ProviderDownload:
     corporate_actions: list[dict[str, JsonValue]] = field(default_factory=list)
     fundamental_facts: list[dict[str, JsonValue]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    options_records: list[dict[str, JsonValue]] = field(default_factory=list)
 
 
 def _fetch_json(url: str, headers: Mapping[str, str]) -> JsonValue:
@@ -193,6 +265,201 @@ def _call(
         raise ProviderDownloadError(
             f"{provider} request failed ({type(error).__name__})."
         ) from error
+
+
+def _alpaca_url(path: str, query: Mapping[str, str]) -> str:
+    return f"https://{path}?{urlencode(query)}"
+
+
+def _alpaca_pages(
+    fetch: JsonFetcher,
+    path: str,
+    query: Mapping[str, str],
+    headers: Mapping[str, str],
+) -> list[JsonValue]:
+    """Fetch all pages while keeping the request inside the supplied bounds."""
+    pages: list[JsonValue] = []
+    page_token: str | None = None
+    while True:
+        page_query = dict(query)
+        if page_token:
+            page_query["page_token"] = page_token
+        payload = _call(fetch, _alpaca_url(path, page_query), headers, "Alpaca")
+        pages.append(payload)
+        next_page_token = payload.get("next_page_token") if isinstance(payload, dict) else None
+        if not isinstance(next_page_token, str) or not next_page_token:
+            return pages
+        if next_page_token == page_token:
+            raise ProviderDownloadError("Alpaca returned a repeated pagination token.")
+        page_token = next_page_token
+
+
+def _alpaca_available_at(retrieval_time: str) -> str:
+    # Alpaca responses expose event time, not a historical publication time.
+    # Retrieval time is the conservative point-in-time boundary for this snapshot.
+    return retrieval_time
+
+
+def download_alpaca(
+    request: AlpacaDownloadSpec,
+    *,
+    credentials: AlpacaCredentials,
+    retrieval_time: str,
+    fetch_json: JsonFetcher | None = None,
+) -> ProviderDownload:
+    """Download one bounded Alpaca options market-data snapshot.
+
+    The contract endpoint is on Alpaca's Trading API. Each returned option
+    contract is then used with the documented options trades endpoint.
+    """
+    fetch = fetch_json or _fetch_json
+    local_credentials = credentials
+    if not local_credentials.api_key or not local_credentials.api_secret:
+        raise ProviderDownloadError(
+            "Alpaca credentials are missing: set ALPACA_API_KEY and ALPACA_API_SECRET."
+        )
+
+    symbol = request.symbol.strip().upper()
+    if not symbol:
+        raise ProviderDownloadError("Alpaca requires a non-empty underlying symbol.")
+    if request.start_date > request.end_date:
+        raise ProviderDownloadError("Alpaca start_date must be on or before end_date.")
+
+    headers = {
+        "Accept": "application/json",
+        "APCA-API-KEY-ID": local_credentials.api_key,
+        "APCA-API-SECRET-KEY": local_credentials.api_secret,
+    }
+    start = request.start_date.isoformat()
+    end = request.end_date.isoformat()
+    available_at = _alpaca_available_at(retrieval_time)
+    result = ProviderDownload(
+        securities=[Security(security_id=symbol, symbol=symbol, name=symbol, currency="USD")]
+    )
+
+    stock_query = {
+        "timeframe": "1Min",
+        "start": start,
+        "end": end,
+        "limit": "10000",
+        "feed": "iex",
+        "sort": "asc",
+    }
+    for payload in _alpaca_pages(
+        fetch,
+        "data.alpaca.markets/v2/stocks/" + quote(symbol) + "/bars",
+        stock_query,
+        headers,
+    ):
+        try:
+            bars = AlpacaStockBarsResponse.model_validate(payload).bars
+        except ValidationError as error:
+            raise ProviderDownloadError("Alpaca returned invalid stock bars.") from error
+        for bar in bars:
+            result.options_records.append(
+                {
+                    "record_type": "stock_bar",
+                    "security_id": symbol,
+                    "timestamp": bar.timestamp,
+                    "open": bar.open,
+                    "high": bar.high,
+                    "low": bar.low,
+                    "close": bar.close,
+                    "volume": bar.volume,
+                    "available_at": available_at,
+                    "eligibility_provenance": "retrieval_time_snapshot",
+                    "source": "alpaca",
+                    "retrieval_time": retrieval_time,
+                }
+            )
+
+    contract_query = {
+        "underlying_symbols": symbol,
+        "expiration_date_gte": start,
+        "expiration_date_lte": end,
+        "limit": "1000",
+    }
+    contracts: list[AlpacaOptionContractResponse] = []
+    for payload in _alpaca_pages(
+        fetch, "api.alpaca.markets/v2/options/contracts", contract_query, headers
+    ):
+        try:
+            contracts.extend(AlpacaOptionContractsResponse.model_validate(payload).option_contracts)
+        except ValidationError as error:
+            raise ProviderDownloadError(
+                "Alpaca returned invalid option contract metadata."
+            ) from error
+
+    for row_number, contract in enumerate(contracts, start=1):
+        right = contract.right.lower()
+        if right not in {"put", "call"}:
+            result.warnings.append(
+                f"Alpaca option contract row {row_number} has an unsupported type; skipped."
+            )
+            continue
+        contract_id = contract.contract_id or contract.contract_symbol
+        result.options_records.append(
+            {
+                "record_type": "contract",
+                "contract_id": contract_id,
+                "contract_symbol": contract.contract_symbol,
+                "security_id": contract.underlying_symbol.upper(),
+                "expiration": contract.expiration,
+                "strike": contract.strike,
+                "right": right,
+                "multiplier": contract.multiplier,
+                "exercise_style": contract.exercise_style.lower(),
+                "settlement_type": "physical",
+                "available_at": available_at,
+                "eligibility_provenance": "retrieval_time_snapshot",
+                "source": "alpaca",
+                "retrieval_time": retrieval_time,
+            }
+        )
+
+        trade_query = {
+            "start": start,
+            "end": end,
+            "limit": "10000",
+            "feed": "indicative",
+            "sort": "asc",
+        }
+        for payload in _alpaca_pages(
+            fetch,
+            "data.alpaca.markets/v1beta1/options/"
+            + quote(contract.contract_symbol, safe="")
+            + "/trades",
+            trade_query,
+            headers,
+        ):
+            try:
+                trade_payload = AlpacaOptionTradesResponse.model_validate(payload).trades
+            except ValidationError as error:
+                raise ProviderDownloadError(
+                    f"Alpaca returned invalid option trades for {contract.contract_symbol}."
+                ) from error
+            trades = (
+                list(trade_payload.values()) if isinstance(trade_payload, dict) else [trade_payload]
+            )
+            for trade_page in trades:
+                for trade in trade_page:
+                    result.options_records.append(
+                        {
+                            "record_type": "trade",
+                            "contract_id": contract_id,
+                            "timestamp": trade.timestamp,
+                            "price": trade.price,
+                            "size": trade.size,
+                            "available_at": available_at,
+                            "eligibility_provenance": "retrieval_time_snapshot",
+                            "source": "alpaca",
+                            "retrieval_time": retrieval_time,
+                        }
+                    )
+
+    if not any(row.get("record_type") == "contract" for row in result.options_records):
+        raise ProviderDownloadError("Alpaca returned no valid option contract metadata.")
+    return result
 
 
 def _tiingo_available_at(raw_date: str, retrieval_time: str) -> str:

@@ -130,6 +130,24 @@ Stories:
 
 Done when the Analyst can remove a failed or completed Run, remove an unused imported or downloaded Dataset Version, and delete a whole Project from the interface.
 
+## Epic 9 — Options credit-spread Backtest
+
+Outcome: the Analyst can replay a Put Credit Spread against named Alpaca minute data and inspect the result without any execution path.
+
+Stories:
+
+1. Add typed Option Contracts, trades, underlying minutes, and eligible event records.
+2. Add Alpaca Basic download and options Dataset Version persistence.
+3. Add local implied volatility and Greek calculations.
+4. Add automatic contract selection and the agreed entry rules.
+5. Add worst and best linked-leg fills, collateral, fees, sizing, limits, and rejections.
+6. Add stop ladder, profit, breach, earnings, expiration, gap, and counterfactual rules.
+7. Persist options Runs, Definition Revision and Dataset Version inputs, source fingerprints, and exports.
+8. Add the candlestick master-detail view, ledger, audit tray, warnings, and blocked candidates.
+9. Verify deterministic replay, future-data isolation, and the reference Run gates.
+
+Done when a named options Dataset Version produces a saved, reloadable, exportable, deterministic Put Credit Spread Run with worst and best supported paths.
+
 ## Definition of done for every story
 
 - The relevant requirement IDs are named in the change plan.

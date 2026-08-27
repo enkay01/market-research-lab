@@ -34,7 +34,7 @@ import {
   type Project,
   type Security,
 } from "../api/client";
-import { OptionsDesignsPrototype } from "./optionsDesigns/OptionsDesignsPrototype";
+import { OptionsBacktestView } from "./OptionsBacktestView";
 
 interface BacktestViewProps {
   project?: Project;
@@ -276,7 +276,7 @@ function EquityDrawdownChart({
 export function BacktestView({ project }: BacktestViewProps) {
   const [simulationType, setSimulationType] = useState<"standard" | "options">(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.has("variant") || params.get("mode") === "options" ? "options" : "options";
+    return params.get("mode") === "options" ? "options" : "standard";
   });
   const [activeTab, setActiveTab] = useState<
     "overview" | "trades" | "fills" | "ledger" | "rejections" | "manifest" | "compare"
@@ -490,7 +490,7 @@ export function BacktestView({ project }: BacktestViewProps) {
   }, [currentResult]);
 
   if (simulationType === "options") {
-    return <OptionsDesignsPrototype onBackToStandard={() => setSimulationType("standard")} />;
+    return <OptionsBacktestView project={project} onBackToStandard={() => setSimulationType("standard")} />;
   }
 
   return (

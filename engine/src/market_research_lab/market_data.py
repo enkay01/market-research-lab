@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from dataclasses import field as dc_field
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 import duckdb
@@ -35,6 +36,7 @@ TEMPORAL_PROVENANCE_ERROR_MESSAGE = (
 DATASET_TYPE_DAILY_BARS = "daily_bars"
 DATASET_TYPE_CORPORATE_ACTIONS = "corporate_actions"
 DATASET_TYPE_FUNDAMENTALS = "fundamentals"
+DATASET_TYPE_OPTIONS = "options"
 
 
 @dataclass(frozen=True)
@@ -110,6 +112,124 @@ class CorporateAction:
     available_at: str | None = None
     eligibility_provenance: str | None = None
     units: str = "USD"
+
+
+@dataclass(frozen=True)
+class OptionContract:
+    """One listed option contract with point-in-time identity metadata."""
+
+    contract_id: str
+    security_id: str
+    expiration: str
+    strike: float
+    right: Literal["put", "call"]
+    multiplier: float = 100.0
+    contract_symbol: str | None = None
+    exercise_style: str = "american"
+    settlement_type: str = "physical"
+    available_at: str | None = None
+    inactivated_at: str | None = None
+    source: str = ""
+    retrieval_time: str = ""
+
+    @property
+    def option_type(self) -> Literal["put", "call"]:
+        return self.right
+
+
+@dataclass(frozen=True)
+class OptionTrade:
+    """One completed option trade. Historical data has no bid or ask quote."""
+
+    contract_id: str
+    timestamp: str
+    price: float
+    size: float = 0.0
+    available_at: str | None = None
+    source: str = ""
+    retrieval_time: str = ""
+    underlying_price: float | None = None
+    risk_free_rate: float = 0.0
+    dividend_yield: float = 0.0
+
+    @property
+    def trade_time(self) -> str:
+        return self.timestamp
+
+
+@dataclass(frozen=True)
+class StockMinuteBar:
+    """One point-in-time eligible underlying minute bar."""
+
+    security_id: str
+    timestamp: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float = 0.0
+    available_at: str | None = None
+    source: str = ""
+    retrieval_time: str = ""
+
+
+@dataclass(frozen=True)
+class EarningsEvent:
+    """An earnings event known at the recorded eligibility time."""
+
+    security_id: str
+    event_date: str
+    timing: Literal["before_open", "after_close", "unknown"] = "unknown"
+    available_at: str | None = None
+    source: str = ""
+
+
+@dataclass(frozen=True, init=False)
+class OptionMarketData:
+    """The named, typed inputs used by an options Backtest Run."""
+
+    contracts: tuple[OptionContract, ...]
+    option_trades: tuple[OptionTrade, ...]
+    stock_bars: tuple[StockMinuteBar, ...]
+    daily_bars: tuple[DailyBar, ...]
+    earnings: tuple[EarningsEvent, ...]
+    dataset_version_id: str
+    provider: str
+
+    def __init__(
+        self,
+        contracts: Sequence[OptionContract] = (),
+        option_trades: Sequence[OptionTrade] = (),
+        stock_bars: Sequence[StockMinuteBar] = (),
+        daily_bars: Sequence[DailyBar] = (),
+        earnings: Sequence[EarningsEvent] = (),
+        dataset_version_id: str = "",
+        provider: str = "alpaca",
+        *,
+        trades: Sequence[OptionTrade] | None = None,
+        underlying_bars: Sequence[StockMinuteBar] | None = None,
+    ) -> None:
+        object.__setattr__(self, "contracts", tuple(contracts))
+        object.__setattr__(
+            self, "option_trades", tuple(trades if trades is not None else option_trades)
+        )
+        object.__setattr__(
+            self,
+            "stock_bars",
+            tuple(underlying_bars if underlying_bars is not None else stock_bars),
+        )
+        object.__setattr__(self, "daily_bars", tuple(daily_bars))
+        object.__setattr__(self, "earnings", tuple(earnings))
+        object.__setattr__(self, "dataset_version_id", dataset_version_id)
+        object.__setattr__(self, "provider", provider)
+
+    @property
+    def trades(self) -> tuple[OptionTrade, ...]:
+        return self.option_trades
+
+    @property
+    def underlying_bars(self) -> tuple[StockMinuteBar, ...]:
+        return self.stock_bars
 
 
 @dataclass(frozen=True)
@@ -354,6 +474,15 @@ class MarketDataStore:
         return default
 
     @classmethod
+    def _finite_raw_number(cls, value: str | int | float | bool | None, field: str) -> float:
+        if cls._is_missing(value):
+            raise ValueError(f"{field.replace('_', ' ').capitalize()} is missing")
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError(f"{field.replace('_', ' ').capitalize()} must be finite")
+        return number
+
+    @classmethod
     def _optional_number(cls, row: pd.Series, *fields: str) -> float | None:
         for field in fields:
             if field in row and not cls._is_missing(row[field]):
@@ -421,9 +550,7 @@ class MarketDataStore:
             raise ValueError("File imports require a file path.")
         return self._publish_dataframe(request, self._read_dataframe(request.file_path))
 
-    def _publish_dataframe(
-        self, request: IngestionRequest, df_raw: pd.DataFrame
-    ) -> DatasetVersion:
+    def _publish_dataframe(self, request: IngestionRequest, df_raw: pd.DataFrame) -> DatasetVersion:
         """Validate and persist one canonical Market Dataset."""
 
         # Detect one canonical record family from the supplied columns.
@@ -432,8 +559,14 @@ class MarketDataStore:
             "type" in df_raw.columns or "action_type" in df_raw.columns
         )
         is_daily_bar = {"open", "high", "low", "close", "volume"}.issubset(set(df_raw.columns))
+        option_markers = {"contract_id", "expiration", "option_type", "right", "trade_time"}
+        is_options = bool(option_markers.intersection(set(df_raw.columns))) and (
+            "contract_id" in df_raw.columns or "expiration" in df_raw.columns
+        )
 
-        if is_corporate_action:
+        if is_options:
+            dataset_type = DATASET_TYPE_OPTIONS
+        elif is_corporate_action:
             dataset_type = DATASET_TYPE_CORPORATE_ACTIONS
         elif is_fundamental:
             dataset_type = DATASET_TYPE_FUNDAMENTALS
@@ -448,7 +581,116 @@ class MarketDataStore:
         valid_rows: list[dict[str, JsonValue]] = []
         missing_fields: dict[str, int] = {}
 
-        if dataset_type == DATASET_TYPE_FUNDAMENTALS:
+        if dataset_type == DATASET_TYPE_OPTIONS:
+            check_cols = [
+                "record_type",
+                "contract_id",
+                "security_id",
+                "symbol",
+                "expiration",
+                "strike",
+                "right",
+                "timestamp",
+                "trade_time",
+                "price",
+                "available_at",
+            ]
+            for col in check_cols:
+                if col in df_raw.columns:
+                    missing_fields[col] = int(df_raw[col].map(self._is_missing).sum())
+
+            for i, row in df_raw.iterrows():
+                row_num = i + 1
+                try:
+                    raw = {
+                        str(key): (None if self._is_missing(value) else value)
+                        for key, value in row.to_dict().items()
+                    }
+                    record_type = str(raw.get("record_type") or "").lower()
+                    if not record_type:
+                        record_type = (
+                            "trade"
+                            if raw.get("price") is not None and raw.get("timestamp") is not None
+                            else "contract"
+                        )
+                    if record_type not in {
+                        "contract",
+                        "trade",
+                        "stock_bar",
+                        "daily_bar",
+                        "earnings",
+                    }:
+                        raise ValueError(
+                            "record_type must be contract, trade, stock_bar, daily_bar, or earnings"
+                        )
+                    if record_type == "contract":
+                        for field_name in (
+                            "contract_id",
+                            "security_id",
+                            "expiration",
+                            "strike",
+                            "right",
+                        ):
+                            if raw.get(field_name) is None:
+                                raise ValueError(f"{field_name} is missing")
+                        raw["strike"] = self._finite_raw_number(raw.get("strike"), "strike")
+                        right = str(raw.get("right") or raw.get("option_type") or "").lower()
+                        if right not in {"put", "call"}:
+                            raise ValueError("right must be put or call")
+                        raw["right"] = right
+                    elif record_type == "trade":
+                        for field_name in ("contract_id", "timestamp", "price"):
+                            if raw.get(field_name) is None and not (
+                                field_name == "timestamp" and raw.get("trade_time") is not None
+                            ):
+                                raise ValueError(f"{field_name} is missing")
+                        raw["timestamp"] = raw.get("timestamp") or raw.get("trade_time")
+                        raw["price"] = self._finite_raw_number(raw.get("price"), "price")
+                        if raw.get("size") is not None:
+                            raw["size"] = self._finite_raw_number(raw["size"], "size")
+                    elif record_type == "stock_bar":
+                        for field_name in (
+                            "security_id",
+                            "timestamp",
+                            "open",
+                            "high",
+                            "low",
+                            "close",
+                        ):
+                            if raw.get(field_name) is None:
+                                raise ValueError(f"{field_name} is missing")
+                        for field_name in ("open", "high", "low", "close", "volume"):
+                            if raw.get(field_name) is not None:
+                                raw[field_name] = self._finite_raw_number(
+                                    raw[field_name], field_name
+                                )
+                    elif record_type == "daily_bar":
+                        for field_name in ("security_id", "date", "open", "high", "low", "close"):
+                            if raw.get(field_name) is None:
+                                raise ValueError(f"{field_name} is missing")
+                        for field_name in ("open", "high", "low", "close", "volume"):
+                            if raw.get(field_name) is not None:
+                                raw[field_name] = self._finite_raw_number(
+                                    raw[field_name], field_name
+                                )
+                    else:
+                        for field_name in ("security_id", "event_date", "timing"):
+                            if raw.get(field_name) is None:
+                                raise ValueError(f"{field_name} is missing")
+                        if str(raw["timing"]).lower() not in {
+                            "before_open",
+                            "after_close",
+                            "unknown",
+                        }:
+                            raise ValueError("timing must be before_open, after_close, or unknown")
+                    raw["record_type"] = record_type
+                    raw["source"] = request.source
+                    raw["retrieval_time"] = request.retrieval_time
+                    valid_rows.append(raw)
+                except Exception as error:
+                    warnings.append(f"Rejected row {row_num}: {error}")
+
+        elif dataset_type == DATASET_TYPE_FUNDAMENTALS:
             check_cols = [
                 "security_id",
                 "symbol",
@@ -627,6 +869,9 @@ class MarketDataStore:
         elif "effective_date" in df_valid.columns:
             coverage_start = df_valid["effective_date"].min()
             coverage_end = df_valid["effective_date"].max()
+        elif "timestamp" in df_valid.columns:
+            coverage_start = df_valid["timestamp"].min()
+            coverage_end = df_valid["timestamp"].max()
         elif ("period_start" in df_valid.columns and df_valid["period_start"].notna().any()) or (
             "period_end" in df_valid.columns and df_valid["period_end"].notna().any()
         ):
@@ -730,12 +975,12 @@ class MarketDataStore:
                     else (self._optional_text(raw_row, "name", "company_name") or symbol)
                 )
                 exchange = (
-                    existing.exchange
-                    if existing
-                    else self._optional_text(raw_row, "exchange")
+                    existing.exchange if existing else self._optional_text(raw_row, "exchange")
                 )
-                currency = existing.currency if existing else (
-                    self._optional_text(raw_row, "currency", default="USD") or "USD"
+                currency = (
+                    existing.currency
+                    if existing
+                    else (self._optional_text(raw_row, "currency", default="USD") or "USD")
                 )
                 if sec_id not in distinct_securities:
                     distinct_securities[sec_id] = Security(
@@ -959,10 +1204,7 @@ class MarketDataStore:
                             sorted_df = matched_df.sort_values(by="session_date", ascending=False)
                             newest_row = sorted_df.iloc[0]
                             newest_date = str(newest_row["session_date"])
-                            if (
-                                latest_session_date is None
-                                or newest_date >= latest_session_date
-                            ):
+                            if latest_session_date is None or newest_date >= latest_session_date:
                                 latest_session_date = newest_date
                                 if pd.notna(newest_row["close"]):
                                     latest_close = float(newest_row["close"])
@@ -975,10 +1217,7 @@ class MarketDataStore:
                     corporate_actions_dataset_versions.append(v_id)
                 corporate_actions_count += len(matched_df)
 
-            elif (
-                summary.dataset_type == DATASET_TYPE_FUNDAMENTALS
-                or summary.is_fundamentals
-            ):
+            elif summary.dataset_type == DATASET_TYPE_FUNDAMENTALS or summary.is_fundamentals:
                 if v_id not in fundamentals_dataset_versions:
                     fundamentals_dataset_versions.append(v_id)
                 fundamentals_count += len(matched_df)
@@ -1317,3 +1556,119 @@ class MarketDataStore:
                 )
             )
         return actions
+
+    def option_market_data(
+        self, dataset_version_id: str, *, as_of: str | datetime | None = None
+    ) -> OptionMarketData:
+        """Load one named options Dataset Version with point-in-time filtering."""
+        loaded = self._load_dataset_df(dataset_version_id)
+        if loaded.dataset_type != DATASET_TYPE_OPTIONS:
+            raise ValueError(
+                f"Dataset Version '{dataset_version_id}' is not an options Dataset Version."
+            )
+        dataframe = self._filter_by_as_of_and_symbol(loaded, symbol=None, as_of=as_of)
+
+        def text(row: pd.Series, *names: str) -> str | None:
+            for name in names:
+                value = row.get(name)
+                if value is not None and not self._is_missing(value):
+                    return str(value)
+            return None
+
+        def number(row: pd.Series, *names: str, default: float | None = None) -> float | None:
+            value = text(row, *names)
+            return default if value is None else float(value)
+
+        contracts: list[OptionContract] = []
+        trades: list[OptionTrade] = []
+        stock_bars: list[StockMinuteBar] = []
+        daily_bars: list[DailyBar] = []
+        earnings: list[EarningsEvent] = []
+        for _, row in dataframe.iterrows():
+            record_type = (text(row, "record_type") or "").lower()
+            if record_type == "contract":
+                right = (text(row, "right", "option_type") or "").lower()
+                contracts.append(
+                    OptionContract(
+                        contract_id=text(row, "contract_id") or "",
+                        security_id=text(row, "security_id", "symbol") or "",
+                        expiration=text(row, "expiration") or "",
+                        strike=number(row, "strike", default=0.0) or 0.0,
+                        right=right if right in {"put", "call"} else "put",
+                        multiplier=number(row, "multiplier", "contract_size", default=100.0)
+                        or 100.0,
+                        contract_symbol=text(row, "contract_symbol", "option_symbol"),
+                        exercise_style=text(row, "exercise_style") or "american",
+                        settlement_type=text(row, "settlement_type") or "physical",
+                        available_at=text(row, "available_at"),
+                        inactivated_at=text(row, "inactivated_at"),
+                        source=text(row, "source") or "",
+                        retrieval_time=text(row, "retrieval_time") or "",
+                    )
+                )
+            elif record_type == "trade":
+                trades.append(
+                    OptionTrade(
+                        contract_id=text(row, "contract_id") or "",
+                        timestamp=text(row, "timestamp", "trade_time") or "",
+                        price=number(row, "price", default=0.0) or 0.0,
+                        size=number(row, "size", default=0.0) or 0.0,
+                        available_at=text(row, "available_at"),
+                        source=text(row, "source") or "",
+                        retrieval_time=text(row, "retrieval_time") or "",
+                        underlying_price=number(row, "underlying_price", "stock_price"),
+                        risk_free_rate=number(row, "risk_free_rate", default=0.0) or 0.0,
+                        dividend_yield=number(row, "dividend_yield", default=0.0) or 0.0,
+                    )
+                )
+            elif record_type == "stock_bar":
+                stock_bars.append(
+                    StockMinuteBar(
+                        security_id=text(row, "security_id", "symbol") or "",
+                        timestamp=text(row, "timestamp") or "",
+                        open=number(row, "open", default=0.0) or 0.0,
+                        high=number(row, "high", default=0.0) or 0.0,
+                        low=number(row, "low", default=0.0) or 0.0,
+                        close=number(row, "close", default=0.0) or 0.0,
+                        volume=number(row, "volume", default=0.0) or 0.0,
+                        available_at=text(row, "available_at"),
+                        source=text(row, "source") or "",
+                        retrieval_time=text(row, "retrieval_time") or "",
+                    )
+                )
+            elif record_type == "daily_bar":
+                daily_bars.append(
+                    DailyBar(
+                        security_id=text(row, "security_id", "symbol") or "",
+                        session_date=text(row, "date", "session_date") or "",
+                        open=number(row, "open", default=0.0) or 0.0,
+                        high=number(row, "high", default=0.0) or 0.0,
+                        low=number(row, "low", default=0.0) or 0.0,
+                        close=number(row, "close", default=0.0) or 0.0,
+                        volume=number(row, "volume", default=0.0) or 0.0,
+                        source=text(row, "source") or "",
+                        retrieval_time=text(row, "retrieval_time") or "",
+                        available_at=text(row, "available_at"),
+                    )
+                )
+            elif record_type == "earnings":
+                timing = (text(row, "timing") or "unknown").lower()
+                earnings.append(
+                    EarningsEvent(
+                        security_id=text(row, "security_id", "symbol") or "",
+                        event_date=text(row, "event_date") or "",
+                        timing=timing
+                        if timing in {"before_open", "after_close", "unknown"}
+                        else "unknown",
+                        available_at=text(row, "available_at"),
+                        source=text(row, "source") or "",
+                    )
+                )
+        return OptionMarketData(
+            contracts=contracts,
+            option_trades=trades,
+            stock_bars=stock_bars,
+            daily_bars=daily_bars,
+            earnings=earnings,
+            dataset_version_id=dataset_version_id,
+        )

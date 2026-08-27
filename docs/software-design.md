@@ -207,6 +207,18 @@ Daily event order is explicit:
 
 The first implementation supports one Security and long/flat weights. Later stories deepen the same module with multiple positions, shorts, leverage, borrow, and richer corporate actions; callers retain the same `run_backtest` interface.
 
+### Options Backtesting
+
+`option_backtest.py` is a focused domain module for the first derivatives slice. It owns typed Option Contracts, minute trades, local Black-Scholes calculations, Put Credit Spread selection, linked-leg pricing, stop and exit rules, collateral, risk limits, reliability, and counterfactual diagnostics. Its primary interface is:
+
+```python
+run_option_backtest(specification, *, market_data) -> OptionsBacktestResult
+```
+
+`OptionMarketData` is loaded from one named Option Dataset Version. It may include named daily bars and earnings facts for the rules that use them. The module does not access FastAPI, the browser, the provider, or the filesystem. It uses completed option trade ranges because historical Alpaca buyer and seller quotes are not available. The worst supported path is primary; the best path is retained for comparison.
+
+Options Runs use `kind: options_backtest`, share ProjectStore persistence, and record each input Dataset Version by purpose. They never route or submit orders. Assignment, rolling, and call spreads remain outside the first slice.
+
 ### Reporting and Alerts
 
 `reporting.py` converts typed results into dashboard response data, HTML, CSV, and JSON. It does not recalculate analytics.

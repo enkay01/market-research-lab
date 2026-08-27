@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Annotated, Literal, NamedTuple
+from typing import Annotated, Awaitable, Callable, Literal, NamedTuple
 from uuid import UUID
 
 from fastapi import (
@@ -74,6 +74,12 @@ from .market_data import (
     InadequateTemporalProvenanceError,
     IngestionRequest,
     MarketDataStore,
+    OptionMarketData,
+)
+from .option_backtest import (
+    OptionBacktestError,
+    OptionsBacktestSpecification,
+    run_option_backtest,
 )
 from .predictive_models import (
     FittedModelArtifact,
@@ -94,7 +100,9 @@ from .predictive_models import (
 from .projects import (
     BacktestRunRecord,
     FailedBacktestRunRecord,
+    FailedOptionsBacktestRunRecord,
     FailedPredictiveModelRunRecord,
+    OptionsBacktestRunRecord,
     PredictiveModelRunRecord,
     Project,
     ProjectNotFoundError,
@@ -132,7 +140,6 @@ from .valuation import (
     FCFFDCFResult,
     evaluate,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -906,9 +913,7 @@ class SignalResponse(BaseModel):
 def signal_response(signal: dict[str, JsonValue]) -> SignalResponse:
     """Build one Signal response with freshness classified at read time (ALT-004)."""
     body = dict(signal)
-    body["data_state"] = data_freshness_state(
-        str(body.get("data_time", "")), now=datetime.now(UTC)
-    )
+    body["data_state"] = data_freshness_state(str(body.get("data_time", "")), now=datetime.now(UTC))
     return SignalResponse.model_validate(body)
 
 
@@ -942,6 +947,57 @@ class ExecutionModelAssumptionsRequest(BaseModel):
     margin_requirement: float = Field(default=1.0, gt=0)
     maintenance_margin: float = Field(default=0.25, ge=0)
     leverage_mode: Literal["reject", "constrain"] = "reject"
+
+
+class OptionsBacktestRunRequest(BaseModel):
+    dataset_version_id: str = Field(min_length=1)
+    daily_dataset_version_id: str | None = Field(default=None, min_length=1)
+    strategy_name: str = Field(default="put_credit_spread", min_length=1, max_length=64)
+    strategy_revision: str = Field(default="v1", min_length=1, max_length=64)
+    symbol: str | None = Field(default=None, min_length=1, max_length=32)
+    symbols: list[str] | None = Field(default=None, min_length=1, max_length=20)
+    watchlist: list[str] | None = Field(default=None, min_length=1, max_length=20)
+    start_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    end_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    starting_cash: float = Field(default=100000.0, gt=0)
+    path: Literal["worst", "best"] = "worst"
+    automatic_selection: bool | None = None
+    fixed_short_contract_id: str | None = None
+    fixed_long_contract_id: str | None = None
+    dte_min: int = Field(default=30, ge=0, le=365)
+    dte_max: int = Field(default=45, ge=0, le=365)
+    delta_min: float = Field(default=0.15, ge=0, le=1)
+    delta_max: float = Field(default=0.20, ge=0, le=1)
+    target_delta: float = Field(default=0.175, ge=0, le=1)
+    iv_min: float = Field(default=0.30, ge=0, le=5)
+    iv_max: float = Field(default=0.55, ge=0, le=5)
+    previous_day_volume_min: float = Field(default=100000.0, ge=0)
+    preferred_width: float = Field(default=2.5, gt=0)
+    fallback_width: float = Field(default=5.0, gt=0)
+    risk_per_position: float = Field(default=0.02, gt=0, le=1)
+    max_open_risk: float = Field(default=0.10, gt=0, le=1)
+    max_open_securities: int = Field(default=3, ge=1, le=20)
+    similarity_limit: float = Field(default=0.70, ge=-1, le=1)
+    fee_per_leg: float = Field(default=0.65, ge=0)
+    risk_free_rate: float = Field(default=0.0, allow_inf_nan=False)
+    dividend_yield: float = Field(default=0.0, allow_inf_nan=False)
+    cash_interest_rate: float = Field(default=0.0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_symbols(self) -> "OptionsBacktestRunRequest":
+        if not self.symbol and not self.symbols and not self.watchlist:
+            raise ValueError("Either 'symbol', 'symbols', or 'watchlist' must be provided.")
+        if self.symbols and self.watchlist:
+            raise ValueError("Use either 'symbols' or 'watchlist', not both.")
+        if (
+            self.dte_min > self.dte_max
+            or self.delta_min > self.delta_max
+            or self.iv_min > self.iv_max
+        ):
+            raise ValueError("Minimum selection bounds must not exceed maximum bounds.")
+        if bool(self.fixed_short_contract_id) != bool(self.fixed_long_contract_id):
+            raise ValueError("Both fixed contract IDs are required together.")
+        return self
 
 
 class BacktestRunRequest(BaseModel):
@@ -2048,7 +2104,9 @@ def create_app(
     )
 
     @app.middleware("http")
-    async def log_request(request: Request, call_next):
+    async def log_request(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         request_diagnostic_id = new_diagnostic_id()
         with diagnostic_context(request_diagnostic_id):
             started_at = perf_counter()
@@ -2108,9 +2166,7 @@ def create_app(
         )
 
     @app.exception_handler(DatasetVersionInUseError)
-    async def dataset_version_in_use(
-        _: Request, error: DatasetVersionInUseError
-    ) -> JSONResponse:
+    async def dataset_version_in_use(_: Request, error: DatasetVersionInUseError) -> JSONResponse:
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
             content=ErrorResponse(
@@ -2228,9 +2284,7 @@ def create_app(
         )
 
     @app.exception_handler(RevisionNotImmutableError)
-    async def revision_not_immutable(
-        _: Request, error: RevisionNotImmutableError
-    ) -> JSONResponse:
+    async def revision_not_immutable(_: Request, error: RevisionNotImmutableError) -> JSONResponse:
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content=ErrorResponse(
@@ -2272,6 +2326,15 @@ def create_app(
                 code="parameter_validation_error",
                 message=str(error),
                 details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(OptionBacktestError)
+    async def option_backtest_error(_: Request, error: OptionBacktestError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="options_backtest_error", message=str(error), details={}
             ).model_dump(),
         )
 
@@ -2410,9 +2473,7 @@ def create_app(
         name: str = FastAPIPath(min_length=1, max_length=128),
         revision: str = FastAPIPath(pattern=r"^v[1-9][0-9]*$"),
     ) -> DefinitionRevisionResponse:
-        wrapped = store.read_revision(
-            str(project_id), kind=kind, name=name, revision=revision
-        )
+        wrapped = store.read_revision(str(project_id), kind=kind, name=name, revision=revision)
         return DefinitionRevisionResponse(
             kind=kind,
             name=str(wrapped.get("name", name)),
@@ -2698,6 +2759,162 @@ def create_app(
         return [SavedValuationResponse.model_validate(item) for item in results]
 
     @app.post(
+        "/api/projects/{project_id}/options-backtests",
+        response_model=dict[str, JsonValue],
+        status_code=status.HTTP_201_CREATED,
+        tags=["options-backtests"],
+    )
+    def run_project_options_backtest(
+        project_id: UUID, request: OptionsBacktestRunRequest
+    ) -> dict[str, JsonValue]:
+        store.get_project(str(project_id))
+        symbols = tuple(
+            request.watchlist or request.symbols or ([request.symbol] if request.symbol else [])
+        )
+        automatic = request.automatic_selection
+        if automatic is None:
+            automatic = not bool(request.fixed_short_contract_id)
+        parameters = request.model_dump(mode="json")
+        input_dataset_versions = {"options_market_data": request.dataset_version_id}
+        if request.daily_dataset_version_id:
+            input_dataset_versions["daily_market_data"] = request.daily_dataset_version_id
+        try:
+            market_data = market_store.option_market_data(request.dataset_version_id)
+            daily_bars = market_data.daily_bars
+            if request.daily_dataset_version_id:
+                market_store.ensure_historical_eligibility(request.daily_dataset_version_id)
+                loaded_daily = market_store.history(request.daily_dataset_version_id)
+                if isinstance(loaded_daily, list):
+                    daily_bars = tuple(loaded_daily)
+            market_data = OptionMarketData(
+                contracts=market_data.contracts,
+                option_trades=market_data.option_trades,
+                stock_bars=market_data.stock_bars,
+                daily_bars=daily_bars,
+                earnings=market_data.earnings,
+                dataset_version_id=request.dataset_version_id,
+                provider=market_data.provider,
+            )
+            specification = OptionsBacktestSpecification(
+                strategy_name=request.strategy_name,
+                strategy_revision=request.strategy_revision,
+                dataset_version_id=request.dataset_version_id,
+                start_date=request.start_date,
+                end_date=request.end_date,
+                starting_cash=request.starting_cash,
+                symbols=symbols,
+                watchlist=tuple(request.watchlist or ()),
+                path=request.path,
+                automatic_selection=automatic,
+                fixed_short_contract_id=request.fixed_short_contract_id,
+                fixed_long_contract_id=request.fixed_long_contract_id,
+                dte_min=request.dte_min,
+                dte_max=request.dte_max,
+                delta_min=request.delta_min,
+                delta_max=request.delta_max,
+                target_delta=request.target_delta,
+                iv_min=request.iv_min,
+                iv_max=request.iv_max,
+                previous_day_volume_min=request.previous_day_volume_min,
+                preferred_width=request.preferred_width,
+                fallback_width=request.fallback_width,
+                risk_per_position=request.risk_per_position,
+                max_open_risk=request.max_open_risk,
+                max_open_securities=request.max_open_securities,
+                similarity_limit=request.similarity_limit,
+                fee_per_leg=request.fee_per_leg,
+                risk_free_rate=request.risk_free_rate,
+                dividend_yield=request.dividend_yield,
+                cash_interest_rate=request.cash_interest_rate,
+            )
+            result = run_option_backtest(specification, market_data=market_data)
+        except Exception as error:
+            failed_id = store.create_failed_options_backtest_run(
+                str(project_id),
+                FailedOptionsBacktestRunRecord(
+                    strategy_revision=request.strategy_revision,
+                    dataset_version_ids=list(input_dataset_versions.values()),
+                    input_dataset_versions=input_dataset_versions,
+                    parameters=parameters,
+                    error_message=str(error),
+                ),
+            )
+            _log_failed_run(
+                project_id,
+                failed_id,
+                f"Options Backtest Run failed: {error}",
+                include_traceback=True,
+            )
+            if isinstance(error, OptionBacktestError):
+                raise
+            raise OptionBacktestError(str(error)) from error
+        result_payload = result.to_json()
+        result_manifest = result_payload.get("manifest")
+        if isinstance(result_manifest, dict):
+            result_manifest["source_sha256"] = store.source_fingerprint()
+        run_id = store.create_options_backtest_result(
+            str(project_id),
+            OptionsBacktestRunRecord(
+                strategy_revision=request.strategy_revision,
+                dataset_version_ids=list(input_dataset_versions.values()),
+                input_dataset_versions=input_dataset_versions,
+                parameters=parameters,
+                result=result_payload,
+            ),
+        )
+        result_payload["run_id"] = run_id
+        _log_run_event(project_id, run_id, "Options Backtest Run completed.")
+        return result_payload
+
+    @app.get(
+        "/api/projects/{project_id}/options-backtests",
+        response_model=list[dict[str, JsonValue]],
+        tags=["options-backtests"],
+    )
+    def list_project_options_backtests(project_id: UUID) -> list[dict[str, JsonValue]]:
+        return [item["result"] for item in store.list_options_backtest_results(str(project_id))]
+
+    @app.get(
+        "/api/projects/{project_id}/options-backtests/{run_id}",
+        response_model=dict[str, JsonValue],
+        tags=["options-backtests"],
+    )
+    def get_project_options_backtest(project_id: UUID, run_id: str) -> dict[str, JsonValue]:
+        item = store.get_options_backtest_result(str(project_id), run_id)
+        if item is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Options Backtest Run not found."
+            )
+        return item["result"]
+
+    @app.get(
+        "/api/projects/{project_id}/runs/{run_id}/options_backtest",
+        response_model=dict[str, JsonValue],
+        tags=["options-backtests"],
+    )
+    def get_run_options_backtest(project_id: UUID, run_id: str) -> dict[str, JsonValue]:
+        return get_project_options_backtest(project_id, run_id)
+
+    @app.get(
+        "/api/projects/{project_id}/options-backtests/{run_id}/export/{format_type}",
+        tags=["options-backtests"],
+    )
+    def export_options_backtest(
+        project_id: UUID,
+        run_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
+        format_type: Literal["json", "csv", "html"] = FastAPIPath(),
+    ) -> Response:
+        try:
+            artifact = store.get_options_backtest_export(str(project_id), run_id, format_type)
+        except FileNotFoundError as error:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+        return Response(
+            content=artifact.content,
+            media_type=artifact.media_type,
+            headers={"Content-Disposition": f'attachment; filename="{artifact.filename}"'},
+        )
+
+    @app.post(
         "/api/projects/{project_id}/backtests",
         response_model=BacktestResultResponse,
         status_code=status.HTTP_201_CREATED,
@@ -2766,8 +2983,7 @@ def create_app(
                     ),
                 )
                 message = (
-                    "Backtest Run failed: Benchmark security not found: "
-                    f"{request.benchmark_symbol}"
+                    f"Backtest Run failed: Benchmark security not found: {request.benchmark_symbol}"
                 )
                 _log_failed_run(
                     project_id,
@@ -3148,9 +3364,7 @@ def create_app(
             market_store.ensure_historical_eligibility(dataset_version_id)
         dataset_version_ids = [dataset_version_id] if dataset_version_id else []
         return RunResponse(
-            id=store.create_run(
-                str(project_id), dataset_version_ids=dataset_version_ids
-            ),
+            id=store.create_run(str(project_id), dataset_version_ids=dataset_version_ids),
             status="pending",
         )
 
@@ -3591,9 +3805,7 @@ def create_app(
         format_type: Literal["html", "csv", "json"] = FastAPIPath(),
     ) -> Response:
         try:
-            artifact = store.get_predictive_model_export(
-                str(project_id), run_id, format_type
-            )
+            artifact = store.get_predictive_model_export(str(project_id), run_id, format_type)
         except FileNotFoundError as error:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -3676,8 +3888,7 @@ def create_app(
         if model_run_id is not None:
             if not isinstance(model_run_id, str) or not model_run_id.strip():
                 raise StrategyEvaluationError(
-                    "Predictive Model Run reference must be a non-empty saved Run ID "
-                    "(MOD-009)."
+                    "Predictive Model Run reference must be a non-empty saved Run ID (MOD-009)."
                 )
             model_record = store.get_predictive_model_result(str(project_id), model_run_id)
             if model_record is None:
@@ -3685,9 +3896,7 @@ def create_app(
                     "Predictive Model Run not found. A saved, benchmark-verified Run "
                     "is required before a Strategy can use model output (MOD-009)."
                 )
-            validate_model_eligibility_for_strategy(
-                model_record, require_persisted_run=True
-            )
+            validate_model_eligibility_for_strategy(model_record, require_persisted_run=True)
         context = _strategy_market_view(market_store, request)
         evaluation = evaluate_strategy(
             name=request.name,
@@ -3776,9 +3985,7 @@ def create_app(
         status_code=status.HTTP_204_NO_CONTENT,
         tags=["strategies"],
     )
-    def disable_strategy_revision(
-        project_id: UUID, request: EnabledStrategyRequest
-    ) -> Response:
+    def disable_strategy_revision(project_id: UUID, request: EnabledStrategyRequest) -> Response:
         store.disable_strategy(str(project_id), name=request.name, revision=request.revision)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -3788,9 +3995,7 @@ def create_app(
         tags=["alerts"],
     )
     def list_project_signals(project_id: UUID) -> list[SignalResponse]:
-        return [
-            signal_response(signal) for signal in store.list_signals(str(project_id))
-        ]
+        return [signal_response(signal) for signal in store.list_signals(str(project_id))]
 
     @app.post(
         "/api/projects/{project_id}/alerts/refresh",

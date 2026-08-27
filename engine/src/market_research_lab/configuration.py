@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from .providers import ProviderCredentials
+from .providers import AlpacaCredentials, ProviderCredentials
 
 
 def load_provider_credentials(env_file: Path | None = None) -> ProviderCredentials:
@@ -27,6 +27,10 @@ def load_provider_credentials(env_file: Path | None = None) -> ProviderCredentia
         return configured.strip() or None
 
     return ProviderCredentials(
-        tiingo_api_token=value("TIINGO_API_TOKEN"),
-        sec_edgar_user_agent=value("SEC_EDGAR_USER_AGENT"),
+        tiingo_api_token=value("TIINGO_API_TOKEN") or "",
+        sec_edgar_user_agent=value("SEC_EDGAR_USER_AGENT") or "",
+        alpaca=AlpacaCredentials(
+            api_key=value("ALPACA_API_KEY"),
+            api_secret=value("ALPACA_API_SECRET"),
+        ),
     )

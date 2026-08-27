@@ -6,11 +6,13 @@ from datetime import UTC, datetime
 
 from .market_data import DatasetVersion, IngestionRequest, MarketDataStore
 from .providers import (
+    AlpacaDownloadSpec,
     JsonFetcher,
     ProviderCredentials,
     ProviderDownloadError,
     SecEdgarDownloadSpec,
     TiingoDownloadSpec,
+    download_alpaca,
     download_sec_edgar,
     download_tiingo,
 )
@@ -18,7 +20,7 @@ from .providers import (
 
 def download_provider(
     store: MarketDataStore,
-    request: TiingoDownloadSpec | SecEdgarDownloadSpec,
+    request: TiingoDownloadSpec | SecEdgarDownloadSpec | AlpacaDownloadSpec,
     *,
     credentials: ProviderCredentials,
     fetch_json: JsonFetcher | None = None,
@@ -26,7 +28,16 @@ def download_provider(
     """Fetch validated provider data before creating any Dataset Version."""
     retrieved_at = datetime.now(UTC).isoformat()
 
-    if isinstance(request, TiingoDownloadSpec):
+    if isinstance(request, AlpacaDownloadSpec):
+        downloaded = download_alpaca(
+            request,
+            credentials=credentials.alpaca,
+            retrieval_time=retrieved_at,
+            fetch_json=fetch_json,
+        )
+        record_groups = [downloaded.options_records]
+        source = "alpaca"
+    elif isinstance(request, TiingoDownloadSpec):
         downloaded = download_tiingo(
             request,
             token=credentials.tiingo_api_token,
@@ -51,9 +62,7 @@ def download_provider(
             if rows:
                 versions.append(
                     store.ingest_records(
-                        IngestionRequest(
-                            source=source, retrieval_time=retrieved_at
-                        ),
+                        IngestionRequest(source=source, retrieval_time=retrieved_at),
                         rows,
                         warnings=downloaded.warnings,
                     )
