@@ -1616,7 +1616,6 @@ def run_option_backtest(
     warnings = worst_result.warnings
     best_positions = best_result.positions
     best_rejections = best_result.rejection_counts
-    best_curve = best_result.equity_curve
     best_warnings = best_result.warnings
     by_id_best = {position.id: position for position in best_positions}
     merged: list[SpreadPosition] = []
