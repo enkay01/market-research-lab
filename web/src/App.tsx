@@ -36,7 +36,19 @@ export type DomainTab =
   | "cleanup";
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<DomainTab>("data");
+  const [activeTab, setActiveTab] = useState<DomainTab>(() => {
+    const params = new URLSearchParams(window.location.search);
+    // SAFETY: Query param tab is validated against known domain tab strings below
+    const tabParam = params.get("tab") as DomainTab | null;
+    const hasVariant = params.has("variant");
+    if (hasVariant || tabParam === "backtest") {
+      return "backtest";
+    }
+    if (tabParam && ["data", "research", "valuation", "models", "backtest", "alerts", "study", "cleanup"].includes(tabParam)) {
+      return tabParam;
+    }
+    return "data";
+  });
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | undefined>();
   const [engineConnected, setEngineConnected] = useState(false);
