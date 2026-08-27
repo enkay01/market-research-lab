@@ -62,11 +62,11 @@ export function InteractiveCandlestickChart({ position }: InteractiveCandlestick
     });
     chartRef.current = chart;
     const series = chart.addSeries(CandlestickSeries, {
-      upColor: "#238636",
-      downColor: "#DA3633",
+      upColor: green,
+      downColor: red,
       borderVisible: false,
-      wickUpColor: "#238636",
-      wickDownColor: "#DA3633",
+      wickUpColor: green,
+      wickDownColor: red,
     });
     const candles = position.candles.map((candle) => ({
       time: chartTime(candle.date),

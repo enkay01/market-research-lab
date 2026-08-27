@@ -1343,7 +1343,7 @@ def _simulate_path(
                         "Entry is blocked on the required pre-earnings exit day.",
                     )
                     continue
-                planned = planned_entries.get((security_id, date_text))
+                planned = planned_entries.get((security_id, _minute_text(minute)))
                 if planned:
                     candidate = _fixed_candidate(
                         replace(
@@ -1496,7 +1496,7 @@ def _simulate_path(
                     )
                 )
                 open_positions[security_id] = position
-                actual_entries[(security_id, date_text)] = (
+                actual_entries[(security_id, _minute_text(minute))] = (
                     candidate.short_contract.contract_id,
                     candidate.long_contract.contract_id,
                     quantity,

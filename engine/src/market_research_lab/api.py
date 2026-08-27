@@ -962,7 +962,7 @@ class OptionsBacktestRunRequest(BaseModel):
     watchlist: list[str] | None = Field(default=None, min_length=1, max_length=20)
     start_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     end_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
-    starting_cash: float = Field(default=100000.0, gt=0)
+    starting_cash: float = Field(default=100000.0, gt=0, allow_inf_nan=False)
     path: Literal["worst", "best"] = "worst"
     automatic_selection: bool | None = None
     fixed_short_contract_id: str | None = Field(
@@ -978,14 +978,14 @@ class OptionsBacktestRunRequest(BaseModel):
     target_delta: float = Field(default=0.175, ge=0, le=1)
     iv_min: float = Field(default=0.30, ge=0, le=5)
     iv_max: float = Field(default=0.55, ge=0, le=5)
-    previous_day_volume_min: float = Field(default=100000.0, ge=0)
-    preferred_width: float = Field(default=2.5, gt=0)
-    fallback_width: float = Field(default=5.0, gt=0)
+    previous_day_volume_min: float = Field(default=100000.0, ge=0, allow_inf_nan=False)
+    preferred_width: float = Field(default=2.5, gt=0, allow_inf_nan=False)
+    fallback_width: float = Field(default=5.0, gt=0, allow_inf_nan=False)
     risk_per_position: float = Field(default=0.02, gt=0, le=1)
     max_open_risk: float = Field(default=0.10, gt=0, le=1)
     max_open_securities: int = Field(default=3, ge=1, le=20)
     similarity_limit: float = Field(default=0.70, ge=-1, le=1)
-    fee_per_leg: float = Field(default=0.65, ge=0)
+    fee_per_leg: float = Field(default=0.65, ge=0, allow_inf_nan=False)
     risk_free_rate: float = Field(default=0.0, allow_inf_nan=False)
     dividend_yield: float = Field(default=0.0, allow_inf_nan=False)
     cash_interest_rate: float = Field(default=0.0, allow_inf_nan=False)
