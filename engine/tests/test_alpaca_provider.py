@@ -70,6 +70,7 @@ def test_alpaca_builds_bounded_endpoints_and_normalizes_options_records():
 
     assert [urlparse(url).path for url, _ in calls] == [
         "/v2/stocks/SPY/bars",
+        "/v2/stocks/SPY/bars",
         "/v2/options/contracts",
         "/v1beta1/options/SPY240119P00400000/trades",
     ]
@@ -82,13 +83,15 @@ def test_alpaca_builds_bounded_endpoints_and_normalizes_options_records():
         "feed": ["iex"],
         "sort": ["asc"],
     }
-    contract_query = parse_qs(urlparse(calls[1][0]).query)
+    daily_query = parse_qs(urlparse(calls[1][0]).query)
+    assert daily_query["timeframe"] == ["1Day"]
+    contract_query = parse_qs(urlparse(calls[2][0]).query)
     assert contract_query["underlying_symbols"] == ["SPY"]
     assert contract_query["expiration_date_gte"] == ["2024-01-02"]
     assert contract_query["expiration_date_lte"] == [
         (date(2024, 1, 3) + timedelta(days=45)).isoformat()
     ]
-    trade_query = parse_qs(urlparse(calls[2][0]).query)
+    trade_query = parse_qs(urlparse(calls[3][0]).query)
     assert trade_query["start"] == ["2024-01-02"]
     assert trade_query["end"] == ["2024-01-03"]
     assert trade_query["feed"] == ["indicative"]
@@ -101,6 +104,7 @@ def test_alpaca_builds_bounded_endpoints_and_normalizes_options_records():
 
     assert {row["record_type"] for row in result.options_records} == {
         "underlying_bar",
+        "daily_bar",
         "contract",
         "trade",
     }
@@ -130,8 +134,8 @@ def test_alpaca_download_persists_one_options_dataset_version(tmp_path):
     coverage = store.coverage(versions[0].id)
     assert coverage.source == "alpaca"
     assert coverage.dataset_type == "options"
-    assert coverage.row_count == 3
-    assert len(calls) == 3
+    assert coverage.row_count == 4
+    assert len(calls) == 4
 
 
 def test_alpaca_route_reads_credentials_from_local_env(tmp_path):

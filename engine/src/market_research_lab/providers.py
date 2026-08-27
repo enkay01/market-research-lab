@@ -294,12 +294,12 @@ def _alpaca_pages(
         page_token = next_page_token
 
 
-def _alpaca_available_at(event_time: str) -> str:
-    """Use the completed minute as the earliest usable historical boundary."""
+def _alpaca_available_at(event_time: str, *, daily: bool = False) -> str:
+    """Use the completed bar as the earliest usable historical boundary."""
     parsed = datetime.fromisoformat(event_time.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return (parsed + timedelta(minutes=1)).isoformat()
+    return (parsed + timedelta(days=1 if daily else 0, minutes=0 if daily else 1)).isoformat()
 
 
 def download_alpaca(
@@ -370,6 +370,36 @@ def download_alpaca(
                     "volume": bar.volume,
                     "available_at": _alpaca_available_at(bar.timestamp),
                     "eligibility_provenance": "completed_minute",
+                    "source": "alpaca",
+                    "retrieval_time": retrieval_time,
+                }
+            )
+
+    daily_query = dict(underlying_query)
+    daily_query["timeframe"] = "1Day"
+    for payload in _alpaca_pages(
+        fetch,
+        "data.alpaca.markets/v2/stocks/" + quote(symbol, safe="") + "/bars",
+        daily_query,
+        headers,
+    ):
+        try:
+            bars = AlpacaUnderlyingBarsResponse.model_validate(payload).bars
+        except ValidationError as error:
+            raise ProviderDownloadError("Alpaca returned invalid daily bars.") from error
+        for bar in bars:
+            result.options_records.append(
+                {
+                    "record_type": "daily_bar",
+                    "security_id": symbol,
+                    "date": bar.timestamp[:10],
+                    "open": bar.open,
+                    "high": bar.high,
+                    "low": bar.low,
+                    "close": bar.close,
+                    "volume": bar.volume,
+                    "available_at": _alpaca_available_at(bar.timestamp, daily=True),
+                    "eligibility_provenance": "completed_day",
                     "source": "alpaca",
                     "retrieval_time": retrieval_time,
                 }

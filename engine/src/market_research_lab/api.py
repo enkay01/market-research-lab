@@ -2824,6 +2824,11 @@ def create_app(
         if request.daily_dataset_version_id:
             input_dataset_versions["daily_market_data"] = request.daily_dataset_version_id
         try:
+            coverage = market_store.coverage(request.dataset_version_id)
+            if not coverage.source.lower().startswith("alpaca"):
+                raise OptionBacktestError(
+                    "Options Backtest Runs require an Alpaca Option Dataset Version."
+                )
             market_data = market_store.option_market_data(request.dataset_version_id)
             daily_bars = market_data.daily_bars
             if request.daily_dataset_version_id:
