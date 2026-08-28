@@ -59,6 +59,8 @@ FastAPI owns transport, Pydantic request/response models, path validation, and e
 
 The interface groups operations by Project, data, research, valuation, definitions, Runs, reports, and Alerts. OpenAPI generates the TypeScript client. The browser does not reconstruct domain calculations.
 
+The target interface splits Option Backtests, Predictive Models, equity backtests, market data, Valuations, Alerts, Projects, and Cleanup into module-level FastAPI routers. The root `api.py` mounts these routers. Each route module owns its Pydantic schemas and error mapping beside its handlers. Existing URLs and JSON formats stay unchanged. Tests can mount each router alone with `TestClient`. This split does not add service or factory layers.
+
 Errors use a small stable shape:
 
 ```json
@@ -115,6 +117,8 @@ Saving a revision writes a complete new directory and then atomically updates th
 
 ## Domain modules
 
+New internal seams start with functions, dataclasses, and composition. Add a structural type only when existing implementations need real variation. This keeps the modules deep without adding speculative class hierarchies.
+
 ### Projects
 
 `projects.py` hides paths, atomic writes, revision numbering, and Run directory creation behind operations to create/open a Project, save a revision, create/read a Run, list Project Runs, and delete a Run. Tests exercise the same operations used by the application interface. Run deletion accepts only one Run ID inside the selected Project directory.
@@ -167,9 +171,9 @@ artifact = fit_model(name, training_frame, parameters, seed)
 predictions = predict(artifact, eligible_frame)
 ```
 
-The walk-forward runner owns chronological folds and calls feature fitting inside each training fold. Model implementations receive bounded data rather than filtering dates themselves. Artifacts and predictions are serializable into the Run directory.
+The target `ModelEvaluation` runner owns expanding, rolling, and holdout chronological splits. It aligns features and targets, fits preprocessing inside each training fold, and calculates period metrics. It also calculates zero-return, historical-mean, and persistence Naive Benchmarks over the same eligible labelled periods as the Predictive Model. Model implementations keep the existing fit and forecast responsibilities. The evaluation runner uses composition rather than a plugin or template-method hierarchy.
 
-Each Predictive Model Run also stores one named Naive Benchmark, model and benchmark metrics for training, validation, and out-of-sample periods, and the assumptions, warnings, limitations, and unsupported claims used to interpret the comparison. The benchmark uses the same labelled eligible periods as the model. A Strategy guard reads this persisted evaluation and rejects model output until the out-of-sample comparison is complete.
+Each Predictive Model Run stores model and Naive Benchmark metrics for training, validation, and out-of-sample periods, plus the assumptions, warnings, limitations, and unsupported claims used to interpret the comparison. A Strategy guard reads this persisted evaluation and rejects model output until the out-of-sample comparison is complete.
 
 ### Strategies
 
@@ -195,6 +199,8 @@ stays testable with synthetic data. The implementation owns the event loop,
 calendar, Strategy evaluation, target reconciliation, simulated orders and fills,
 corporate actions, portfolio ledger, constraints, metrics, and artifacts.
 
+The target shared `PortfolioLedger` owns cash balances, signed daily Cash Interest, collateral locks, cash flows, and mark-to-market equity points. Equity and options Backtest Run implementations construct and pass the ledger explicitly, then delegate these accounting transitions to it. The public runner interfaces do not expose the ledger. The ledger does not use global state, a singleton, a repository, or an event bus.
+
 Daily event order is explicit:
 
 1. Apply events eligible before the decision time.
@@ -209,7 +215,7 @@ The first implementation supports one Security and long/flat weights. Later stor
 
 ### Options Backtesting
 
-`option_backtest.py` is a focused domain module for the first derivatives slice. It owns typed Option Contracts, minute trades, local Black-Scholes calculations, Put Credit Spread selection, linked-leg pricing, stop and exit rules, collateral, risk limits, reliability, and counterfactual diagnostics. Its primary interface is:
+`option_backtest.py` keeps the public seam for the first derivatives slice. Its target internal structure moves Black-Scholes pricing, implied-volatility solving, and Greeks into a private pure-math module. A private selection module owns Put Credit Spread filtering. Dataclasses and an enum record entry, Stop Level movement, stop-loss, and expiration transitions without a class for each state. Counterfactual analysis stays separate from position replay. The module continues to own linked-leg pricing, risk limits, and reliability behind this structure. Its primary interface remains:
 
 ```python
 run_option_backtest(specification, *, market_data) -> OptionsBacktestResult
