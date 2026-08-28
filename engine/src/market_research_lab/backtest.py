@@ -1,4 +1,4 @@
-"""Deterministic multi-Security Backtest engine supporting long and short positions with borrowing."""
+"""Deterministic multi-Security Backtest engine supporting long/short positions and borrowing."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Literal, Sequence
 
-from .exchange_calendar import get_trading_days, is_trading_day, next_trading_day
+from .exchange_calendar import get_trading_days
 from .json_types import JsonValue
 from .market_data import CorporateAction, DailyBar
 from .strategies import MarketView, StrategyTarget, evaluate_strategy, get_strategy_spec
@@ -41,8 +41,10 @@ class ExecutionModelAssumptions:
     cash_interest_rate: float = 0.0  # signed annualized rate on cash between eligible bars
     unavailable_borrow: tuple[str, ...] = ()
     hard_to_borrow_rates: dict[str, float] = field(default_factory=dict)
-    max_leverage: float = 1.0  # maximum allowed gross portfolio exposure (e.g. 1.0 for 100%, 2.0 for 200%)
-    margin_requirement: float = 1.0  # initial margin requirement fraction (e.g. 1.0 for cash, 0.5 for 2:1 margin)
+    # Maximum allowed gross portfolio exposure (e.g. 1.0 for 100%, 2.0 for 200%)
+    max_leverage: float = 1.0
+    # Initial margin requirement fraction (e.g. 1.0 for cash, 0.5 for 2:1 margin)
+    margin_requirement: float = 1.0
     maintenance_margin: float = 0.25  # maintenance margin requirement fraction
     leverage_mode: Literal["reject", "constrain"] = "reject"
 
@@ -124,7 +126,8 @@ class LedgerRow:
     borrow_fees: float = 0.0
     cash_interest: float = 0.0  # signed interest credited to or charged against cash
     dividends: float = 0.0  # net cash dividends credited (positive) or debited (negative)
-    splits: dict[str, float] = field(default_factory=dict)  # security_id -> split factor applied today
+    # security_id -> split factor applied today
+    splits: dict[str, float] = field(default_factory=dict)
     delistings: tuple[str, ...] = ()  # securities delisted today
 
 
@@ -296,7 +299,8 @@ def _validate_specification(specification: BacktestSpecification) -> tuple[str, 
         )
     if specification.execution.leverage_mode not in {"reject", "constrain"}:
         raise BacktestParameterError(
-            f"leverage_mode must be 'reject' or 'constrain', got {specification.execution.leverage_mode!r}."
+            "leverage_mode must be 'reject' or 'constrain', got "
+            f"{specification.execution.leverage_mode!r}."
         )
     if specification.price_field not in {"close", "open", "high", "low"}:
         raise BacktestParameterError(
@@ -544,7 +548,10 @@ def run_backtest(
         if action.type in {"split", "stock_split"} and action.value <= 0.0:
             raise BacktestError(f"Split factor must be > 0, got {action.value!r}.")
         if not _valid_date(action.effective_date):
-            raise BacktestError(f"Corporate action effective_date must be YYYY-MM-DD, got {action.effective_date!r}.")
+            raise BacktestError(
+                "Corporate action effective_date must be YYYY-MM-DD, got "
+                f"{action.effective_date!r}."
+            )
 
     available_at_by_date: dict[str, datetime] = {}
     for bar in bars:
@@ -572,7 +579,9 @@ def run_backtest(
 
     # Determine unique sorted simulation dates in the window [start_date, end_date]
     if specification.calendar == "US":
-        trading_days = get_trading_days(specification.start_date, specification.end_date, exchange="US")
+        trading_days = get_trading_days(
+            specification.start_date, specification.end_date, exchange="US"
+        )
         if not trading_days:
             raise BacktestError("no bars within [start_date, end_date]")
         sorted_window_dates = trading_days
@@ -627,7 +636,8 @@ def run_backtest(
         # -------------------------------------------------------------
         day_actions = corp_actions_by_date.get(date_str, [])
         for action in day_actions:
-            # Point-in-time check: corporate action must be available at or before today's decision time
+            # Point-in-time check: corporate action must be available at or before today's
+            # decision time
             if action.available_at and current_eligible_at:
                 action_available_at: datetime | None = None
                 with contextlib.suppress(BacktestError):
@@ -648,7 +658,9 @@ def run_backtest(
                 if sym in open_trades:
                     open_tr = open_trades[sym]
                     new_qty = open_tr.quantity * factor
-                    new_entry_p = open_tr.entry_price / factor if factor > 0 else open_tr.entry_price
+                    new_entry_p = (
+                        open_tr.entry_price / factor if factor > 0 else open_tr.entry_price
+                    )
                     open_trades[sym] = replace(open_tr, quantity=new_qty, entry_price=new_entry_p)
                 splits_today[sym] = factor
                 total_splits_count += 1
@@ -684,7 +696,12 @@ def run_backtest(
                                     entry_cost=round(open_tr.entry_cost, 4),
                                     exit_proceeds=round(proceeds, 4),
                                     pnl=round(trade_pnl, 4),
-                                    return_pct=round(trade_pnl / trade_cost_basis if trade_cost_basis > 0 else 0.0, 6),
+                                    return_pct=round(
+                                        trade_pnl / trade_cost_basis
+                                        if trade_cost_basis > 0
+                                        else 0.0,
+                                        6,
+                                    ),
                                 )
                             )
                             del open_trades[sym]
@@ -706,7 +723,12 @@ def run_backtest(
                                     entry_cost=round(open_tr.entry_cost, 4),
                                     exit_proceeds=round(cover_cost, 4),
                                     pnl=round(trade_pnl, 4),
-                                    return_pct=round(trade_pnl / trade_cost_basis if trade_cost_basis > 0 else 0.0, 6),
+                                    return_pct=round(
+                                        trade_pnl / trade_cost_basis
+                                        if trade_cost_basis > 0
+                                        else 0.0,
+                                        6,
+                                    ),
                                 )
                             )
                             del open_trades[sym]
@@ -765,7 +787,11 @@ def run_backtest(
 
             curr_positions_val_at_open = sum(
                 positions.get(sym, 0.0)
-                * (open_prices.get(sym, 0.0) if open_prices.get(sym, 0.0) > 0.0 else last_known_close_prices.get(sym, 0.0))
+                * (
+                    open_prices.get(sym, 0.0)
+                    if open_prices.get(sym, 0.0) > 0.0
+                    else last_known_close_prices.get(sym, 0.0)
+                )
                 for sym in universe
             )
             portfolio_val_at_open = cash + curr_positions_val_at_open
@@ -793,7 +819,10 @@ def run_backtest(
                     holding_target_weights[sym] = 0.0
                 elif target_w > 0.0:
                     # Long target
-                    if curr_shares <= EPS or abs(target_w - holding_target_weights.get(sym, 0.0)) > EPS:
+                    if (
+                        curr_shares <= EPS
+                        or abs(target_w - holding_target_weights.get(sym, 0.0)) > EPS
+                    ):
                         denom = open_p * (1.0 + specification.execution.slippage_rate)
                         denom *= 1.0 + specification.execution.commission_rate
                         target_val = max(0.0, portfolio_val_at_open) * target_w
@@ -803,7 +832,10 @@ def run_backtest(
                         target_shares = curr_shares
                 else:
                     # Short target (target_w < 0.0)
-                    if curr_shares >= -EPS or abs(target_w - holding_target_weights.get(sym, 0.0)) > EPS:
+                    if (
+                        curr_shares >= -EPS
+                        or abs(target_w - holding_target_weights.get(sym, 0.0)) > EPS
+                    ):
                         eff_p = open_p * (1.0 - specification.execution.slippage_rate)
                         target_val_short = abs(target_w) * max(0.0, portfolio_val_at_open)
                         target_shares = -(target_val_short / eff_p) if eff_p > 0.0 else 0.0
@@ -878,11 +910,15 @@ def run_backtest(
                             del open_trades[sym]
                         else:
                             closed_cost = open_tr.entry_cost * (long_exit_qty / open_tr.quantity)
-                            partial_tr = replace(open_tr, quantity=long_exit_qty, entry_cost=closed_cost)
+                            partial_tr = replace(
+                                open_tr, quantity=long_exit_qty, entry_cost=closed_cost
+                            )
                             trades.append(_build_trade(partial_tr, fill))
                             rem_qty = open_tr.quantity - long_exit_qty
                             rem_cost = open_tr.entry_cost - closed_cost
-                            open_trades[sym] = replace(open_tr, quantity=rem_qty, entry_cost=rem_cost)
+                            open_trades[sym] = replace(
+                                open_tr, quantity=rem_qty, entry_cost=rem_cost
+                            )
 
                         if new_shares < -EPS:
                             # Flipped to short
@@ -895,7 +931,9 @@ def run_backtest(
                                 entry_date=date_str,
                                 entry_price=fill.price,
                                 quantity=short_qty,
-                                entry_cost=short_qty * fill.price - (short_qty / sell_qty) * commission,
+                                entry_cost=(
+                                    short_qty * fill.price - (short_qty / sell_qty) * commission
+                                ),
                                 side="short",
                             )
                 elif curr_shares >= -EPS and new_shares < -EPS:
@@ -923,7 +961,6 @@ def run_backtest(
                 effective_price = open_p * (1.0 + slippage)
                 cost_per_share = effective_price * (1.0 + specification.execution.commission_rate)
 
-                desired_cost = delta * cost_per_share
                 target = pending_targets.get(sym)
                 decision_time = target.decision_time if target else bar_sym.available_at
                 rationale = target.rationale if target else "Rebalance buy"
@@ -961,8 +998,9 @@ def run_backtest(
                                     security_id=sym,
                                     rule="partial_fill_margin_limit",
                                     reason=(
-                                        f"Partial fill for {sym} ({cover_shares + allowed_long_shares:.4f} "
-                                        f"of {delta:.4f} shares) due to margin limit."
+                                        f"Partial fill for {sym} "
+                                        f"({cover_shares + allowed_long_shares:.4f} of "
+                                        f"{delta:.4f} shares) due to margin limit."
                                     ),
                                     requested_weight=target.weight if target else None,
                                 )
@@ -974,7 +1012,9 @@ def run_backtest(
                                     session_date=date_str,
                                     security_id=sym,
                                     rule="cash_limit",
-                                    reason=f"Insufficient cash ({cash:.2f}) to execute buy for {sym}.",
+                                    reason=(
+                                        f"Insufficient cash ({cash:.2f}) to execute buy for {sym}."
+                                    ),
                                     requested_weight=target.weight if target else None,
                                 )
                             )
@@ -988,8 +1028,9 @@ def run_backtest(
                                     security_id=sym,
                                     rule="partial_fill_cash_limit",
                                     reason=(
-                                        f"Partial fill for {sym} ({cover_shares + allowed_long_shares:.4f} "
-                                        f"of {delta:.4f} shares) due to cash limit."
+                                        f"Partial fill for {sym} "
+                                        f"({cover_shares + allowed_long_shares:.4f} of "
+                                        f"{delta:.4f} shares) due to cash limit."
                                     ),
                                     requested_weight=target.weight if target else None,
                                 )
@@ -1045,11 +1086,15 @@ def run_backtest(
                             del open_trades[sym]
                         else:
                             closed_cost = open_tr.entry_cost * (short_cover_qty / open_tr.quantity)
-                            partial_tr = replace(open_tr, quantity=short_cover_qty, entry_cost=closed_cost)
+                            partial_tr = replace(
+                                open_tr, quantity=short_cover_qty, entry_cost=closed_cost
+                            )
                             trades.append(_build_trade(partial_tr, fill))
                             rem_qty = open_tr.quantity - short_cover_qty
                             rem_cost = open_tr.entry_cost - closed_cost
-                            open_trades[sym] = replace(open_tr, quantity=rem_qty, entry_cost=rem_cost)
+                            open_trades[sym] = replace(
+                                open_tr, quantity=rem_qty, entry_cost=rem_cost
+                            )
 
                         if new_shares > EPS:
                             # Flipped to long
@@ -1062,7 +1107,9 @@ def run_backtest(
                                 entry_date=date_str,
                                 entry_price=fill.price,
                                 quantity=long_qty,
-                                entry_cost=long_qty * fill.price + (long_qty / buy_qty) * commission,
+                                entry_cost=(
+                                    long_qty * fill.price + (long_qty / buy_qty) * commission
+                                ),
                                 side="long",
                             )
                 elif curr_shares <= EPS and new_shares > EPS:
@@ -1175,7 +1222,8 @@ def run_backtest(
                         )
                         warnings.append(
                             f"Target for {sym} on {date_str} (weight {norm_w:.4f}) rejected: "
-                            f"portfolio gross exposure ({total_target_gross:.2f}) exceeds max leverage {max_lev:.2f}."
+                            f"portfolio gross exposure ({total_target_gross:.2f}) "
+                            f"exceeds max leverage {max_lev:.2f}."
                         )
                     target = replace(raw_t, weight=prior_w)
                     signals.append(target)
@@ -1200,7 +1248,8 @@ def run_backtest(
                                 rule="leverage_constrained",
                                 reason=(
                                     f"Target weight {norm_w:.4f} scaled to {scaled_w:.4f} "
-                                    f"(scale factor {scale_factor:.4f}) to satisfy maximum leverage limit of {max_lev:.2f}."
+                                    f"(scale factor {scale_factor:.4f}) to satisfy maximum "
+                                    f"leverage limit of {max_lev:.2f}."
                                 ),
                                 requested_weight=round(norm_w, 6),
                             )
@@ -1240,7 +1289,11 @@ def run_backtest(
             shares_sym = positions.get(sym, 0.0)
             if shares_sym < -EPS:
                 bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
-                close_p = _price_value(bar_sym, specification.price_field) if bar_sym else last_known_close_prices.get(sym, 0.0)
+                close_p = (
+                    _price_value(bar_sym, specification.price_field)
+                    if bar_sym
+                    else last_known_close_prices.get(sym, 0.0)
+                )
                 short_val = abs(shares_sym) * close_p
                 borrow_rate = specification.execution.hard_to_borrow_rates.get(
                     sym, specification.execution.borrow_fee_rate
@@ -1283,7 +1336,11 @@ def run_backtest(
                 close_p = 0.0
             else:
                 bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
-                close_p = _price_value(bar_sym, specification.price_field) if bar_sym else last_known_close_prices.get(sym, 0.0)
+                close_p = (
+                    _price_value(bar_sym, specification.price_field)
+                    if bar_sym
+                    else last_known_close_prices.get(sym, 0.0)
+                )
 
             shares_sym = positions.get(sym, 0.0)
             val_sym = shares_sym * close_p
@@ -1306,7 +1363,8 @@ def run_backtest(
                 maint_warning = (
                     f"Margin call on {date_str}: Portfolio value (${portfolio_val:,.2f}) fell "
                     f"below maintenance margin requirement (${maint_req:,.2f}, "
-                    f"{specification.execution.maintenance_margin * 100:.1f}% of gross position value ${gross_pos_val:,.2f})."
+                    f"{specification.execution.maintenance_margin * 100:.1f}% "
+                    f"of gross position value ${gross_pos_val:,.2f})."
                 )
                 warnings.append(maint_warning)
                 for sym in universe:
@@ -1460,7 +1518,11 @@ def run_backtest(
                 "cash_interest": total_cash_interest,
                 "dividends": total_dividends,
                 "net": round(
-                    -total_commission - total_slippage - total_borrow_fees + total_cash_interest + total_dividends,
+                    -total_commission
+                    - total_slippage
+                    - total_borrow_fees
+                    + total_cash_interest
+                    + total_dividends,
                     4,
                 ),
             },

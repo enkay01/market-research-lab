@@ -1,10 +1,15 @@
-"""Contract and accounting tests for leverage and margin limits, exposure, and rejections (Issue #28).
+"""Contract and accounting tests for leverage and margin limits, exposure, and rejections.
+
+Issue #28.
 
 Tests cover:
-1. Leverage limit enforcement in reject mode (targets exceeding max_leverage are rejected with stable reason and security ID).
-2. Leverage limit enforcement in constrain mode (targets exceeding max_leverage are scaled proportionally).
+1. Leverage limit enforcement in reject mode (targets exceeding max_leverage are rejected
+   with stable reason and security ID).
+2. Leverage limit enforcement in constrain mode (targets exceeding max_leverage are scaled
+   proportionally).
 3. Gross and net exposure accounting across dated Portfolio ledger rows and summary metrics.
-4. Margin requirement checks during order execution (insufficient margin emits ConstraintRejection).
+4. Margin requirement checks during order execution (insufficient margin emits
+   ConstraintRejection).
 5. Maintenance margin threshold monitoring and margin call detection.
 6. Boundary value testing for leverage limits (fractional, 1.0x, 2.0x).
 7. Deterministic replay and point-in-time future data leakage invariance.
@@ -19,7 +24,6 @@ import pytest
 from market_research_lab.backtest import (
     BacktestParameterError,
     BacktestSpecification,
-    ConstraintRejection,
     ExecutionModelAssumptions,
     run_backtest,
 )
@@ -72,7 +76,9 @@ def make_spec(
 
 
 def test_specification_rejects_invalid_leverage_or_margin_parameters():
-    """Verify specification validation rejects non-positive or invalid leverage and margin parameters."""
+    """Verify specification validation rejects non-positive or invalid leverage and
+    margin parameters.
+    """
     dates = make_dates(3)
     bars = [make_bar("AAPL", d, 100.0, 100.0) for d in dates]
 
@@ -105,7 +111,9 @@ def test_specification_rejects_invalid_leverage_or_margin_parameters():
 
 
 def test_leverage_limit_rejects_exceeding_targets_in_reject_mode():
-    """Verify that targets exceeding max_leverage in reject mode are rejected with a stable reason and security ID."""
+    """Verify that targets exceeding max_leverage in reject mode are rejected with
+    a stable reason and security ID.
+    """
     dates = make_dates(8)
     # Rising price series triggers long target (raw weight 1.0)
     closes = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0]
@@ -205,7 +213,9 @@ def test_multi_security_leverage_scaling_in_constrain_mode():
 
 
 def test_gross_and_net_exposure_on_leveraged_mixed_portfolio():
-    """Verify gross and net exposure calculations when holding long and short positions under 2.0x leverage."""
+    """Verify gross and net exposure calculations when holding long and short
+    positions under 2.0x leverage.
+    """
     dates = make_dates(8)
     # AAPL rises (long), MSFT falls (short)
     aapl_closes = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0]
@@ -263,7 +273,9 @@ def test_margin_requirement_constrains_purchasing_power():
 
 
 def test_maintenance_margin_call_triggers_rejection_and_warning():
-    """Verify that when equity falls below maintenance margin threshold, a margin call rejection and warning occur."""
+    """Verify that when equity falls below maintenance margin threshold, a margin
+    call rejection and warning occur.
+    """
     dates = make_dates(8)
     # Price rises dramatically while short, reducing portfolio equity
     # Start with short signal then massive price spike
@@ -310,7 +322,9 @@ def test_leverage_margin_deterministic_replay():
 
 
 def test_leverage_margin_future_data_leakage_invariance():
-    """Verify appending future bars does not alter prior decisions or ledger under leverage limits."""
+    """Verify appending future bars does not alter prior decisions or ledger
+    under leverage limits.
+    """
     dates = make_dates(8)
     closes = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0]
     bars = [make_bar("AAPL", d, c, c) for d, c in zip(dates, closes)]
@@ -339,7 +353,9 @@ def test_leverage_margin_future_data_leakage_invariance():
 
 
 def test_short_covering_not_blocked_by_margin_limits():
-    """Verify that buying to cover short positions is permitted even when cash or margin equity is depleted."""
+    """Verify that buying to cover short positions is permitted even when cash
+    or margin equity is depleted.
+    """
     dates = make_dates(8)
     # Falling then rising price series (short signal then cover)
     closes = [100.0, 90.0, 80.0, 70.0, 60.0, 70.0, 80.0, 90.0]
@@ -362,7 +378,9 @@ def test_short_covering_not_blocked_by_margin_limits():
 
 
 def test_mean_exposure_reported_in_metrics():
-    """Verify that BacktestMetrics gross_exposure and net_exposure report the mean across the full run."""
+    """Verify that BacktestMetrics gross_exposure and net_exposure report the mean
+    across the full run.
+    """
     dates = make_dates(6)
     closes = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0]
     bars = [make_bar("AAPL", d, c, c) for d, c in zip(dates, closes)]
@@ -375,3 +393,4 @@ def test_mean_exposure_reported_in_metrics():
 
     assert result.metrics.gross_exposure == pytest.approx(expected_gross_mean, abs=1e-6)
     assert result.metrics.net_exposure == pytest.approx(expected_net_mean, abs=1e-6)
+

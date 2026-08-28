@@ -68,7 +68,10 @@ _MOMENTUM_MODEL_UNSUPPORTED_CLAIMS = (
 _POTTS_MODEL_ASSUMPTIONS = (
     "Market price dynamics exhibit gain-loss asymmetry from collective trader imitation and fear",
     "Return distributions can be mapped into discrete q-state Potts spin configurations",
-    "Inverse waiting times capture acceleration differences between downward drawdowns and upward rallies",
+    (
+        "Inverse waiting times capture acceleration differences between downward"
+        " drawdowns and upward rallies"
+    ),
     "Feature values computed solely from session observations available at decision time",
 )
 _POTTS_MODEL_WARNINGS = (
@@ -674,8 +677,8 @@ def build_potts_supervised_frame(
             window_closes = closes[index - lookback_window : index + 1]
             window_returns = returns[index - lookback_window + 1 : index + 1]
 
-            # 1. Inverse statistics: shortest waiting time to drop <= -threshold_return from any peak
-            # vs shortest waiting time to gain >= +threshold_return from any trough
+            # 1. Inverse statistics: shortest waiting time to drop <= -threshold_return from any
+            # peak vs shortest waiting time to gain >= +threshold_return from any trough
             tau_loss = float(lookback_window)
             tau_gain = float(lookback_window)
 
@@ -896,7 +899,8 @@ def _fit_potts_gain_loss(
     required_columns = {"session_date", "potts_gain_loss_score", "next_session_return"}
     if not required_columns.issubset(training_frame.columns):
         raise PredictiveModelCalculationError(
-            "Training data must contain session_date, potts_gain_loss_score, and next_session_return."
+            "Training data must contain session_date, potts_gain_loss_score, and "
+            "next_session_return."
         )
 
     usable = training_frame.dropna(
@@ -1174,7 +1178,11 @@ PREDICTIVE_MODEL_REGISTRY: dict[str, PredictiveModelSpec] = {
             ),
             target="next_session_return",
             horizon=1,
-            features=("potts_gain_loss_score", "gain_loss_asymmetry_ratio", "potts_order_parameter"),
+            features=(
+                "potts_gain_loss_score",
+                "gain_loss_asymmetry_ratio",
+                "potts_order_parameter",
+            ),
             training_window=252,
             parameters=(
                 PredictiveModelParameter(
@@ -1189,7 +1197,10 @@ PREDICTIVE_MODEL_REGISTRY: dict[str, PredictiveModelSpec] = {
                     name="lookback_window",
                     param_type="int",
                     default=60,
-                    description="Number of sessions used to calculate inverse waiting times and return state bins.",
+                    description=(
+                        "Number of sessions used to calculate inverse waiting times and "
+                        "return state bins."
+                    ),
                     min_value=10,
                     max_value=500,
                 ),
