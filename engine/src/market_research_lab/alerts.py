@@ -25,7 +25,7 @@ from .strategies import (
 )
 
 if TYPE_CHECKING:
-    from .market_data import DailyBar, MarketDataStore
+    from .market_data import MarketDataStore
     from .projects import ProjectStore
 
 

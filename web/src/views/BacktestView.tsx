@@ -34,6 +34,7 @@ import {
   type Project,
   type Security,
 } from "../api/client";
+import { OptionsBacktestView } from "./OptionsBacktestView";
 
 interface BacktestViewProps {
   project?: Project;
@@ -273,6 +274,10 @@ function EquityDrawdownChart({
 }
 
 export function BacktestView({ project }: BacktestViewProps) {
+  const [simulationType, setSimulationType] = useState<"standard" | "options">(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("mode") === "options" ? "options" : "standard";
+  });
   const [activeTab, setActiveTab] = useState<
     "overview" | "trades" | "fills" | "ledger" | "rejections" | "manifest" | "compare"
   >("overview");
@@ -484,6 +489,10 @@ export function BacktestView({ project }: BacktestViewProps) {
     return spec?.security_id || "—";
   }, [currentResult]);
 
+  if (simulationType === "options") {
+    return <OptionsBacktestView project={project} onBackToStandard={() => setSimulationType("standard")} />;
+  }
+
   return (
     <Layout
       height="fill"
@@ -498,6 +507,12 @@ export function BacktestView({ project }: BacktestViewProps) {
             </HStack>
 
             <HStack gap={2}>
+              <Button
+                label="Options Credit Spreads (Alpaca)"
+                variant="secondary"
+                size="sm"
+                onClick={() => setSimulationType("options")}
+              />
               {currentRunId && project && (
                 <>
                   <Button

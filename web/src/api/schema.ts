@@ -280,6 +280,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/options-backtests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Project Options Backtests */
+        get: operations["list_project_options_backtests_api_projects__project_id__options_backtests_get"];
+        put?: never;
+        /** Run Project Options Backtest */
+        post: operations["run_project_options_backtest_api_projects__project_id__options_backtests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/options-backtests/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Project Options Backtest */
+        get: operations["get_project_options_backtest_api_projects__project_id__options_backtests__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/runs/{run_id}/options_backtest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run Options Backtest */
+        get: operations["get_run_options_backtest_api_projects__project_id__runs__run_id__options_backtest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/options-backtests/{run_id}/export/{format_type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Options Backtest */
+        get: operations["export_options_backtest_api_projects__project_id__options_backtests__run_id__export__format_type__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/backtests": {
         parameters: {
             query?: never;
@@ -902,6 +971,26 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AlpacaDownloadRequest */
+        AlpacaDownloadRequest: {
+            /**
+             * Start Date
+             * Format: date
+             */
+            start_date: string;
+            /**
+             * End Date
+             * Format: date
+             */
+            end_date: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            provider: "alpaca";
+            /** Symbol */
+            symbol: string;
+        };
         /** BacktestComparisonItemResponse */
         BacktestComparisonItemResponse: {
             /** Run Id */
@@ -2011,6 +2100,179 @@ export interface components {
              */
             completed: boolean;
         };
+        /** OptionsBacktestResponse */
+        OptionsBacktestResponse: {
+            /** Run Id */
+            run_id?: string | null;
+            /** Specification */
+            specification: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Summary */
+            summary: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Positions */
+            positions: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            }[];
+            /** Best Positions */
+            best_positions?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            }[];
+            /** Blocked Candidates */
+            blocked_candidates?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            }[];
+            /** Warnings */
+            warnings?: string[];
+            /** Manifest */
+            manifest: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Equity Curve */
+            equity_curve?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            }[];
+            /** Benchmark Equity Curve */
+            benchmark_equity_curve?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            }[];
+        };
+        /** OptionsBacktestRunRequest */
+        OptionsBacktestRunRequest: {
+            /** Dataset Version Id */
+            dataset_version_id: string;
+            /** Daily Dataset Version Id */
+            daily_dataset_version_id?: string | null;
+            /**
+             * Strategy Name
+             * @default put_credit_spread
+             */
+            strategy_name: string;
+            /**
+             * Strategy Revision
+             * @default v1
+             */
+            strategy_revision: string;
+            /** Symbol */
+            symbol?: string | null;
+            /** Symbols */
+            symbols?: string[] | null;
+            /** Watchlist */
+            watchlist?: string[] | null;
+            /** Start Date */
+            start_date: string;
+            /** End Date */
+            end_date: string;
+            /**
+             * Starting Cash
+             * @default 100000
+             */
+            starting_cash: number;
+            /**
+             * Path
+             * @default worst
+             * @enum {string}
+             */
+            path: "worst" | "best";
+            /** Automatic Selection */
+            automatic_selection?: boolean | null;
+            /** Fixed Short Contract Id */
+            fixed_short_contract_id?: string | null;
+            /** Fixed Long Contract Id */
+            fixed_long_contract_id?: string | null;
+            /**
+             * Dte Min
+             * @default 30
+             */
+            dte_min: number;
+            /**
+             * Dte Max
+             * @default 45
+             */
+            dte_max: number;
+            /**
+             * Delta Min
+             * @default 0.15
+             */
+            delta_min: number;
+            /**
+             * Delta Max
+             * @default 0.2
+             */
+            delta_max: number;
+            /**
+             * Target Delta
+             * @default 0.175
+             */
+            target_delta: number;
+            /**
+             * Iv Min
+             * @default 0.3
+             */
+            iv_min: number;
+            /**
+             * Iv Max
+             * @default 0.55
+             */
+            iv_max: number;
+            /**
+             * Previous Day Volume Min
+             * @default 100000
+             */
+            previous_day_volume_min: number;
+            /**
+             * Preferred Width
+             * @default 2.5
+             */
+            preferred_width: number;
+            /**
+             * Fallback Width
+             * @default 5
+             */
+            fallback_width: number;
+            /**
+             * Risk Per Position
+             * @default 0.02
+             */
+            risk_per_position: number;
+            /**
+             * Max Open Risk
+             * @default 0.1
+             */
+            max_open_risk: number;
+            /**
+             * Max Open Securities
+             * @default 3
+             */
+            max_open_securities: number;
+            /**
+             * Similarity Limit
+             * @default 0.7
+             */
+            similarity_limit: number;
+            /**
+             * Fee Per Leg
+             * @default 0.65
+             */
+            fee_per_leg: number;
+            /**
+             * Risk Free Rate
+             * @default 0
+             */
+            risk_free_rate: number;
+            /**
+             * Dividend Yield
+             * @default 0
+             */
+            dividend_yield: number;
+            /**
+             * Cash Interest Rate
+             * @default 0
+             */
+            cash_interest_rate: number;
+        };
         /** PositionSnapshotResponse */
         PositionSnapshotResponse: {
             /** Shares */
@@ -2840,7 +3102,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TiingoDownloadRequest"] | components["schemas"]["SecEdgarDownloadRequest"];
+                "application/json": components["schemas"]["TiingoDownloadRequest"] | components["schemas"]["SecEdgarDownloadRequest"] | components["schemas"]["AlpacaDownloadRequest"];
             };
         };
         responses: {
@@ -3458,6 +3720,169 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SavedValuationResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_project_options_backtests_api_projects__project_id__options_backtests_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OptionsBacktestResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_project_options_backtest_api_projects__project_id__options_backtests_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OptionsBacktestRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OptionsBacktestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_project_options_backtest_api_projects__project_id__options_backtests__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OptionsBacktestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_options_backtest_api_projects__project_id__runs__run_id__options_backtest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OptionsBacktestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_options_backtest_api_projects__project_id__options_backtests__run_id__export__format_type__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                run_id: string;
+                format_type: "json" | "csv" | "html";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

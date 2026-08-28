@@ -425,7 +425,10 @@ def test_backtest_html_report_and_csv_generation():
     assert "Backtest Report: AAPL" in html_report
     assert "Out-of-sample (Point-in-time sequential simulation)" in html_report
     assert "Performance Overview" in html_report
-    assert "Execution Model &amp; Strategy Assumptions" in html_report or "Execution Model & Strategy Assumptions" in html_report
+    assert (
+        "Execution Model &amp; Strategy Assumptions" in html_report
+        or "Execution Model & Strategy Assumptions" in html_report
+    )
     assert "Cash Interest Rate" in html_report
     assert "Cost Attribution" in html_report
     assert "Closed Trades" in html_report

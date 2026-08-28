@@ -80,3 +80,7 @@ Before completing frontend modifications:
 1. Re-read edited files to eliminate raw `<div>`, non-existent token names, or hardcoded hex colors.
 2. Run `npm run check` in `web/` to ensure full TypeScript type safety and OpenAPI client synchronization.
 3. Run automated UI screenshot capture (e.g. `node web/scripts/capture_ui.js`) to visually verify layout contrast, theme styling, and interaction flows.
+
+## Options Backtest screen
+
+The options result uses a candlestick master-detail layout. The master chart shows underlying candles, short and long strike lines, entry and exit markers, and a crosshair HUD. The detail ledger keeps all values visible in one horizontal table scroll. Selecting a row updates the chart and reveals stop movements, Greeks progression, friction, reliability, and counterfactual diagnostics. Worst execution is shown first, with best execution beside it.

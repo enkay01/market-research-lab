@@ -11,7 +11,8 @@ export type DailyBarResponse = components["schemas"]["DailyBarResponse"];
 export type FundamentalFactResponse = components["schemas"]["FundamentalFactResponse"];
 export type ProviderDownloadRequest =
   | components["schemas"]["TiingoDownloadRequest"]
-  | components["schemas"]["SecEdgarDownloadRequest"];
+  | components["schemas"]["SecEdgarDownloadRequest"]
+  | components["schemas"]["AlpacaDownloadRequest"];
 export type ProviderDownloadResponse = components["schemas"]["ProviderDownloadResponse"];
 
 export type Security = components["schemas"]["SecurityResponse"];
@@ -57,6 +58,172 @@ export type LedgerRow = components["schemas"]["LedgerRowResponse"];
 export type EquityPoint = components["schemas"]["EquityPointResponse"];
 export type BacktestSpecification = components["schemas"]["BacktestSpecificationResponse"];
 export type RunSummary = components["schemas"]["RunSummaryResponse"];
+
+export interface OptionsGreeks {
+  delta: number;
+  theta: number;
+  gamma: number;
+  vega: number;
+  implied_volatility: number;
+}
+
+export interface OptionsCandle {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface OptionsTrajectoryPoint {
+  minute: string;
+  underlying_price: number;
+  spread_worst: number;
+  spread_best: number;
+  stop_level: number;
+  delta?: number;
+  stock_price?: number;
+}
+
+export interface OptionsSpreadPosition {
+  id: string;
+  security_id: string;
+  spread_type: string;
+  short_strike: number;
+  long_strike: number;
+  width: number;
+  expiration: string;
+  entry_credit: number;
+  margin_required: number;
+  full_possible_loss: number;
+  return_on_margin_pct: number;
+  annualized_rom_pct: number;
+  worst_net_pnl: number;
+  best_net_pnl: number;
+  days_held: number;
+  open_timestamp: string;
+  open_rule: string;
+  close_timestamp: string | null;
+  close_rule: string;
+  status: string;
+  short_delta: number;
+  implied_volatility: number;
+  bid_ask_spread_drag: number;
+  slippage_cost: number;
+  execution_mode: string;
+  reliability_pct: number;
+  missing_minutes_count: number;
+  stop_movements: Array<{ timestamp: string; underlying_price: number; new_stop: number; trigger_rule: string }>;
+  greeks: Record<string, OptionsGreeks | null>;
+  counterfactual: {
+    outcome: string;
+    avoided_loss_or_missed_gain: number;
+    explanation: string;
+  } | null;
+  candles: OptionsCandle[];
+  trajectory_points: OptionsTrajectoryPoint[];
+  quantity: number;
+  entry_fee: number;
+  exit_fee: number;
+}
+
+export interface OptionsBacktestRequest {
+  dataset_version_id: string;
+  daily_dataset_version_id?: string | null;
+  strategy_name?: string;
+  strategy_revision?: string;
+  symbol?: string | null;
+  symbols?: string[] | null;
+  watchlist?: string[] | null;
+  start_date: string;
+  end_date: string;
+  starting_cash?: number;
+  path?: "worst" | "best";
+  automatic_selection?: boolean | null;
+  fixed_short_contract_id?: string | null;
+  fixed_long_contract_id?: string | null;
+  dte_min?: number;
+  dte_max?: number;
+  delta_min?: number;
+  delta_max?: number;
+  target_delta?: number;
+  iv_min?: number;
+  iv_max?: number;
+  previous_day_volume_min?: number;
+  preferred_width?: number;
+  fallback_width?: number;
+  risk_per_position?: number;
+  max_open_risk?: number;
+  max_open_securities?: number;
+  similarity_limit?: number;
+  fee_per_leg?: number;
+  risk_free_rate?: number;
+  dividend_yield?: number;
+  cash_interest_rate?: number;
+}
+
+export interface OptionsBacktestSpecification extends OptionsBacktestRequest {
+  strategy_name: string;
+  strategy_revision: string;
+  dataset_version_id: string;
+  start_date: string;
+  end_date: string;
+  starting_cash: number;
+  path: "worst" | "best";
+  automatic_selection: boolean;
+  dte_min: number;
+  dte_max: number;
+  delta_min: number;
+  delta_max: number;
+  target_delta: number;
+  iv_min: number;
+  iv_max: number;
+  previous_day_volume_min: number;
+  preferred_width: number;
+  fallback_width: number;
+  risk_per_position: number;
+  max_open_risk: number;
+  max_open_securities: number;
+  similarity_limit: number;
+  fee_per_leg: number;
+  risk_free_rate: number;
+  dividend_yield: number;
+  cash_interest_rate: number;
+  symbols: string[];
+  watchlist: string[];
+  benchmark_security_id: string | null;
+}
+
+export interface OptionsBacktestResult {
+  run_id?: string;
+  specification: OptionsBacktestSpecification;
+  summary: {
+    worst_net_pnl: number;
+    best_net_pnl: number;
+    portfolio_rom_pct: number;
+    win_rate_pct: number;
+    winning_trades: number;
+    losing_trades: number;
+    total_trades: number;
+    max_drawdown_pct: number;
+    total_slippage_drag: number;
+    overall_reliability_pct: number;
+    rejection_counts: Record<string, number>;
+  };
+  positions: OptionsSpreadPosition[];
+  best_positions: OptionsSpreadPosition[];
+  blocked_candidates: Array<{ timestamp: string; security_id: string; reason: string; rule: string }>;
+  warnings: string[];
+  manifest: {
+    kind?: string;
+    provider?: string;
+    source_sha256?: string;
+    input_dataset_versions?: Record<string, string>;
+  };
+  equity_curve: object[];
+  benchmark_equity_curve: object[];
+}
 
 export type Signal = components["schemas"]["SignalResponse"];
 export type SignalRefreshFailure = components["schemas"]["SignalRefreshFailureResponse"];
@@ -453,6 +620,27 @@ export const api = {
         params: { path: { project_id: projectId } },
       }),
     ),
+  runOptionsBacktest: (projectId: string, request: OptionsBacktestRequest) =>
+    dataOrThrow<OptionsBacktestResult>(
+      client.POST("/api/projects/{project_id}/options-backtests", {
+        params: { path: { project_id: projectId } },
+        body: request,
+      }),
+    ),
+  listOptionsBacktests: (projectId: string) =>
+    dataOrThrow<OptionsBacktestResult[]>(
+      client.GET("/api/projects/{project_id}/options-backtests", {
+        params: { path: { project_id: projectId } },
+      }),
+    ),
+  getOptionsBacktest: (projectId: string, runId: string) =>
+    dataOrThrow<OptionsBacktestResult>(
+      client.GET("/api/projects/{project_id}/runs/{run_id}/options_backtest", {
+        params: { path: { project_id: projectId, run_id: runId } },
+      }),
+    ),
+  getOptionsBacktestExportUrl: (projectId: string, runId: string, format: "html" | "csv" | "json") =>
+    `/api/projects/${encodeURIComponent(projectId)}/options-backtests/${encodeURIComponent(runId)}/export/${format}`,
   getDefinitionRevision: (projectId: string, kind: string, name: string, revision: string) =>
     dataOrThrow(
       client.GET("/api/projects/{project_id}/definitions/{kind}/{name}/{revision}", {

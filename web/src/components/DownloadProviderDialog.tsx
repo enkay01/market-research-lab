@@ -20,7 +20,7 @@ interface DownloadProviderDialogProps {
 }
 
 export function DownloadProviderDialog({ isOpen, onClose, onSuccess }: DownloadProviderDialogProps) {
-  const [provider, setProvider] = useState<"tiingo" | "sec_edgar">("tiingo");
+  const [provider, setProvider] = useState<"tiingo" | "sec_edgar" | "alpaca">("tiingo");
   const [symbols, setSymbols] = useState("AAPL, MSFT");
   const [ciks, setCiks] = useState("0000320193");
   const [startDate, setStartDate] = useState("2024-01-01");
@@ -53,12 +53,19 @@ export function DownloadProviderDialog({ isOpen, onClose, onSuccess }: DownloadP
               start_date: startDate || undefined,
               end_date: endDate || undefined,
             }
-          : {
-              provider: "sec_edgar" as const,
-              ciks: parsedCiks,
-              start_date: startDate || undefined,
-              end_date: endDate || undefined,
-            };
+          : provider === "sec_edgar"
+            ? {
+                provider: "sec_edgar" as const,
+                ciks: parsedCiks,
+                start_date: startDate || undefined,
+                end_date: endDate || undefined,
+              }
+            : {
+                provider: "alpaca" as const,
+                symbol: parsedSymbols[0] ?? "",
+                start_date: startDate,
+                end_date: endDate,
+              };
 
       const response = await api.downloadDataset(requestPayload);
 
@@ -81,7 +88,7 @@ export function DownloadProviderDialog({ isOpen, onClose, onSuccess }: DownloadP
     >
       <DialogHeader
         title="Download Provider Data"
-        subtitle="Fetch daily bars, corporate actions, or SEC EDGAR fundamentals directly into the local catalogue."
+        subtitle="Fetch market data directly into the local catalogue. Credentials stay in local configuration."
       />
       <form onSubmit={handleSubmit}>
         <VStack gap={4}>
@@ -98,23 +105,24 @@ export function DownloadProviderDialog({ isOpen, onClose, onSuccess }: DownloadP
               value={provider}
               onChange={(val) => {
                 // SAFETY: Value is constrained by SegmentedControlItem values
-                setProvider(val as "tiingo" | "sec_edgar");
+                setProvider(val as "tiingo" | "sec_edgar" | "alpaca");
               }}
             >
               <SegmentedControlItem value="tiingo" label="Tiingo (EOD Prices & Actions)" />
               <SegmentedControlItem value="sec_edgar" label="SEC EDGAR (Fundamentals)" />
+              <SegmentedControlItem value="alpaca" label="Alpaca (Options Minutes)" />
             </SegmentedControl>
           </VStack>
 
-          {provider === "tiingo" ? (
+          {provider === "tiingo" || provider === "alpaca" ? (
             <VStack gap={1}>
               <TextInput
-                label="Ticker Symbols (comma-separated)"
+                label={provider === "alpaca" ? "Underlying Symbol" : "Ticker Symbols (comma-separated)"}
                 value={symbols}
                 onChange={(val) => setSymbols(String(val ?? ""))}
                 placeholder="e.g. AAPL, MSFT, SPY"
                 isRequired
-                description="Requires TIINGO_API_TOKEN in local .env.local or process environment."
+                description={provider === "alpaca" ? "Requires ALPACA_API_KEY and ALPACA_API_SECRET in local .env.local or process environment." : "Requires TIINGO_API_TOKEN in local .env.local or process environment."}
               />
             </VStack>
           ) : (

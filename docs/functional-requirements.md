@@ -141,6 +141,23 @@ Completion criterion: a completed Backtest Run can be understood from the interf
 
 Completion criterion: refreshing eligible data can produce a traceable in-app Alert without any path to broker execution.
 
+## Options credit-spread Backtests
+
+| ID | Requirement |
+|---|---|
+| OPT-001 | The Analyst must be able to run a historical Put Credit Spread Backtest from named Alpaca Option Dataset Versions. |
+| OPT-002 | Option Contracts, option trades, underlying minute bars, and event facts must have point-in-time eligibility. |
+| OPT-003 | Contract selection must use the configured expiration, Delta, implied-volatility, volume, and spread-width rules. Delta and implied volatility must be calculated locally when the source does not provide them. |
+| OPT-004 | Both legs must trade in the same minute. The Run must show worst and best supported execution paths and use the worst path as the primary result. |
+| OPT-005 | The Run must apply Entry Credit, Full Possible Loss, collateral, per-leg fees, position sizing, concentration, and similarity rules. |
+| OPT-006 | The Run must apply the Stop Level ladder, profit exits, short-strike breach, earnings exits, and seven-day expiration exit without stale prices or future leakage. |
+| OPT-007 | Each spread result must include strikes, credit, risk, ROM, fills, stop movements, Greeks progression, reliability, and post-exit counterfactual diagnostics. |
+| OPT-008 | The Analyst must be able to inspect candles, strike lines, entry and exit markers, crosshair values, the spread ledger, blocked candidates, and saved Run provenance. |
+| OPT-009 | Options Runs must persist their Definition Revision, named Dataset Versions, provider, source fingerprint, warnings, and JSON, CSV, and HTML artifacts. |
+| OPT-010 | The options Backtest must never place, route, or submit an order. |
+
+Completion criterion: a deterministic Put Credit Spread Run can be saved, reloaded, inspected, exported, and reproduced from its named inputs.
+
 ## Agent-assisted technique implementation
 
 | ID | Requirement |

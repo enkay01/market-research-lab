@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from .downloads import download_provider
 from .market_data import MarketDataStore
 from .providers import (
+    AlpacaDownloadSpec,
     JsonFetcher,
     ProviderCredentials,
     ProviderDownloadError,
@@ -38,9 +39,7 @@ class TiingoDownloadRequest(ProviderDownloadRequestBase):
     @field_validator("symbols")
     @classmethod
     def normalise_symbols(cls, values: list[str]) -> list[str]:
-        cleaned = list(
-            dict.fromkeys(value.strip().upper() for value in values if value.strip())
-        )
+        cleaned = list(dict.fromkeys(value.strip().upper() for value in values if value.strip()))
         if not cleaned:
             raise ValueError("At least one Tiingo symbol is required.")
         return cleaned
@@ -48,6 +47,28 @@ class TiingoDownloadRequest(ProviderDownloadRequestBase):
     def to_spec(self) -> TiingoDownloadSpec:
         return TiingoDownloadSpec(
             symbols=tuple(self.symbols),
+            start_date=self.start_date,
+            end_date=self.end_date,
+        )
+
+
+class AlpacaDownloadRequest(ProviderDownloadRequestBase):
+    provider: Literal["alpaca"]
+    symbol: str = Field(min_length=1, max_length=16)
+    start_date: date
+    end_date: date
+
+    @field_validator("symbol")
+    @classmethod
+    def normalise_symbol(cls, value: str) -> str:
+        cleaned = value.strip().upper()
+        if not cleaned:
+            raise ValueError("An Alpaca symbol is required.")
+        return cleaned
+
+    def to_spec(self) -> AlpacaDownloadSpec:
+        return AlpacaDownloadSpec(
+            symbol=self.symbol,
             start_date=self.start_date,
             end_date=self.end_date,
         )
@@ -82,7 +103,7 @@ class SecEdgarDownloadRequest(ProviderDownloadRequestBase):
 
 
 ProviderDownloadRequest = Annotated[
-    TiingoDownloadRequest | SecEdgarDownloadRequest,
+    TiingoDownloadRequest | SecEdgarDownloadRequest | AlpacaDownloadRequest,
     Field(discriminator="provider"),
 ]
 

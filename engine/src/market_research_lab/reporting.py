@@ -37,19 +37,41 @@ def generate_valuation_html_report(
         '  <meta charset="utf-8">',
         f"  <title>Valuation Report — {symbol} ({method_rev})</title>",
         "  <style>",
-        "    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.5; color: #1e293b; max-width: 960px; margin: 40px auto; padding: 0 20px; }",
+        (
+            "    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,"
+            " sans-serif; line-height: 1.5; color: #1e293b; max-width: 960px; margin: 40px auto;"
+            " padding: 0 20px; }"
+        ),
         "    h1, h2, h3 { color: #0f172a; margin-top: 28px; }",
-        "    .meta { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 24px; }",
-        "    .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }",
+        (
+            "    .meta { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;"
+            " padding: 16px; margin-bottom: 24px; }"
+        ),
+        (
+            "    .meta-grid { display: grid; grid-template-columns: repeat(auto-fit,"
+            " minmax(200px, 1fr)); gap: 12px; }"
+        ),
         "    .metric-card { background: #f1f5f9; border-radius: 6px; padding: 12px 16px; }",
         "    .metric-value { font-size: 1.5rem; font-weight: 700; color: #0f172a; }",
         "    .metric-label { font-size: 0.85rem; color: #64748b; text-transform: uppercase; }",
-        "    table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: 0.95rem; }",
-        "    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #e2e8f0; }",
+        (
+            "    table { width: 100%; border-collapse: collapse; margin: 16px 0 24px;"
+            " font-size: 0.95rem; }"
+        ),
+        (
+            "    th, td { text-align: left; padding: 10px 12px;"
+            " border-bottom: 1px solid #e2e8f0; }"
+        ),
         "    th { background: #f8fafc; font-weight: 600; color: #475569; }",
         "    .num { text-align: right; font-variant-numeric: tabular-nums; }",
-        "    .warning { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; border-radius: 4px; }",
-        "    .badge { display: inline-block; background: #e0e7ff; color: #3730a3; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; margin: 2px; }",
+        (
+            "    .warning { background: #fffbeb; border-left: 4px solid #f59e0b;"
+            " padding: 12px 16px; margin: 16px 0; border-radius: 4px; }"
+        ),
+        (
+            "    .badge { display: inline-block; background: #e0e7ff; color: #3730a3;"
+            " padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; margin: 2px; }"
+        ),
         "  </style>",
         "</head>",
         "<body>",
@@ -60,7 +82,10 @@ def generate_valuation_html_report(
         f"      <div><strong>Run ID:</strong> {run_id}</div>",
         f"      <div><strong>Calculated:</strong> {calc_at}</div>",
         f"      <div><strong>Currency:</strong> {currency}</div>",
-        "      <div><strong>Sample Status:</strong> Out-of-sample (Point-in-time calculation)</div>",
+        (
+            "      <div><strong>Sample Status:</strong> Out-of-sample "
+            "(Point-in-time calculation)</div>"
+        ),
         "    </div>",
         '    <div style="margin-top: 12px;"><strong>Dataset Versions:</strong> '
         + "".join(
@@ -105,16 +130,24 @@ def generate_valuation_html_report(
         doc.append("  <h2>Valuation Summary</h2>")
         doc.append('  <div class="meta-grid">')
         doc.append(
-            f'    <div class="metric-card"><div class="metric-label">Value Per Share</div><div class="metric-value">{vps_str}</div></div>'
+            '    <div class="metric-card">'
+            '<div class="metric-label">Value Per Share</div>'
+            f'<div class="metric-value">{vps_str}</div></div>'
         )
         doc.append(
-            f'    <div class="metric-card"><div class="metric-label">Enterprise Value</div><div class="metric-value">{ev_str}</div></div>'
+            '    <div class="metric-card">'
+            '<div class="metric-label">Enterprise Value</div>'
+            f'<div class="metric-value">{ev_str}</div></div>'
         )
         doc.append(
-            f'    <div class="metric-card"><div class="metric-label">Equity Value</div><div class="metric-value">{eq_str}</div></div>'
+            '    <div class="metric-card">'
+            '<div class="metric-label">Equity Value</div>'
+            f'<div class="metric-value">{eq_str}</div></div>'
         )
         doc.append(
-            f'    <div class="metric-card"><div class="metric-label">Terminal Contribution</div><div class="metric-value">{tv_str}</div></div>'
+            '    <div class="metric-card">'
+            '<div class="metric-label">Terminal Contribution</div>'
+            f'<div class="metric-value">{tv_str}</div></div>'
         )
         doc.append("  </div>")
 
@@ -125,35 +158,51 @@ def generate_valuation_html_report(
             doc.append("  <table>")
             doc.append('    <thead><tr><th>Assumption</th><th class="num">Value</th></tr></thead>')
             doc.append("    <tbody>")
+            base_rev = float(inputs.get("base_revenue", 0))
+            rev_growth = float(inputs.get("revenue_growth_rate", 0)) * 100
+            op_margin = float(inputs.get("operating_margin", 0)) * 100
+            tax_rate = float(inputs.get("tax_rate", 0)) * 100
+            reinvest_rate = float(inputs.get("reinvestment_rate", 0)) * 100
+            wacc_val = float(inputs.get("wacc", 0)) * 100
+            term_g = float(inputs.get("terminal_growth_rate", 0)) * 100
+            shares_out = float(inputs.get("shares_outstanding", 0))
+            tot_debt = float(inputs.get("total_debt", 0))
+            cash_eq = float(inputs.get("cash", 0))
+
             doc.append(
-                f'      <tr><td>Base Revenue</td><td class="num">{currency} {float(inputs.get("base_revenue", 0)):.2f}</td></tr>'
+                '      <tr><td>Base Revenue</td>'
+                f'<td class="num">{currency} {base_rev:.2f}</td></tr>'
             )
             doc.append(
-                f'      <tr><td>Revenue Growth Rate</td><td class="num">{float(inputs.get("revenue_growth_rate", 0)) * 100:.1f}%</td></tr>'
+                '      <tr><td>Revenue Growth Rate</td>'
+                f'<td class="num">{rev_growth:.1f}%</td></tr>'
             )
             doc.append(
-                f'      <tr><td>Operating Margin</td><td class="num">{float(inputs.get("operating_margin", 0)) * 100:.1f}%</td></tr>'
+                f'      <tr><td>Operating Margin</td><td class="num">{op_margin:.1f}%</td></tr>'
             )
             doc.append(
-                f'      <tr><td>Effective Tax Rate</td><td class="num">{float(inputs.get("tax_rate", 0)) * 100:.1f}%</td></tr>'
+                f'      <tr><td>Effective Tax Rate</td><td class="num">{tax_rate:.1f}%</td></tr>'
             )
             doc.append(
-                f'      <tr><td>Reinvestment Rate (% NOPAT)</td><td class="num">{float(inputs.get("reinvestment_rate", 0)) * 100:.1f}%</td></tr>'
+                '      <tr><td>Reinvestment Rate (% NOPAT)</td>'
+                f'<td class="num">{reinvest_rate:.1f}%</td></tr>'
             )
             doc.append(
-                f'      <tr><td>WACC / Discount Rate</td><td class="num">{float(inputs.get("wacc", 0)) * 100:.2f}%</td></tr>'
+                f'      <tr><td>WACC / Discount Rate</td><td class="num">{wacc_val:.2f}%</td></tr>'
             )
             doc.append(
-                f'      <tr><td>Perpetual Terminal Growth Rate</td><td class="num">{float(inputs.get("terminal_growth_rate", 0)) * 100:.2f}%</td></tr>'
+                '      <tr><td>Perpetual Terminal Growth Rate</td>'
+                f'<td class="num">{term_g:.2f}%</td></tr>'
             )
             doc.append(
-                f'      <tr><td>Shares Outstanding</td><td class="num">{float(inputs.get("shares_outstanding", 0)):.2f}</td></tr>'
+                f'      <tr><td>Shares Outstanding</td><td class="num">{shares_out:.2f}</td></tr>'
             )
             doc.append(
-                f'      <tr><td>Total Debt</td><td class="num">{currency} {float(inputs.get("total_debt", 0)):.2f}</td></tr>'
+                f'      <tr><td>Total Debt</td><td class="num">{currency} {tot_debt:.2f}</td></tr>'
             )
             doc.append(
-                f'      <tr><td>Cash & Equivalents</td><td class="num">{currency} {float(inputs.get("cash", 0)):.2f}</td></tr>'
+                '      <tr><td>Cash & Equivalents</td>'
+                f'<td class="num">{currency} {cash_eq:.2f}</td></tr>'
             )
             doc.append("    </tbody>")
             doc.append("  </table>")
@@ -165,13 +214,29 @@ def generate_valuation_html_report(
             doc.append("  <h3>Forecast Cash Flows</h3>")
             doc.append("  <table>")
             doc.append(
-                '    <thead><tr><th>Year</th><th class="num">Revenue</th><th class="num">Growth</th><th class="num">EBIT</th><th class="num">NOPAT</th><th class="num">Reinvestment</th><th class="num">FCFF</th><th class="num">DF</th><th class="num">PV</th></tr></thead>'
+                '    <thead><tr><th>Year</th><th class="num">Revenue</th>'
+                '<th class="num">Growth</th><th class="num">EBIT</th><th class="num">NOPAT</th>'
+                '<th class="num">Reinvestment</th><th class="num">FCFF</th>'
+                '<th class="num">DF</th><th class="num">PV</th></tr></thead>'
             )
             doc.append("    <tbody>")
             for cf in cfs:
                 if isinstance(cf, dict):
+                    c_yr = cf.get("year")
+                    c_rev = float(cf.get("revenue", 0))
+                    c_g = float(cf.get("revenue_growth", 0)) * 100
+                    c_ebit = float(cf.get("operating_income", 0))
+                    c_nopat = float(cf.get("nopat", 0))
+                    c_reinv = float(cf.get("reinvestment", 0))
+                    c_fcff = float(cf.get("free_cash_flow", 0))
+                    c_df = float(cf.get("discount_factor", 0))
+                    c_pv = float(cf.get("present_value", 0))
                     doc.append(
-                        f'      <tr><td>Year {cf.get("year")}</td><td class="num">{float(cf.get("revenue", 0)):.2f}</td><td class="num">{float(cf.get("revenue_growth", 0)) * 100:.1f}%</td><td class="num">{float(cf.get("operating_income", 0)):.2f}</td><td class="num">{float(cf.get("nopat", 0)):.2f}</td><td class="num">{float(cf.get("reinvestment", 0)):.2f}</td><td class="num">{float(cf.get("free_cash_flow", 0)):.2f}</td><td class="num">{float(cf.get("discount_factor", 0)):.4f}</td><td class="num">{float(cf.get("present_value", 0)):.2f}</td></tr>'
+                        f'      <tr><td>Year {c_yr}</td><td class="num">{c_rev:.2f}</td>'
+                        f'<td class="num">{c_g:.1f}%</td><td class="num">{c_ebit:.2f}</td>'
+                        f'<td class="num">{c_nopat:.2f}</td><td class="num">{c_reinv:.2f}</td>'
+                        f'<td class="num">{c_fcff:.2f}</td><td class="num">{c_df:.4f}</td>'
+                        f'<td class="num">{c_pv:.2f}</td></tr>'
                     )
             doc.append("    </tbody>")
             doc.append("  </table>")
@@ -183,7 +248,10 @@ def generate_valuation_html_report(
             doc.append("  <h3>Scenario Analysis</h3>")
             doc.append("  <table>")
             doc.append(
-                '    <thead><tr><th>Scenario</th><th class="num">WACC</th><th class="num">Terminal Growth</th><th class="num">Revenue Growth</th><th class="num">Operating Margin</th><th class="num">Per Share Value</th></tr></thead>'
+                '    <thead><tr><th>Scenario</th><th class="num">WACC</th>'
+                '<th class="num">Terminal Growth</th><th class="num">Revenue Growth</th>'
+                '<th class="num">Operating Margin</th>'
+                '<th class="num">Per Share Value</th></tr></thead>'
             )
             doc.append("    <tbody>")
             for sc in scenarios:
@@ -198,8 +266,12 @@ def generate_valuation_html_report(
                     tg_sc = float(sc.get("terminal_growth_rate", 0)) * 100
                     rg_sc = float(sc.get("revenue_growth_rate", 0)) * 100
                     om_sc = float(sc.get("operating_margin", 0)) * 100
+                    sc_name = html.escape(str(sc.get("name")))
                     doc.append(
-                        f'      <tr><td><strong>{html.escape(str(sc.get("name")))}</strong></td><td class="num">{wacc_sc:.1f}%</td><td class="num">{tg_sc:.1f}%</td><td class="num">{rg_sc:.1f}%</td><td class="num">{om_sc:.1f}%</td><td class="num"><strong>{svps_str}</strong></td></tr>'
+                        f'      <tr><td><strong>{sc_name}</strong></td>'
+                        f'<td class="num">{wacc_sc:.1f}%</td><td class="num">{tg_sc:.1f}%</td>'
+                        f'<td class="num">{rg_sc:.1f}%</td><td class="num">{om_sc:.1f}%</td>'
+                        f'<td class="num"><strong>{svps_str}</strong></td></tr>'
                     )
             doc.append("    </tbody>")
             doc.append("  </table>")
@@ -216,7 +288,9 @@ def generate_valuation_html_report(
         doc.append("  <h2>Trading Multiples</h2>")
         doc.append("  <table>")
         doc.append(
-            '    <thead><tr><th>Security</th><th class="num">P/E</th><th class="num">EV / Revenue</th><th class="num">EV / EBITDA</th><th class="num">FCF Yield</th></tr></thead>'
+            '    <thead><tr><th>Security</th><th class="num">P/E</th>'
+            '<th class="num">EV / Revenue</th><th class="num">EV / EBITDA</th>'
+            '<th class="num">FCF Yield</th></tr></thead>'
         )
         doc.append("    <tbody>")
         for comp in [target_dict, *peers_list, medians_dict]:
@@ -245,13 +319,16 @@ def generate_valuation_html_report(
                     else "—"
                 )
                 doc.append(
-                    f'      <tr><td>{c_name}</td><td class="num">{pe_str}</td><td class="num">{ev_rev_str}</td><td class="num">{ev_ebitda_str}</td><td class="num">{fcf_y_str}</td></tr>'
+                    f'      <tr><td>{c_name}</td><td class="num">{pe_str}</td>'
+                    f'<td class="num">{ev_rev_str}</td><td class="num">{ev_ebitda_str}</td>'
+                    f'<td class="num">{fcf_y_str}</td></tr>'
                 )
         doc.append("    </tbody>")
         doc.append("  </table>")
 
     doc.append(
-        '  <footer style="margin-top: 40px; color: #94a3b8; font-size: 0.8rem;">Market Research Lab — Personal Investment Analysis Monolith</footer>'
+        '  <footer style="margin-top: 40px; color: #94a3b8; font-size: 0.8rem;">'
+        'Market Research Lab — Personal Investment Analysis Monolith</footer>'
     )
     doc.append("</body>")
     doc.append("</html>")
@@ -432,11 +509,7 @@ def generate_predictive_model_html_report(
     benchmark_complete = is_naive_benchmark_comparison_complete(benchmark)
     bench_name = html.escape(
         str(
-            (
-                benchmark.get("display_name")
-                or benchmark.get("name")
-                or "Naive Benchmark"
-            )
+            (benchmark.get("display_name") or benchmark.get("name") or "Naive Benchmark")
             if benchmark_complete
             else "Not evaluated"
         )
@@ -444,7 +517,7 @@ def generate_predictive_model_html_report(
     bench_desc = html.escape(str(benchmark.get("description") or ""))
     benchmark_summary = (
         f'  <div class="benchmark-box"><strong>Naive Benchmark Comparison:</strong> '
-        f'{bench_name}<br><small>{bench_desc}</small></div>'
+        f"{bench_name}<br><small>{bench_desc}</small></div>"
         if benchmark_complete
         else '  <p class="note"><strong>Naive Benchmark Comparison:</strong> '
         "Not evaluated for this Run. Strategy use is blocked until the comparison "
@@ -497,21 +570,21 @@ def generate_predictive_model_html_report(
         "<body>",
         f"  <h1>{model_name}</h1>",
         f'  <div class="meta"><strong>Run:</strong> {run_id}<br>'
-        f'<strong>Definition Revision:</strong> {revision}<br>'
-        f'<strong>Dataset Versions:</strong> '
-        f'{html.escape(", ".join(str(dataset) for dataset in datasets))}<br>'
-        f'<strong>Evaluation Mode:</strong> {evaluation_mode}<br>'
-        f'<strong>Naive Benchmark:</strong> {bench_name}<br>'
-        f'<strong>Strategy Eligibility:</strong> '
-        f'{"Eligible" if strategy_eligible is True else "Blocked"}<br>'
-        '<strong>Metric Scope:</strong> In-sample training; held-out validation and '
-        'out-of-sample test</div>',
+        f"<strong>Definition Revision:</strong> {revision}<br>"
+        f"<strong>Dataset Versions:</strong> "
+        f"{html.escape(', '.join(str(dataset) for dataset in datasets))}<br>"
+        f"<strong>Evaluation Mode:</strong> {evaluation_mode}<br>"
+        f"<strong>Naive Benchmark:</strong> {bench_name}<br>"
+        f"<strong>Strategy Eligibility:</strong> "
+        f"{'Eligible' if strategy_eligible is True else 'Blocked'}<br>"
+        "<strong>Metric Scope:</strong> In-sample training; held-out validation and "
+        "out-of-sample test</div>",
         '  <p class="note">The initial fit uses training observations only. Each later '
-        'fold uses only data available before its decision session.</p>',
+        "fold uses only data available before its decision session.</p>",
         benchmark_summary,
         f'  <p class="note"><strong>Strategy eligibility:</strong> '
-        f'{html.escape("Eligible" if strategy_eligible is True else "Blocked")}. '
-        f'{eligibility_reason}</p>',
+        f"{html.escape('Eligible' if strategy_eligible is True else 'Blocked')}. "
+        f"{eligibility_reason}</p>",
         "  <h2>Chronological Periods</h2>",
         "  <table>",
         "    <thead><tr><th>Period</th><th>Target Dates</th><th>Feature Dates</th>"
@@ -578,11 +651,11 @@ def generate_predictive_model_html_report(
         ]
         if benchmark_complete
         else [
-            "  <p class=\"note\">Model-versus-benchmark metrics are not available "
+            '  <p class="note">Model-versus-benchmark metrics are not available '
             "because the comparison is incomplete.</p>"
         ]
     )
-    for period_metric in (period_metrics if benchmark_complete else []):
+    for period_metric in period_metrics if benchmark_complete else []:
         if not isinstance(period_metric, dict):
             continue
         metric_values = period_metric.get("metrics")
@@ -613,11 +686,7 @@ def generate_predictive_model_html_report(
                 "</tr>"
             )
     doc.extend(
-        (
-            ["    </tbody>", "  </table>"]
-            if benchmark_complete
-            else []
-        )
+        (["    </tbody>", "  </table>"] if benchmark_complete else [])
         + ["  <h2>Assumptions and Provenance</h2>", "  <table>"]
     )
     doc.append("    <tbody>")
@@ -629,8 +698,7 @@ def generate_predictive_model_html_report(
         ("Preprocessing", preprocessing),
     ):
         doc.append(
-            f"      <tr><th>{html.escape(label)}</th>"
-            f"<td>{html.escape(str(value))}</td></tr>"
+            f"      <tr><th>{html.escape(label)}</th><td>{html.escape(str(value))}</td></tr>"
         )
     doc.extend(["    </tbody>", "  </table>"])
 
@@ -702,7 +770,7 @@ def generate_predictive_model_csv(result_data: dict[str, JsonValue]) -> str:
     )
     metrics_raw = evaluation.get("period_metrics") or result_data.get("period_metrics")
     period_metrics = metrics_raw if isinstance(metrics_raw, list) else []
-    for period_metric in (period_metrics if benchmark_complete else []):
+    for period_metric in period_metrics if benchmark_complete else []:
         if not isinstance(period_metric, dict):
             continue
         values = period_metric.get("metrics")
@@ -875,9 +943,7 @@ def generate_backtest_html_report(
     costs_raw = result_manifest.get("costs")
     costs = costs_raw if isinstance(costs_raw, dict) else {}
     portfolio_impact_raw = costs.get("portfolio_impact")
-    portfolio_impact = (
-        portfolio_impact_raw if isinstance(portfolio_impact_raw, dict) else {}
-    )
+    portfolio_impact = portfolio_impact_raw if isinstance(portfolio_impact_raw, dict) else {}
 
     hit_rate_str = f"{float(hit_rate) * 100:.1f}%" if hit_rate is not None else "—"
     bench_rel_str = f"{float(bench_rel) * 100:+.2f}%" if bench_rel is not None else "—"
@@ -896,25 +962,68 @@ def generate_backtest_html_report(
         '  <meta charset="utf-8">',
         f"  <title>Backtest Report — {title_symbol} ({strategy_name}:{strategy_rev})</title>",
         "  <style>",
-        "    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.5; color: #1e293b; max-width: 1040px; margin: 40px auto; padding: 0 20px; }",
+        (
+            "    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,"
+            " sans-serif; line-height: 1.5; color: #1e293b; max-width: 1040px; margin: 40px auto;"
+            " padding: 0 20px; }"
+        ),
         "    h1, h2, h3 { color: #0f172a; margin-top: 28px; }",
-        "    .meta { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 24px; }",
-        "    .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }",
-        "    .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 16px 0; }",
-        "    .metric-card { background: #f1f5f9; border-radius: 6px; padding: 12px 16px; border: 1px solid #e2e8f0; }",
-        "    .metric-value { font-size: 1.4rem; font-weight: 700; color: #0f172a; font-variant-numeric: tabular-nums; }",
-        "    .metric-label { font-size: 0.8rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }",
-        "    table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: 0.9rem; }",
-        "    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e2e8f0; }",
-        "    th { background: #f8fafc; font-weight: 600; color: #475569; position: sticky; top: 0; }",
+        (
+            "    .meta { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;"
+            " padding: 16px; margin-bottom: 24px; }"
+        ),
+        (
+            "    .meta-grid { display: grid; grid-template-columns: repeat(auto-fit,"
+            " minmax(220px, 1fr)); gap: 12px; }"
+        ),
+        (
+            "    .metric-grid { display: grid; grid-template-columns: repeat(auto-fit,"
+            " minmax(180px, 1fr)); gap: 12px; margin: 16px 0; }"
+        ),
+        (
+            "    .metric-card { background: #f1f5f9; border-radius: 6px; padding: 12px 16px;"
+            " border: 1px solid #e2e8f0; }"
+        ),
+        (
+            "    .metric-value { font-size: 1.4rem; font-weight: 700; color: #0f172a;"
+            " font-variant-numeric: tabular-nums; }"
+        ),
+        (
+            "    .metric-label { font-size: 0.8rem; color: #64748b; text-transform: uppercase;"
+            " letter-spacing: 0.04em; }"
+        ),
+        (
+            "    table { width: 100%; border-collapse: collapse; margin: 16px 0 24px;"
+            " font-size: 0.9rem; }"
+        ),
+        (
+            "    th, td { text-align: left; padding: 8px 10px;"
+            " border-bottom: 1px solid #e2e8f0; }"
+        ),
+        (
+            "    th { background: #f8fafc; font-weight: 600; color: #475569; position: sticky;"
+            " top: 0; }"
+        ),
         "    .num { text-align: right; font-variant-numeric: tabular-nums; }",
-        "    .warning { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; border-radius: 4px; }",
-        "    .rejection { background: #fef2f2; border-left: 4px solid #ef4444; padding: 12px 16px; margin: 16px 0; border-radius: 4px; }",
-        "    .badge { display: inline-block; background: #e0e7ff; color: #3730a3; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; margin: 2px; }",
+        (
+            "    .warning { background: #fffbeb; border-left: 4px solid #f59e0b;"
+            " padding: 12px 16px; margin: 16px 0; border-radius: 4px; }"
+        ),
+        (
+            "    .rejection { background: #fef2f2; border-left: 4px solid #ef4444;"
+            " padding: 12px 16px; margin: 16px 0; border-radius: 4px; }"
+        ),
+        (
+            "    .badge { display: inline-block; background: #e0e7ff; color: #3730a3;"
+            " padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; margin: 2px; }"
+        ),
         "    .badge-bench { background: #fef3c7; color: #92400e; }",
         "    .badge-buy { background: #dcfce7; color: #166534; }",
         "    .badge-sell { background: #fef2f2; color: #991b1b; }",
-        "    .scroll-table { max-height: 400px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 24px; }",
+        (
+            "    .scroll-table { max-height: 400px; overflow-y: auto; border: 1px solid #e2e8f0;"
+            " border-radius: 6px; margin-bottom: 24px; }"
+        ),
         "  </style>",
         "</head>",
         "<body>",
@@ -925,7 +1034,10 @@ def generate_backtest_html_report(
         f"      <div><strong>Run ID:</strong> {run_id}</div>",
         f"      <div><strong>Simulation Range:</strong> {start_date} to {end_date}</div>",
         f"      <div><strong>Starting Cash:</strong> ${starting_cash:,.2f} USD</div>",
-        "      <div><strong>Sample Status:</strong> Out-of-sample (Point-in-time sequential simulation)</div>",
+        (
+            "      <div><strong>Sample Status:</strong> Out-of-sample "
+            "(Point-in-time sequential simulation)</div>"
+        ),
         f"      <div><strong>Execution:</strong> Next-bar open ({schedule})</div>",
         f"      <div><strong>Benchmark:</strong> {benchmark_id if benchmark_id else 'None'}</div>",
         "    </div>",
@@ -950,8 +1062,12 @@ def generate_backtest_html_report(
         doc.append('  <div class="rejection"><strong>Constraint Rejections:</strong><ul>')
         for r in rejections:
             if isinstance(r, dict):
+                r_date = r.get("session_date")
+                r_sec = r.get("security_id")
+                r_rule = r.get("rule")
+                r_reason = html.escape(str(r.get("reason")))
                 doc.append(
-                    f"    <li><strong>{r.get('session_date')}: {r.get('security_id')}</strong> [{r.get('rule')}] {html.escape(str(r.get('reason')))}</li>"
+                    f"    <li><strong>{r_date}: {r_sec}</strong> [{r_rule}] {r_reason}</li>"
                 )
             else:
                 doc.append(f"    <li>{html.escape(str(r))}</li>")
@@ -961,40 +1077,52 @@ def generate_backtest_html_report(
     doc.append("  <h2>Performance Overview</h2>")
     doc.append('  <div class="metric-grid">')
     doc.append(
-        f'    <div class="metric-card"><div class="metric-label">Total Return</div><div class="metric-value">{total_return * 100:+.2f}%</div></div>'
+        '    <div class="metric-card"><div class="metric-label">Total Return</div>'
+        f'<div class="metric-value">{total_return * 100:+.2f}%</div></div>'
     )
     doc.append(
-        f'    <div class="metric-card"><div class="metric-label">Annualized Return</div><div class="metric-value">{ann_return * 100:+.2f}%</div></div>'
+        '    <div class="metric-card"><div class="metric-label">Annualized Return</div>'
+        f'<div class="metric-value">{ann_return * 100:+.2f}%</div></div>'
     )
     doc.append(
-        f'    <div class="metric-card"><div class="metric-label">Annual Volatility</div><div class="metric-value">{ann_vol * 100:.2f}%</div></div>'
+        '    <div class="metric-card"><div class="metric-label">Annual Volatility</div>'
+        f'<div class="metric-value">{ann_vol * 100:.2f}%</div></div>'
     )
     doc.append(
-        f'    <div class="metric-card"><div class="metric-label">Sharpe Ratio</div><div class="metric-value">{sharpe:.2f}</div></div>'
+        '    <div class="metric-card"><div class="metric-label">Sharpe Ratio</div>'
+        f'<div class="metric-value">{sharpe:.2f}</div></div>'
     )
     doc.append(
-        f'    <div class="metric-card"><div class="metric-label">Sortino Ratio</div><div class="metric-value">{sortino:.2f}</div></div>'
+        '    <div class="metric-card"><div class="metric-label">Sortino Ratio</div>'
+        f'<div class="metric-value">{sortino:.2f}</div></div>'
     )
     doc.append(
-        f'    <div class="metric-card"><div class="metric-label">Max Drawdown</div><div class="metric-value">{max_dd * 100:.2f}%</div></div>'
+        '    <div class="metric-card"><div class="metric-label">Max Drawdown</div>'
+        f'<div class="metric-value">{max_dd * 100:.2f}%</div></div>'
     )
     doc.append(
-        f'    <div class="metric-card"><div class="metric-label">Calmar Ratio</div><div class="metric-value">{calmar:.2f}</div></div>'
+        '    <div class="metric-card"><div class="metric-label">Calmar Ratio</div>'
+        f'<div class="metric-value">{calmar:.2f}</div></div>'
     )
     doc.append(
-        f'    <div class="metric-card"><div class="metric-label">Hit Rate / Win Rate</div><div class="metric-value">{hit_rate_str}</div></div>'
+        '    <div class="metric-card"><div class="metric-label">Hit Rate / Win Rate</div>'
+        f'<div class="metric-value">{hit_rate_str}</div></div>'
     )
     doc.append(
-        f'    <div class="metric-card"><div class="metric-label">Turnover</div><div class="metric-value">{turnover:.2f}x</div></div>'
+        '    <div class="metric-card"><div class="metric-label">Turnover</div>'
+        f'<div class="metric-value">{turnover:.2f}x</div></div>'
     )
     doc.append(
-        f'    <div class="metric-card"><div class="metric-label">Gross / Net Exposure</div><div class="metric-value">{gross_exp * 100:.0f}% / {net_exp * 100:.0f}%</div></div>'
+        '    <div class="metric-card"><div class="metric-label">Gross / Net Exposure</div>'
+        f'<div class="metric-value">{gross_exp * 100:.0f}% / {net_exp * 100:.0f}%</div></div>'
     )
     doc.append(
-        f'    <div class="metric-card"><div class="metric-label">Benchmark Relative</div><div class="metric-value">{bench_rel_str}</div></div>'
+        '    <div class="metric-card"><div class="metric-label">Benchmark Relative</div>'
+        f'<div class="metric-value">{bench_rel_str}</div></div>'
     )
     doc.append(
-        f'    <div class="metric-card"><div class="metric-label">Trades / Fills</div><div class="metric-value">{num_trades} / {num_fills}</div></div>'
+        '    <div class="metric-card"><div class="metric-label">Trades / Fills</div>'
+        f'<div class="metric-value">{num_trades} / {num_fills}</div></div>'
     )
     doc.append("  </div>")
 
@@ -1006,10 +1134,13 @@ def generate_backtest_html_report(
     )
     doc.append("    <tbody>")
     doc.append(
-        f'      <tr><td>Universe</td><td class="num">{html.escape(", ".join(universe_list))}</td></tr>'
+        '      <tr><td>Universe</td><td class="num">'
+        f'{html.escape(", ".join(universe_list))}</td></tr>'
     )
     if benchmark_id:
-        doc.append(f'      <tr><td>Benchmark Security</td><td class="num">{benchmark_id}</td></tr>')
+        doc.append(
+            f'      <tr><td>Benchmark Security</td><td class="num">{benchmark_id}</td></tr>'
+        )
     doc.append(f'      <tr><td>Strategy</td><td class="num">{strategy_name}</td></tr>')
     doc.append(f'      <tr><td>Strategy Revision</td><td class="num">{strategy_rev}</td></tr>')
     doc.append(f'      <tr><td>Price Field</td><td class="num">{price_field}</td></tr>')
@@ -1019,37 +1150,52 @@ def generate_backtest_html_report(
     unavailable_borrow = raw_unavail if isinstance(raw_unavail, list) else []
 
     doc.append(
-        f'      <tr><td>Commission Rate</td><td class="num">{commission_rate * 10000:.1f} bps ({commission_rate * 100:.3f}%)</td></tr>'
+        '      <tr><td>Commission Rate</td><td class="num">'
+        f'{commission_rate * 10000:.1f} bps ({commission_rate * 100:.3f}%)</td></tr>'
     )
     doc.append(
-        f'      <tr><td>Slippage Rate</td><td class="num">{slippage_rate * 10000:.1f} bps ({slippage_rate * 100:.3f}%)</td></tr>'
+        '      <tr><td>Slippage Rate</td>'
+        f'<td class="num">{slippage_rate * 10000:.1f} bps ({slippage_rate * 100:.3f}%)</td></tr>'
     )
     doc.append(
-        f'      <tr><td>Cash Interest Rate</td><td class="num">{cash_interest_rate * 10000:.1f} bps ({cash_interest_rate * 100:.3f}% p.a., signed)</td></tr>'
+        '      <tr><td>Cash Interest Rate</td>'
+        f'<td class="num">{cash_interest_rate * 10000:.1f} bps '
+        f'({cash_interest_rate * 100:.3f}% p.a., signed)</td></tr>'
     )
     if borrow_fee_rate > 0.0:
         doc.append(
-            f'      <tr><td>Borrow Fee Rate</td><td class="num">{borrow_fee_rate * 10000:.1f} bps ({borrow_fee_rate * 100:.3f}% p.a.)</td></tr>'
+            '      <tr><td>Borrow Fee Rate</td>'
+            f'<td class="num">{borrow_fee_rate * 10000:.1f} bps '
+            f'({borrow_fee_rate * 100:.3f}% p.a.)</td></tr>'
         )
     if unavailable_borrow:
-        doc.append(
-            f'      <tr><td>Unavailable Borrow</td><td class="num">{html.escape(", ".join(str(u) for u in unavailable_borrow))}</td></tr>'
-        )
+        unavail_str = html.escape(", ".join(str(u) for u in unavailable_borrow))
+        doc.append(f'      <tr><td>Unavailable Borrow</td><td class="num">{unavail_str}</td></tr>')
     max_leverage = float(execution.get("max_leverage", 1.0))
     margin_req = float(execution.get("margin_requirement", 1.0))
     maint_margin = float(execution.get("maintenance_margin", 0.25))
     leverage_mode = html.escape(str(execution.get("leverage_mode") or "reject"))
 
-    doc.append(f'      <tr><td>Max Leverage Limit</td><td class="num">{max_leverage:.2f}x ({max_leverage * 100:.0f}% gross exposure)</td></tr>')
-    doc.append(f'      <tr><td>Margin Requirement</td><td class="num">{margin_req * 100:.1f}%</td></tr>')
-    doc.append(f'      <tr><td>Maintenance Margin</td><td class="num">{maint_margin * 100:.1f}%</td></tr>')
-    doc.append(f'      <tr><td>Leverage Constraint Mode</td><td class="num">{leverage_mode}</td></tr>')
+    doc.append(
+        '      <tr><td>Max Leverage Limit</td>'
+        f'<td class="num">{max_leverage:.2f}x ({max_leverage * 100:.0f}% gross exposure)</td></tr>'
+    )
+    doc.append(
+        f'      <tr><td>Margin Requirement</td><td class="num">{margin_req * 100:.1f}%</td></tr>'
+    )
+    doc.append(
+        f'      <tr><td>Maintenance Margin</td><td class="num">{maint_margin * 100:.1f}%</td></tr>'
+    )
+    doc.append(
+        f'      <tr><td>Leverage Constraint Mode</td><td class="num">{leverage_mode}</td></tr>'
+    )
 
     params_raw = spec.get("parameters")
     if isinstance(params_raw, dict):
         for k, v in sorted(params_raw.items()):
             doc.append(
-                f'      <tr><td>Strategy Parameter: {html.escape(k)}</td><td class="num">{html.escape(str(v))}</td></tr>'
+                f'      <tr><td>Strategy Parameter: {html.escape(k)}</td>'
+                f'<td class="num">{html.escape(str(v))}</td></tr>'
             )
     doc.append("    </tbody>")
     doc.append("  </table>")
@@ -1058,7 +1204,8 @@ def generate_backtest_html_report(
     doc.append("  <h2>Cost Attribution</h2>")
     doc.append("  <table>")
     doc.append(
-        '    <thead><tr><th>Category</th><th class="num">Amount</th><th class="num">Portfolio Impact</th></tr></thead>'
+        '    <thead><tr><th>Category</th><th class="num">Amount</th>'
+        '<th class="num">Portfolio Impact</th></tr></thead>'
     )
     doc.append("    <tbody>")
     for label, key in (
@@ -1071,12 +1218,15 @@ def generate_backtest_html_report(
         impact_key = key.removeprefix("total_")
         impact = float(portfolio_impact.get(impact_key, 0.0))
         doc.append(
-            f'      <tr><td>{label}</td><td class="num">${amount:+,.2f}</td><td class="num">${impact:+,.2f}</td></tr>'
+            f'      <tr><td>{label}</td><td class="num">${amount:+,.2f}</td>'
+            f'<td class="num">${impact:+,.2f}</td></tr>'
         )
     net_costs = float(costs.get("total_costs", 0.0))
     net_impact = float(portfolio_impact.get("net", 0.0))
     doc.append(
-        f'      <tr><td><strong>Net Costs</strong></td><td class="num"><strong>${net_costs:+,.2f}</strong></td><td class="num"><strong>${net_impact:+,.2f}</strong></td></tr>'
+        '      <tr><td><strong>Net Costs</strong></td>'
+        f'<td class="num"><strong>${net_costs:+,.2f}</strong></td>'
+        f'<td class="num"><strong>${net_impact:+,.2f}</strong></td></tr>'
     )
     doc.append("    </tbody>")
     doc.append("  </table>")
@@ -1089,7 +1239,10 @@ def generate_backtest_html_report(
         doc.append('  <div class="scroll-table">')
         doc.append("    <table>")
         doc.append(
-            '      <thead><tr><th>Trade ID</th><th>Security</th><th>Entry Date</th><th>Exit Date</th><th class="num">Entry Price</th><th class="num">Exit Price</th><th class="num">Quantity</th><th class="num">Costs</th><th class="num">PnL ($)</th><th class="num">Return (%)</th></tr></thead>'
+            '      <thead><tr><th>Trade ID</th><th>Security</th><th>Entry Date</th>'
+            '<th>Exit Date</th><th class="num">Entry Price</th><th class="num">Exit Price</th>'
+            '<th class="num">Quantity</th><th class="num">Costs</th><th class="num">PnL ($)</th>'
+            '<th class="num">Return (%)</th></tr></thead>'
         )
         doc.append("      <tbody>")
         for tr in trades:
@@ -1098,8 +1251,24 @@ def generate_backtest_html_report(
                 ret_pct = float(tr.get("return_pct", 0.0))
                 entry_cost = float(tr.get("entry_cost", 0.0))
                 exit_proceeds = float(tr.get("exit_proceeds", 0.0))
+                tr_id = html.escape(str(tr.get("trade_id")))
+                tr_sec = html.escape(str(tr.get("security_id")))
+                tr_en_date = tr.get("entry_date")
+                tr_ex_date = tr.get("exit_date")
+                tr_en_p = float(tr.get("entry_price", 0))
+                tr_ex_p = float(tr.get("exit_price", 0))
+                tr_qty = float(tr.get("quantity", 0))
+                tr_costs = entry_cost - exit_proceeds + pnl
+                pnl_color = "#166534" if pnl >= 0 else "#991b1b"
+                ret_color = "#166534" if ret_pct >= 0 else "#991b1b"
                 doc.append(
-                    f'        <tr><td>{html.escape(str(tr.get("trade_id")))}</td><td><strong>{html.escape(str(tr.get("security_id")))}</strong></td><td>{tr.get("entry_date")}</td><td>{tr.get("exit_date")}</td><td class="num">${float(tr.get("entry_price", 0)):.2f}</td><td class="num">${float(tr.get("exit_price", 0)):.2f}</td><td class="num">{float(tr.get("quantity", 0)):.2f}</td><td class="num">${(entry_cost - exit_proceeds + pnl):.2f}</td><td class="num" style="color: {"#166534" if pnl >= 0 else "#991b1b"};"><strong>${pnl:+,.2f}</strong></td><td class="num" style="color: {"#166534" if ret_pct >= 0 else "#991b1b"};">{ret_pct * 100:+.2f}%</td></tr>'
+                    f'        <tr><td>{tr_id}</td><td><strong>{tr_sec}</strong></td>'
+                    f'<td>{tr_en_date}</td><td>{tr_ex_date}</td>'
+                    f'<td class="num">${tr_en_p:.2f}</td><td class="num">${tr_ex_p:.2f}</td>'
+                    f'<td class="num">{tr_qty:.2f}</td><td class="num">${tr_costs:.2f}</td>'
+                    f'<td class="num" style="color: {pnl_color};">'
+                    f'<strong>${pnl:+,.2f}</strong></td>'
+                    f'<td class="num" style="color: {ret_color};">{ret_pct * 100:+.2f}%</td></tr>'
                 )
         doc.append("      </tbody>")
         doc.append("    </table>")
@@ -1115,15 +1284,31 @@ def generate_backtest_html_report(
         doc.append('  <div class="scroll-table">')
         doc.append("    <table>")
         doc.append(
-            '      <thead><tr><th>Date</th><th>Side</th><th>Security</th><th class="num">Quantity</th><th class="num">Fill Price</th><th class="num">Notional</th><th class="num">Commission</th><th class="num">Slippage</th><th>Rationale</th></tr></thead>'
+            '      <thead><tr><th>Date</th><th>Side</th><th>Security</th>'
+            '<th class="num">Quantity</th><th class="num">Fill Price</th>'
+            '<th class="num">Notional</th><th class="num">Commission</th>'
+            '<th class="num">Slippage</th><th>Rationale</th></tr></thead>'
         )
         doc.append("      <tbody>")
         for fill in fills:
             if isinstance(fill, dict):
                 side = str(fill.get("side", "")).upper()
                 badge_class = "badge-buy" if side == "BUY" else "badge-sell"
+                f_date = fill.get("session_date")
+                f_sec = html.escape(str(fill.get("security_id")))
+                f_qty = float(fill.get("quantity", 0))
+                f_p = float(fill.get("price", 0))
+                f_not = float(fill.get("notional", 0))
+                f_comm = float(fill.get("commission", 0))
+                f_slip = float(fill.get("slippage_cost", 0))
+                f_rat = html.escape(str(fill.get("rationale", "")))
                 doc.append(
-                    f'        <tr><td>{fill.get("session_date")}</td><td><span class="badge {badge_class}">{side}</span></td><td><strong>{html.escape(str(fill.get("security_id")))}</strong></td><td class="num">{float(fill.get("quantity", 0)):.2f}</td><td class="num">${float(fill.get("price", 0)):.2f}</td><td class="num">${float(fill.get("notional", 0)):,.2f}</td><td class="num">${float(fill.get("commission", 0)):.2f}</td><td class="num">${float(fill.get("slippage_cost", 0)):.2f}</td><td><small>{html.escape(str(fill.get("rationale", "")))}</small></td></tr>'
+                    f'        <tr><td>{f_date}</td>'
+                    f'<td><span class="badge {badge_class}">{side}</span></td>'
+                    f'<td><strong>{f_sec}</strong></td><td class="num">{f_qty:.2f}</td>'
+                    f'<td class="num">${f_p:.2f}</td><td class="num">${f_not:,.2f}</td>'
+                    f'<td class="num">${f_comm:.2f}</td><td class="num">${f_slip:.2f}</td>'
+                    f'<td><small>{f_rat}</small></td></tr>'
                 )
         doc.append("      </tbody>")
         doc.append("    </table>")
@@ -1139,7 +1324,11 @@ def generate_backtest_html_report(
         doc.append('  <div class="scroll-table">')
         doc.append("    <table>")
         doc.append(
-            '      <thead><tr><th>Session Date</th><th class="num">Target Weight</th><th>Positions Breakdown</th><th class="num">Cash Balance</th><th class="num">Position Value</th><th class="num">Portfolio Value</th><th class="num">Gross Exp</th><th class="num">Net Exp</th><th class="num">Borrow Fees</th><th class="num">Cash Interest</th></tr></thead>'
+            '      <thead><tr><th>Session Date</th><th class="num">Target Weight</th>'
+            '<th>Positions Breakdown</th><th class="num">Cash Balance</th>'
+            '<th class="num">Position Value</th><th class="num">Portfolio Value</th>'
+            '<th class="num">Gross Exp</th><th class="num">Net Exp</th>'
+            '<th class="num">Borrow Fees</th><th class="num">Cash Interest</th></tr></thead>'
         )
         doc.append("      <tbody>")
         for row in ledger:
@@ -1164,19 +1353,31 @@ def generate_backtest_html_report(
                     shares_held = float(row.get("shares", 0))
                     pos_summary = f"{shares_held:.2f} sh" if abs(shares_held) > 0.0001 else "Flat"
 
+                r_date = row.get("session_date")
+                r_cash = float(row.get("cash", 0))
+                r_pval = float(row.get("position_value", 0))
+                r_port = float(row.get("portfolio_value", 0))
                 gross_exp = float(row.get("gross_exposure", 0))
                 net_exp = float(row.get("net_exposure", 0))
                 borrow_fee = float(row.get("borrow_fees", 0.0))
                 cash_interest = float(row.get("cash_interest", 0.0))
                 doc.append(
-                    f'        <tr><td>{row.get("session_date")}</td><td class="num">{weight_str}</td><td><small>{pos_summary}</small></td><td class="num">${float(row.get("cash", 0)):,.2f}</td><td class="num">${float(row.get("position_value", 0)):,.2f}</td><td class="num"><strong>${float(row.get("portfolio_value", 0)):,.2f}</strong></td><td class="num">{gross_exp * 100:.0f}%</td><td class="num">{net_exp * 100:.0f}%</td><td class="num">${borrow_fee:,.2f}</td><td class="num">${cash_interest:+,.2f}</td></tr>'
+                    f'        <tr><td>{r_date}</td><td class="num">{weight_str}</td>'
+                    f'<td><small>{pos_summary}</small></td>'
+                    f'<td class="num">${r_cash:,.2f}</td><td class="num">${r_pval:,.2f}</td>'
+                    f'<td class="num"><strong>${r_port:,.2f}</strong></td>'
+                    f'<td class="num">{gross_exp * 100:.0f}%</td>'
+                    f'<td class="num">{net_exp * 100:.0f}%</td>'
+                    f'<td class="num">${borrow_fee:,.2f}</td>'
+                    f'<td class="num">${cash_interest:+,.2f}</td></tr>'
                 )
         doc.append("      </tbody>")
         doc.append("    </table>")
         doc.append("  </div>")
 
     doc.append(
-        '  <footer style="margin-top: 40px; color: #94a3b8; font-size: 0.8rem;">Market Research Lab — Personal Investment Analysis Monolith</footer>'
+        '  <footer style="margin-top: 40px; color: #94a3b8; font-size: 0.8rem;">'
+        'Market Research Lab — Personal Investment Analysis Monolith</footer>'
     )
     doc.append("</body>")
     doc.append("</html>")
@@ -1259,9 +1460,7 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
     costs_raw = result_manifest.get("costs")
     costs = costs_raw if isinstance(costs_raw, dict) else {}
     portfolio_impact_raw = costs.get("portfolio_impact")
-    portfolio_impact = (
-        portfolio_impact_raw if isinstance(portfolio_impact_raw, dict) else {}
-    )
+    portfolio_impact = portfolio_impact_raw if isinstance(portfolio_impact_raw, dict) else {}
     writer.writerow(["Cost Attribution", ""])
     writer.writerow(["Total Commission", costs.get("total_commission", 0.0)])
     writer.writerow(["Total Slippage", costs.get("total_slippage", 0.0)])
@@ -1424,3 +1623,97 @@ def generate_backtest_csv(result_data: dict[str, JsonValue]) -> str:
             )
 
     return output.getvalue()
+
+
+def generate_options_backtest_csv(result_data: dict[str, JsonValue]) -> str:
+    """Generate a compact options spread ledger export."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "Security",
+            "Expiration",
+            "Short Strike",
+            "Long Strike",
+            "Entry Credit",
+            "Worst PnL",
+            "Best PnL",
+            "Full Possible Loss",
+            "ROM",
+            "Reliability",
+            "Stop Changes",
+            "Counterfactual",
+            "Close Rule",
+        ]
+    )
+    positions = result_data.get("positions", [])
+    if isinstance(positions, list):
+        for position in positions:
+            if isinstance(position, dict):
+                stop_movements = position.get("stop_movements", [])
+                writer.writerow(
+                    [
+                        position.get("security_id", ""),
+                        position.get("expiration", ""),
+                        position.get("short_strike", ""),
+                        position.get("long_strike", ""),
+                        position.get("entry_credit", ""),
+                        position.get("worst_net_pnl", ""),
+                        position.get("best_net_pnl", ""),
+                        position.get("full_possible_loss", ""),
+                        position.get("return_on_margin_pct", ""),
+                        position.get("reliability_pct", ""),
+                        len(stop_movements) if isinstance(stop_movements, list) else 0,
+                        position.get("counterfactual", ""),
+                        position.get("close_rule", ""),
+                    ]
+                )
+    return output.getvalue()
+
+
+def generate_options_backtest_html(
+    result_data: dict[str, JsonValue], manifest_data: dict[str, JsonValue]
+) -> str:
+    """Generate a self-contained options result report."""
+    run_id = html.escape(str(result_data.get("run_id") or manifest_data.get("id") or "N/A"))
+    summary = result_data.get("summary", {})
+    rows = (
+        "".join(
+            f"<tr><th>{html.escape(str(key))}</th><td>{html.escape(str(value))}</td></tr>"
+            for key, value in summary.items()
+        )
+        if isinstance(summary, dict)
+        else ""
+    )
+    positions = result_data.get("positions", [])
+    position_rows = ""
+    if isinstance(positions, list):
+        position_rows = "".join(
+            "<tr>"
+            f"<td>{html.escape(str(position.get('security_id', '')))}</td>"
+            f"<td>{html.escape(str(position.get('expiration', '')))}</td>"
+            f"<td>{html.escape(str(position.get('short_strike', '')))} / "
+            f"{html.escape(str(position.get('long_strike', '')))}</td>"
+            f"<td>{html.escape(str(position.get('worst_net_pnl', '')))}</td>"
+            f"<td>{html.escape(str(position.get('best_net_pnl', '')))}</td>"
+            f"<td>{html.escape(str(position.get('close_rule', '')))}</td></tr>"
+            for position in positions
+            if isinstance(position, dict)
+        )
+    warnings = result_data.get("warnings", [])
+    warning_html = (
+        "".join(f"<li>{html.escape(str(item))}</li>" for item in warnings)
+        if isinstance(warnings, list)
+        else ""
+    )
+    return (
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'><title>"
+        f"Options Backtest {run_id}</title></head><body><h1>Options Backtest {run_id}</h1>"
+        f"<p>Provider: {html.escape(str(manifest_data.get('provider', 'unknown')))}</p>"
+        f"<p>Strategy revision: "
+        f"{html.escape(str(manifest_data.get('strategy_revision', 'unknown')))}</p>"
+        f"<table>{rows}</table><h2>Positions</h2><table>"
+        f"<tr><th>Security</th><th>Expiry</th><th>Strikes</th><th>Worst PnL</th>"
+        f"<th>Best PnL</th><th>Close Rule</th></tr>{position_rows}</table>"
+        f"<h2>Warnings</h2><ul>{warning_html}</ul></body></html>"
+    )

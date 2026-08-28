@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import csv
-import html
-import io
 from dataclasses import dataclass, field
 from statistics import median
 from typing import Any, Callable
+
+from .reporting import generate_valuation_csv, generate_valuation_html_report
 
 
 @dataclass(frozen=True)
@@ -457,7 +456,8 @@ def evaluate_fcff_dcf(
         equity_value = enterprise_value + inputs.cash - inputs.total_debt
         if equity_value < 0:
             warnings.append(
-                f"{inputs.symbol}: calculated equity value is negative ({equity_value:.2f} {inputs.currency})."
+                f"{inputs.symbol}: calculated equity value is negative "
+                f"({equity_value:.2f} {inputs.currency})."
             )
         if inputs.shares_outstanding > 0:
             value_per_share = equity_value / inputs.shares_outstanding
@@ -645,23 +645,22 @@ def evaluate(
     return evaluator(*args, calculated_at=calculated_at, **kwargs)
 
 
-from .reporting import generate_valuation_csv, generate_valuation_html_report
-
 __all__ = [
     "ComparableCompanyInput",
     "ComparableCompanyResult",
-    "ComparableCompanyValuation",
+    "ComparableValuationResult",
     "FCFFDCFInput",
     "CashFlowForecastYear",
     "ScenarioResult",
     "SensitivityMatrix",
     "FCFFDCFResult",
+    "ValuationResult",
     "ValuationMethod",
     "VALUATION_METHODS",
     "evaluate",
-    "evaluate_comparable_companies",
+    "evaluate_comparables",
     "evaluate_fcff_dcf",
-    "generate_valuation_html_report",
     "generate_valuation_csv",
+    "generate_valuation_html_report",
 ]
 

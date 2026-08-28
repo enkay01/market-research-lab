@@ -1,11 +1,7 @@
 """Tests for the combined predictive model Strategy (MOD-008)."""
 
-import pytest
 from market_research_lab.strategies import (
-    STRATEGY_REGISTRY,
     MarketView,
-    StrategyEvaluationError,
-    StrategyParameterValidationError,
     evaluate_strategy,
     get_strategy_spec,
     list_strategies,

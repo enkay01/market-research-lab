@@ -1,11 +1,15 @@
-"""Contract and regression tests for corporate actions and exchange calendar backtesting (Issue #30).
+"""Contract and regression tests for corporate actions and exchange calendar backtesting.
+
+Issue #30.
 
 Validates:
-- Forward (2:1) and reverse (1:2) splits adjusting shares and open trade entry price while keeping raw prices unadjusted (DATA-010, BT-006).
+- Forward (2:1) and reverse (1:2) splits adjusting shares and open trade entry price
+  while keeping raw prices unadjusted (DATA-010, BT-006).
 - Dividends crediting cash on long holdings and debiting cash on short holdings (BT-006).
 - Delistings liquidating positions, closing trades, and rejecting post-delisting targets (BT-006).
 - Point-in-time eligibility excluding future corporate actions (DATA-008, BT-011).
-- Exchange calendar advancing signals over weekends/holidays and handling missing sessions (BT-007, BT-008, BT-011).
+- Exchange calendar advancing signals over weekends/holidays and handling missing
+  sessions (BT-007, BT-008, BT-011).
 """
 
 from __future__ import annotations
@@ -41,14 +45,16 @@ def make_bar(
 
 
 def test_forward_split_adjusts_shares_and_preserves_cost_basis() -> None:
-    """Forward 2:1 split doubles position shares and halves trade entry price without altering raw prices."""
+    """Forward 2:1 split doubles position shares and halves trade entry price
+    without altering raw prices.
+    """
     dates = [
         "2024-01-02",  # 0: close 10
         "2024-01-03",  # 1: close 11
         "2024-01-04",  # 2: close 12
         "2024-01-05",  # 3: close 13 -> SMA(2)=12.5 > SMA(4)=11.5 -> target 1.0
         "2024-01-08",  # 4: open 13 -> buys ~7692 shares at $13 (cash $100k)
-        "2024-01-09",  # 5: 2:1 split effective! raw open 7.0, close 7.0 -> SMA(2)=10.5 < SMA(4)=11.5 -> target 0.0
+        "2024-01-09",  # 5: 2:1 split! raw open 7.0, close 7.0 -> SMA(2)=10.5 < SMA(4)=11.5
         "2024-01-10",  # 6: open 7.0 -> sells all 15384 shares at $7.0
     ]
     bars = [
@@ -233,7 +239,9 @@ def test_cash_dividend_debits_short_holding() -> None:
 
 
 def test_delisting_liquidates_position_and_rejects_subsequent_signals() -> None:
-    """Delisting liquidates position at liquidation price, closes trade, and rejects post-delisting signals."""
+    """Delisting liquidates position at liquidation price, closes trade, and rejects
+    post-delisting signals.
+    """
     dates = [
         "2024-01-02",
         "2024-01-03",
@@ -289,7 +297,9 @@ def test_delisting_liquidates_position_and_rejects_subsequent_signals() -> None:
 
 
 def test_point_in_time_excludes_future_corporate_actions() -> None:
-    """Corporate actions with future available_at timestamps are excluded from execution (DATA-008)."""
+    """Corporate actions with future available_at timestamps are excluded from execution
+    (DATA-008).
+    """
     dates = ["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-08", "2024-01-09"]
     bars = [
         make_bar(dates[0], 10.0, 10.0),
@@ -328,7 +338,8 @@ def test_point_in_time_excludes_future_corporate_actions() -> None:
 
 def test_exchange_calendar_advances_over_holidays() -> None:
     """Backtest with US exchange calendar executes across holidays and weekends (BT-007)."""
-    # 2024-01-12 is Friday. 2024-01-15 is MLK Day (holiday). Next trading day is 2024-01-16 (Tuesday).
+    # 2024-01-12 is Friday. 2024-01-15 is MLK Day (holiday).
+    # Next trading day is 2024-01-16 (Tuesday).
     dates = [
         "2024-01-09",  # Tue
         "2024-01-10",  # Wed
@@ -366,9 +377,12 @@ def test_exchange_calendar_advances_over_holidays() -> None:
 
 
 def test_missing_session_advances_pending_fill_to_next_traded_bar() -> None:
-    """When a security has a missing bar on an active calendar day, pending order advances to its next traded bar."""
+    """When a security has a missing bar on an active calendar day, pending order
+    advances to its next traded bar.
+    """
     # MSFT trades every day. AAPL has a trading halt / missing bar on 2024-01-10.
-    # AAPL gets a buy signal on 2024-01-09. On 2024-01-10, AAPL is missing, so order executes on 2024-01-11.
+    # AAPL gets a buy signal on 2024-01-09. On 2024-01-10, AAPL is missing, so
+    # order executes on 2024-01-11.
     bars = [
         # AAPL bars (missing 2024-01-10)
         make_bar("2024-01-08", 10.0, 10.0, symbol="AAPL"),

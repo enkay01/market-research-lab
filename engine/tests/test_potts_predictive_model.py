@@ -1,14 +1,13 @@
 """Tests for the published Potts Gain-Loss Asymmetry predictive model (Bornholdt 2021)."""
 
 import math
+
 import pandas as pd
 import pytest
+
 from market_research_lab.market_data import DailyBar
 from market_research_lab.predictive_models import (
-    PREDICTIVE_MODEL_REGISTRY,
     PottsGainLossParameters,
-    PredictiveModelCalculationError,
-    PredictiveModelParameterError,
     build_potts_supervised_frame,
     get_predictive_model_spec,
     list_predictive_models,

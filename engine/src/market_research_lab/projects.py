@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -86,6 +87,28 @@ class BacktestRunRecord:
     dataset_version_ids: list[str]
     parameters: dict[str, JsonValue]
     result: dict[str, JsonValue]
+
+
+@dataclass(frozen=True)
+class OptionsBacktestRunRecord:
+    """Record describing a completed Put Credit Spread Backtest Run."""
+
+    strategy_revision: str
+    dataset_version_ids: list[str]
+    input_dataset_versions: dict[str, str]
+    parameters: dict[str, JsonValue]
+    result: dict[str, JsonValue]
+
+
+@dataclass(frozen=True)
+class FailedOptionsBacktestRunRecord:
+    """Record describing a failed options Backtest Run."""
+
+    strategy_revision: str
+    dataset_version_ids: list[str]
+    input_dataset_versions: dict[str, str]
+    parameters: dict[str, JsonValue]
+    error_message: str
 
 
 @dataclass(frozen=True)
@@ -204,9 +227,7 @@ class ProjectStore:
                     status=str(status.get("status", "unknown")),
                     created_at=str(manifest.get("created_at", "")),
                     dataset_version_ids=self._string_list(manifest.get("dataset_versions")),
-                    definition_revisions=self._string_list(
-                        manifest.get("definition_revisions")
-                    ),
+                    definition_revisions=self._string_list(manifest.get("definition_revisions")),
                 )
             )
         return sorted(
@@ -225,9 +246,7 @@ class ProjectStore:
             raise RunNotFoundError(run_id)
         shutil.rmtree(run_directory)
 
-    def find_runs_referencing_dataset(
-        self, dataset_version_id: str
-    ) -> list[dict[str, JsonValue]]:
+    def find_runs_referencing_dataset(self, dataset_version_id: str) -> list[dict[str, JsonValue]]:
         """Find Project Runs that would lose provenance if data were deleted."""
         if not self.projects_root.is_dir():
             return []
@@ -319,9 +338,7 @@ class ProjectStore:
             / "definition.json"
         )
         if not revision_path.is_file():
-            raise RevisionNotFoundError(
-                f"Revision '{revision}' of {kind} '{name}' does not exist."
-            )
+            raise RevisionNotFoundError(f"Revision '{revision}' of {kind} '{name}' does not exist.")
         return json.loads(revision_path.read_text(encoding="utf-8"))
 
     def list_strategy_revisions(self, project_id: str) -> list[dict[str, JsonValue]]:
@@ -353,9 +370,7 @@ class ProjectStore:
                     )
         return results
 
-    def enable_strategy(
-        self, project_id: str, *, name: str, revision: str
-    ) -> dict[str, JsonValue]:
+    def enable_strategy(self, project_id: str, *, name: str, revision: str) -> dict[str, JsonValue]:
         """Persist one validated immutable Strategy revision as enabled."""
         self.read_revision(project_id, kind="strategy", name=name, revision=revision)
         enabled = self.list_enabled_strategies(project_id)
@@ -439,9 +454,7 @@ class ProjectStore:
             {"strategies": strategies},
         )
 
-    def create_run(
-        self, project_id: str, *, dataset_version_ids: list[str] | None = None
-    ) -> str:
+    def create_run(self, project_id: str, *, dataset_version_ids: list[str] | None = None) -> str:
         self.get_project(project_id)
         run_id = str(uuid4())
         created_at = _timestamp()
@@ -701,9 +714,7 @@ class ProjectStore:
             report_result = dict(persisted_result)
             report_result["evaluation"] = record.evaluation
             report_result["folds"] = record.folds
-            self._write_json(
-                temporary_artifacts / "predictive_model.json", persisted_result
-            )
+            self._write_json(temporary_artifacts / "predictive_model.json", persisted_result)
             self._write_json(temporary_artifacts / "fitted_model.json", record.artifact)
             self._write_json(
                 temporary_artifacts / "predictions.json",
@@ -727,9 +738,7 @@ class ProjectStore:
             )
             shutil.rmtree(run_directory / "artifacts")
             os.replace(temporary_artifacts, run_directory / "artifacts")
-            self._write_json(
-                run_directory / "status.json", {"id": run_id, "status": "completed"}
-            )
+            self._write_json(run_directory / "status.json", {"id": run_id, "status": "completed"})
         except Exception as error:
             try:
                 self._mark_predictive_model_run_failed(run_directory, manifest, str(error))
@@ -881,19 +890,13 @@ class ProjectStore:
             status_data = json.loads(status_path.read_text(encoding="utf-8"))
             result = json.loads(artifact_path.read_text(encoding="utf-8"))
             folds_document = (
-                json.loads(folds_path.read_text(encoding="utf-8"))
-                if folds_path.is_file()
-                else {}
+                json.loads(folds_path.read_text(encoding="utf-8")) if folds_path.is_file() else {}
             )
         except (OSError, json.JSONDecodeError):
             return None
         if manifest.get("kind") != "predictive_model" or status_data.get("status") != "completed":
             return None
-        if (
-            isinstance(result, dict)
-            and "folds" not in result
-            and isinstance(folds_document, dict)
-        ):
+        if isinstance(result, dict) and "folds" not in result and isinstance(folds_document, dict):
             result["folds"] = folds_document.get("folds", [])
         revisions = manifest.get("definition_revisions", [])
         model_revision = str(revisions[0]) if revisions else ""
@@ -904,9 +907,175 @@ class ProjectStore:
             "result": result,
         }
 
-    def get_backtest_export(
+    def create_options_backtest_result(
+        self, project_id: str, record: OptionsBacktestRunRecord
+    ) -> str:
+        """Persist an options Backtest artifact with named input provenance."""
+        from .reporting import generate_options_backtest_csv, generate_options_backtest_html
+
+        run_id = self.create_run(project_id, dataset_version_ids=record.dataset_version_ids)
+        run_directory = self._directory(project_id) / "runs" / run_id
+        result_manifest = record.result.get("manifest")
+        provider = (
+            result_manifest.get("provider", "unknown")
+            if isinstance(result_manifest, dict)
+            else "unknown"
+        )
+        manifest: dict[str, JsonValue] = {
+            "id": run_id,
+            "created_at": self._run_created_at(run_directory),
+            "kind": "options_backtest",
+            "provider": provider,
+            "definition_revisions": [record.strategy_revision],
+            "dataset_versions": record.dataset_version_ids,
+            "input_dataset_versions": record.input_dataset_versions,
+            "parameters": record.parameters,
+            "software_revision": self._source_fingerprint(),
+            "source_sha256": self._source_fingerprint(),
+            "environment": {"python": os.sys.version},
+        }
+        self._write_json(run_directory / "manifest.json", manifest)
+        persisted_result = dict(record.result)
+        persisted_result["run_id"] = run_id
+        temporary_artifacts = run_directory / "artifacts.tmp"
+        temporary_artifacts.mkdir()
+        try:
+            self._write_json(temporary_artifacts / "options_backtest.json", persisted_result)
+            self._write_json(
+                temporary_artifacts / "options_backtest_export.json",
+                {"manifest": manifest, "options_backtest": persisted_result},
+            )
+            (temporary_artifacts / "options_backtest.csv").write_text(
+                generate_options_backtest_csv(persisted_result), encoding="utf-8"
+            )
+            (temporary_artifacts / "options_backtest.html").write_text(
+                generate_options_backtest_html(persisted_result, manifest), encoding="utf-8"
+            )
+            shutil.rmtree(run_directory / "artifacts")
+            temporary_artifacts.rename(run_directory / "artifacts")
+        except Exception as error:
+            shutil.rmtree(temporary_artifacts, ignore_errors=True)
+            (run_directory / "artifacts").mkdir(exist_ok=True)
+            self._write_json(
+                run_directory / "artifacts" / "error.json",
+                {"run_id": run_id, "error": str(error)},
+            )
+            self._write_json(
+                run_directory / "status.json",
+                {"id": run_id, "status": "failed", "error": str(error)},
+            )
+            raise
+        self._write_json(run_directory / "status.json", {"id": run_id, "status": "completed"})
+        return run_id
+
+    def create_failed_options_backtest_run(
+        self, project_id: str, record: FailedOptionsBacktestRunRecord
+    ) -> str:
+        """Persist an options Backtest failure and its provenance."""
+        run_id = self.create_run(project_id, dataset_version_ids=record.dataset_version_ids)
+        run_directory = self._directory(project_id) / "runs" / run_id
+        manifest: dict[str, JsonValue] = {
+            "id": run_id,
+            "created_at": self._run_created_at(run_directory),
+            "kind": "options_backtest",
+            "definition_revisions": [record.strategy_revision],
+            "dataset_versions": record.dataset_version_ids,
+            "input_dataset_versions": record.input_dataset_versions,
+            "parameters": record.parameters,
+            "software_revision": self._source_fingerprint(),
+            "source_sha256": self._source_fingerprint(),
+            "environment": {"python": os.sys.version},
+            "error": record.error_message,
+        }
+        self._write_json(run_directory / "manifest.json", manifest)
+        self._write_json(
+            run_directory / "artifacts" / "error.json",
+            {"run_id": run_id, "error": record.error_message},
+        )
+        self._write_json(
+            run_directory / "status.json",
+            {"id": run_id, "status": "failed", "error": record.error_message},
+        )
+        return run_id
+
+    def get_options_backtest_result(
+        self, project_id: str, run_id: str
+    ) -> dict[str, JsonValue] | None:
+        self.get_project(project_id)
+        return self._read_options_backtest_result(self._directory(project_id) / "runs" / run_id)
+
+    def list_options_backtest_results(self, project_id: str) -> list[dict[str, JsonValue]]:
+        self.get_project(project_id)
+        runs_directory = self._directory(project_id) / "runs"
+        if not runs_directory.is_dir():
+            return []
+        results = [
+            item
+            for directory in runs_directory.iterdir()
+            if directory.is_dir()
+            for item in [self._read_options_backtest_result(directory)]
+            if item is not None
+        ]
+        return sorted(results, key=lambda item: str(item.get("created_at", "")), reverse=True)
+
+    @staticmethod
+    def _read_options_backtest_result(run_directory: Path) -> dict[str, JsonValue] | None:
+        manifest_path = run_directory / "manifest.json"
+        status_path = run_directory / "status.json"
+        artifact_path = run_directory / "artifacts" / "options_backtest.json"
+        if not (manifest_path.is_file() and status_path.is_file() and artifact_path.is_file()):
+            return None
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            result = json.loads(artifact_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if manifest.get("kind") != "options_backtest" or status.get("status") != "completed":
+            return None
+        return {"run_id": run_directory.name, "manifest": manifest, "result": result}
+
+    def get_options_backtest_export(
         self, project_id: str, run_id: str, format_type: str
     ) -> ExportArtifact:
+        self.get_project(project_id)
+        run_directory = self._directory(project_id) / "runs" / run_id
+        item = self._read_options_backtest_result(run_directory)
+        if item is None:
+            raise FileNotFoundError(f"Options Backtest Run {run_id} not found.")
+        artifacts = {
+            "json": ("options_backtest_export.json", "application/json"),
+            "manifest": ("manifest.json", "application/json"),
+            "csv": ("options_backtest.csv", "text/csv"),
+            "html": ("options_backtest.html", "text/html"),
+        }
+        artifact = artifacts.get(format_type.lower())
+        if artifact is None:
+            raise ValueError("Options Backtest exports support json, csv, and html.")
+        artifact_path = run_directory / "artifacts" / artifact[0]
+        if format_type.lower() == "manifest":
+            artifact_path = run_directory / artifact[0]
+        if not artifact_path.is_file():
+            raise FileNotFoundError(f"Options Backtest {format_type} export not found.")
+        return ExportArtifact(
+            artifact_path.read_text(encoding="utf-8"),
+            artifact[1],
+            f"options_backtest_{run_id}.{format_type.lower()}",
+        )
+
+    def source_fingerprint(self) -> str:
+        """Return the fingerprint used to identify the engine source in Runs."""
+        return self._source_fingerprint()
+
+    def _source_fingerprint(self) -> str:
+        digest = hashlib.sha256()
+        source_root = Path(__file__).resolve().parent
+        for path in sorted(source_root.glob("*.py")):
+            digest.update(path.name.encode("utf-8"))
+            digest.update(path.read_bytes())
+        return f"sha256:{digest.hexdigest()}"
+
+    def get_backtest_export(self, project_id: str, run_id: str, format_type: str) -> ExportArtifact:
         """Return ExportArtifact for an exported Backtest run."""
         self.get_project(project_id)
         run_dir = self._directory(project_id) / "runs" / run_id
@@ -966,9 +1135,7 @@ class ProjectStore:
                 results.append(item)
         return results
 
-    def get_backtest_result(
-        self, project_id: str, run_id: str
-    ) -> dict[str, JsonValue] | None:
+    def get_backtest_result(self, project_id: str, run_id: str) -> dict[str, JsonValue] | None:
         """Read one completed Backtest Run artifact, or None when not completed."""
         self.get_project(project_id)
         return self._read_backtest_result(self._directory(project_id) / "runs" / run_id)
@@ -1042,9 +1209,7 @@ class ProjectStore:
 
         valid_id = validate_security_id(security_id)
         if not self.is_watched(project_id, valid_id):
-            raise SecurityNotWatchedError(
-                f"Security '{valid_id}' is not in the project watchlist."
-            )
+            raise SecurityNotWatchedError(f"Security '{valid_id}' is not in the project watchlist.")
         return get_thesis(self._directory(project_id), valid_id)
 
     def save_thesis(self, project_id: str, security_id: str, content: str) -> ResearchThesis:
@@ -1052,9 +1217,7 @@ class ProjectStore:
 
         valid_id = validate_security_id(security_id)
         if not self.is_watched(project_id, valid_id):
-            raise SecurityNotWatchedError(
-                f"Security '{valid_id}' is not in the project watchlist."
-            )
+            raise SecurityNotWatchedError(f"Security '{valid_id}' is not in the project watchlist.")
         return save_thesis(self._directory(project_id), valid_id, content)
 
     def list_theses(self, project_id: str) -> dict[str, ResearchThesis]:
@@ -1157,7 +1320,7 @@ class ProjectStore:
         return payload if isinstance(payload, dict) else {}
 
     @staticmethod
-    def _string_list(value: object) -> list[str]:
+    def _string_list(value: JsonValue) -> list[str]:
         if not isinstance(value, list):
             return []
         return [str(item) for item in value if isinstance(item, (str, int, float))]

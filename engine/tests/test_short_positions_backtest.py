@@ -1,11 +1,17 @@
-"""Contract and accounting tests for short positions, borrowing constraints, and borrow fees (Issue #27).
+"""Contract and accounting tests for short positions, borrowing constraints, and borrow fees.
+
+Issue #27.
 
 Tests cover:
-1. Short sale entry (cash credited, negative shares) and covering exit (cash debited, positive/negative PnL).
-2. Round-trip trade lifecycle for short positions (entry proceeds, exit costs, realized PnL, return %).
-3. Hard-to-borrow constraint rejection (unavailable borrow emits ConstraintRejection and prevents short).
+1. Short sale entry (cash credited, negative shares) and covering exit
+   (cash debited, positive/negative PnL).
+2. Round-trip trade lifecycle for short positions (entry proceeds, exit costs,
+   realized PnL, return %).
+3. Hard-to-borrow constraint rejection (unavailable borrow emits ConstraintRejection
+   and prevents short).
 4. Shorting disabled execution model rejection (allow_shorting=False emits ConstraintRejection).
-5. Daily borrow fee deduction at session close (cash debited, LedgerRow.borrow_fees and manifest tracking).
+5. Daily borrow fee deduction at session close (cash debited, LedgerRow.borrow_fees
+   and manifest tracking).
 6. Gross and net exposure accounting for mixed long/short positions.
 7. Long/short moving average strategy evaluation and signal generation.
 8. Deterministic replay and point-in-time leakage invariance.
@@ -24,7 +30,6 @@ from market_research_lab.backtest import (
 )
 from market_research_lab.market_data import DailyBar
 from market_research_lab.strategies import (
-    LongFlatMovingAverageParams,
     MarketView,
     evaluate_strategy,
     get_strategy_spec,
@@ -110,7 +115,9 @@ def test_long_short_strategy_registry_and_evaluation():
 
 
 def test_short_opening_and_profitable_covering():
-    """Verify short position opening credits cash, holds negative shares, and covering captures profit."""
+    """Verify short position opening credits cash, holds negative shares, and covering
+    captures profit.
+    """
     dates = make_dates(8)
     # Falling price series: fast MA drops below slow MA, triggering short signal
     # Then price rises at the end, triggering cover/long
@@ -129,7 +136,9 @@ def test_short_opening_and_profitable_covering():
     assert short_fill.notional < 0
 
     # There should be ledger rows with negative shares
-    short_rows = [r for r in result.ledger if r.positions.get("AAPL") and r.positions["AAPL"].shares < 0]
+    short_rows = [
+        r for r in result.ledger if r.positions.get("AAPL") and r.positions["AAPL"].shares < 0
+    ]
     assert len(short_rows) > 0
 
     # In short rows, cash is higher than starting cash (short sale proceeds credited)
@@ -151,7 +160,7 @@ def test_short_opening_and_profitable_covering():
 def test_short_loss_when_price_rises():
     """Verify short position produces negative PnL when covering at a higher price."""
     dates = make_dates(8)
-    # Starts falling (triggers short at 60), then rises to 75, 85, 90 (triggers bullish cross and covers at 85/90)
+    # Starts falling (short at 60), then rises to 75, 85, 90 (bullish cross, covers at 85/90)
     closes = [100.0, 90.0, 80.0, 70.0, 60.0, 75.0, 85.0, 90.0]
     bars = [make_bar("AAPL", d, c, c) for d, c in zip(dates, closes)]
 
