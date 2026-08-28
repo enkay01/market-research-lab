@@ -78,10 +78,12 @@ export interface OptionsCandle {
 
 export interface OptionsTrajectoryPoint {
   minute: string;
-  stock_price: number;
+  underlying_price: number;
   spread_worst: number;
   spread_best: number;
   stop_level: number;
+  delta?: number;
+  stock_price?: number;
 }
 
 export interface OptionsSpreadPosition {

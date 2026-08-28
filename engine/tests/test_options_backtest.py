@@ -132,3 +132,88 @@ def test_same_minute_without_both_legs_cannot_open():
 
     assert result.positions == ()
     assert result.summary.total_trades == 0
+
+
+def test_trajectory_points_include_underlying_price_and_delta():
+    data = _data([(2.0, 0.5), (1.5, 0.5)])
+    result = run_option_backtest(_spec(), market_data=data)
+    position = result.positions[0]
+
+    assert len(position.trajectory_points) >= 1
+    point = position.trajectory_points[0]
+    assert point.underlying_price == pytest.approx(100.0)
+    assert point.stock_price == pytest.approx(100.0)
+    assert point.delta < 0.0
+
+
+def test_mid_greeks_sampled_at_trajectory_midpoint():
+    prices = [(2.0, 0.5), (1.8, 0.5), (1.6, 0.5), (1.4, 0.5), (1.2, 0.5)]
+    result = run_option_backtest(_spec(), market_data=_data(prices))
+    position = result.positions[0]
+
+    assert position.greeks["entry"] is not None
+    assert position.greeks["mid"] is not None
+    assert position.greeks["exit"] is not None
+    assert len(position.trajectory_points) >= 3
+
+
+def test_contiguous_missing_minute_gap_emits_reliability_warning():
+    short = OptionContract(
+        "short", "SPY", "2024-02-20", 95.0, "put", available_at="2024-01-02T14:00:00Z"
+    )
+    long = OptionContract(
+        "long", "SPY", "2024-02-20", 90.0, "put", available_at="2024-01-02T14:00:00Z"
+    )
+    bars = []
+    trades = []
+    # Entry at 15:00
+    timestamp_entry = "2024-01-02T15:00:00Z"
+    avail_entry = "2024-01-02T15:01:00Z"
+    bars.append(
+        UnderlyingMinuteBar("SPY", timestamp_entry, 100.0, 101.0, 99.0, 100.0, 1000.0, avail_entry)
+    )
+    trades.extend([
+        OptionTrade("short", timestamp_entry, 2.0, 100.0, avail_entry),
+        OptionTrade("long", timestamp_entry, 0.5, 100.0, avail_entry),
+    ])
+    # 7 minutes of underlying bars with no option trades (gap > 5)
+    for i in range(1, 8):
+        ts = f"2024-01-02T15:{i:02d}:00Z"
+        av = f"2024-01-02T15:{i + 1:02d}:00Z"
+        bars.append(UnderlyingMinuteBar("SPY", ts, 100.0, 101.0, 99.0, 100.0, 1000.0, av))
+    # Exit at 15:08
+    ts_exit = "2024-01-02T15:08:00Z"
+    av_exit = "2024-01-02T15:09:00Z"
+    bars.append(UnderlyingMinuteBar("SPY", ts_exit, 100.0, 101.0, 99.0, 100.0, 1000.0, av_exit))
+    trades.extend([
+        OptionTrade("short", ts_exit, 4.0, 100.0, av_exit),
+        OptionTrade("long", ts_exit, 1.0, 100.0, av_exit),
+    ])
+    data = OptionMarketData(
+        contracts=[short, long],
+        trades=trades,
+        underlying_bars=bars,
+        dataset_version_id="options-v1",
+    )
+    result = run_option_backtest(_spec(), market_data=data)
+    assert any("contiguous missing" in warning for warning in result.warnings)
+    assert result.positions[0].max_missing_gap >= 7
+
+
+def test_counterfactual_whipsaw_prioritized_with_correct_multiplier_scaling():
+    # Stop triggers at minute 1 (spread 3.0), then spread drops to 0.5 (profitable recovery)
+    prices = [(2.0, 0.5), (4.0, 1.0), (4.0, 1.0), (1.0, 0.5)]
+    result = run_option_backtest(_spec(), market_data=_data(prices))
+    position = result.positions[0]
+
+    assert position.counterfactual is not None
+    assert position.counterfactual.outcome == "WHIPSAWED"
+    assert position.counterfactual.avoided_loss_or_missed_gain > 0.0
+
+
+def test_friction_drag_attribution_preserved():
+    data = _data([(2.0, 0.5), (1.5, 0.5)])
+    result = run_option_backtest(_spec(), market_data=data)
+    position = result.positions[0]
+
+    assert position.bid_ask_spread_drag > 0.0

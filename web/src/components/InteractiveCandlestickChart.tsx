@@ -99,7 +99,7 @@ export function InteractiveCandlestickChart({ position }: InteractiveCandlestick
       const bar = raw as { open: number; high: number; low: number; close: number };
       const minute = String(param.time);
       const point = position.trajectory_points.find((item) => String(chartTime(item.minute)) === minute);
-      setHover({ time: minute, open: bar.open, high: bar.high, low: bar.low, close: bar.close, spreadWorst: point?.spread_worst, spreadBest: point?.spread_best, stopLevel: point?.stop_level, delta: position.short_delta });
+      setHover({ time: minute, open: bar.open, high: bar.high, low: bar.low, close: bar.close, spreadWorst: point?.spread_worst, spreadBest: point?.spread_best, stopLevel: point?.stop_level, delta: point?.delta ?? position.short_delta });
     });
     chart.timeScale().fitContent();
     const resize = () => chart.applyOptions({ width: container.clientWidth });

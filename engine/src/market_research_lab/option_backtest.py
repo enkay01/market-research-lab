@@ -79,10 +79,16 @@ class CounterfactualOutcome:
 @dataclass(frozen=True)
 class TrajectoryPoint:
     minute: str
-    stock_price: float
+    underlying_price: float
     spread_worst: float
     spread_best: float
     stop_level: float
+    delta: float = 0.0
+    stock_price: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.stock_price is None:
+            object.__setattr__(self, "stock_price", self.underlying_price)
 
 
 @dataclass(frozen=True)
@@ -124,6 +130,7 @@ class SpreadPosition:
     execution_mode: str = "worst"
     reliability_pct: float = 100.0
     missing_minutes_count: int = 0
+    max_missing_gap: int = 0
     stop_movements: tuple[StopMovement, ...] = ()
     greeks: dict[str, OptionGreeks | None] = field(default_factory=dict)
     counterfactual: CounterfactualOutcome | None = None
@@ -272,8 +279,11 @@ class _OpenPosition:
     stop_level: float
     matched_minutes: int = 0
     missing_minutes: int = 0
+    current_missing_gap: int = 0
+    max_missing_gap: int = 0
     stop_movements: list[StopMovement] = field(default_factory=list)
     trajectory: list[TrajectoryPoint] = field(default_factory=list)
+    greeks_trajectory: list[OptionGreeks] = field(default_factory=list)
     pending_exit_reason: str | None = None
     pending_exit_after: datetime | None = None
     exit_timestamp: str | None = None
@@ -284,6 +294,32 @@ class _OpenPosition:
     last_greeks: OptionGreeks | None = None
     entry_greeks: OptionGreeks | None = None
     mid_greeks: OptionGreeks | None = None
+
+    def calculate_full_loss(self) -> float:
+        return max(0.0, self.collateral - self.entry_credit)
+
+    def calculate_pnl(self, exit_value: float, candidate: SpreadCandidate) -> float:
+        return (
+            self.entry_credit
+            - exit_value * self.quantity * candidate.short_contract.multiplier
+            - self.entry_fee
+            - self.exit_fee
+        )
+
+    def calculate_days_held(self) -> int:
+        first_day = _timestamp(self.entry_timestamp).date()
+        last_day = _timestamp(self.exit_timestamp).date() if self.exit_timestamp else first_day
+        return max(0, (last_day - first_day).days)
+
+    def calculate_rom(self, pnl: float, full_loss: float) -> float:
+        return pnl / full_loss if full_loss > EPS else 0.0
+
+    def calculate_annualized_rom(self, rom: float, days_held: int) -> float:
+        return (1.0 + rom) ** (365.0 / max(days_held, 1)) - 1.0 if rom > -1.0 else -1.0
+
+    def calculate_reliability(self) -> float:
+        denominator = self.matched_minutes + self.missing_minutes
+        return (100.0 * self.matched_minutes / denominator) if denominator else 100.0
 
 
 def _json_value(value: JsonValue) -> JsonValue:
@@ -452,9 +488,9 @@ def eligible_option_trades(
 def eligible_option_market_data(
     market_data: OptionMarketData, as_of: str | datetime
 ) -> OptionMarketData:
-    """Return only option and stock observations known at ``as_of``."""
+    """Return only option and underlying observations known at ``as_of``."""
     cutoff = _timestamp(as_of) if isinstance(as_of, str) else as_of.astimezone(NEW_YORK)
-    eligible_stocks = tuple(
+    eligible_underlying_bars = tuple(
         bar
         for bar in market_data.underlying_bars
         if bar.available_at is not None and _timestamp(bar.available_at) <= cutoff
@@ -467,7 +503,7 @@ def eligible_option_market_data(
     return OptionMarketData(
         contracts=eligible_option_contracts(market_data.contracts, cutoff),
         option_trades=eligible_option_trades(market_data.option_trades, cutoff),
-        underlying_bars=eligible_stocks,
+        underlying_bars=eligible_underlying_bars,
         daily_bars=eligible_daily,
         earnings=tuple(
             event
@@ -499,7 +535,9 @@ def _trade_ranges(
     return ranges
 
 
-def _stock_by_minute(data: OptionMarketData) -> dict[tuple[str, datetime], UnderlyingMinuteBar]:
+def _underlying_bars_by_minute(
+    data: OptionMarketData,
+) -> dict[tuple[str, datetime], UnderlyingMinuteBar]:
     result: dict[tuple[str, datetime], UnderlyingMinuteBar] = {}
     for bar in data.underlying_bars:
         bar_minute = _minute(bar.timestamp)
@@ -562,14 +600,14 @@ def _daily_trend_passes(daily_bars: Sequence[DailyBar], security_id: str, when: 
 
 
 def _underlying_price(data: OptionMarketData, security_id: str, minute: datetime) -> float | None:
-    bar = _stock_by_minute(data).get((security_id, minute))
+    bar = _underlying_bars_by_minute(data).get((security_id, minute))
     return bar.close if bar else None
 
 
 def _pullback_passes(data: OptionMarketData, security_id: str, when: datetime) -> bool:
     bars = [
         bar
-        for (symbol, minute), bar in sorted(_stock_by_minute(data).items())
+        for (symbol, minute), bar in sorted(_underlying_bars_by_minute(data).items())
         if symbol == security_id and minute <= when
     ]
     closes = [bar.close for bar in bars]
@@ -746,11 +784,11 @@ def _fixed_candidate(
     )
     if short_range is None or long_range is None:
         return None
-    stock = _underlying_price(data, short.security_id, minute) or short.strike
+    underlying_price = _underlying_price(data, short.security_id, minute) or short.strike
     dte = max((_date(short.expiration) - when.date()).days, 1)
     short_price = (short_range.low + short_range.high) / 2.0
     pricing = OptionPricingInputs(
-        stock,
+        underlying_price,
         short.strike,
         dte / 365.0,
         specification.risk_free_rate,
@@ -830,9 +868,9 @@ def _matching_minutes(
     data: OptionMarketData, candidate: SpreadCandidate, security_id: str
 ) -> dict[datetime, tuple[float, float, float]]:
     ranges = _trade_ranges(data)
-    stock = _stock_by_minute(data)
+    underlying_bars = _underlying_bars_by_minute(data)
     result: dict[datetime, tuple[float, float, float]] = {}
-    keys = {minute for symbol, minute in stock if symbol == security_id}
+    keys = {minute for symbol, minute in underlying_bars if symbol == security_id}
     for minute in keys:
         if (candidate.short_contract.contract_id, minute) not in ranges or (
             candidate.long_contract.contract_id,
@@ -840,7 +878,7 @@ def _matching_minutes(
         ) not in ranges:
             continue
         worst, best = _spread_values(candidate, ranges, minute)
-        result[minute] = (stock[(security_id, minute)].close, worst, best)
+        result[minute] = (underlying_bars[(security_id, minute)].close, worst, best)
     return result
 
 
@@ -848,18 +886,18 @@ def _position_values(
     data: OptionMarketData, position: _OpenPosition
 ) -> list[tuple[datetime, float, float, float]]:
     values = [
-        (_minute(item.minute), item.stock_price, item.spread_worst, item.spread_best)
+        (_minute(item.minute), item.underlying_price, item.spread_worst, item.spread_best)
         for item in position.trajectory
     ]
     if position.exit_timestamp is None:
         return values
     exit_minute = _minute(position.exit_timestamp)
     observed = {minute for minute, _, _, _ in values}
-    for minute, (stock_price, worst, best) in _matching_minutes(
+    for minute, (underlying_price, worst, best) in _matching_minutes(
         data, position.candidate, position.candidate.short_contract.security_id
     ).items():
         if minute > exit_minute and minute not in observed:
-            values.append((minute, stock_price, worst, best))
+            values.append((minute, underlying_price, worst, best))
     return sorted(values, key=lambda item: item[0])
 
 
@@ -920,7 +958,7 @@ def _validate_specification(
     for bar in data.underlying_bars:
         if bar.available_at is None:
             raise OptionBacktestError(
-                "Historical stock minute bars require available_at eligibility timestamps."
+                "Historical underlying minute bars require available_at eligibility timestamps."
             )
     return tuple(symbols)
 
@@ -940,38 +978,37 @@ def _path_position(
         exit_value = last_point.spread_worst if path == "worst" else last_point.spread_best
     else:
         exit_value = 0.0
-    full_loss = max(0.0, position.collateral - total_credit)
-    pnl = (
-        total_credit
-        - exit_value * position.quantity * candidate.short_contract.multiplier
-        - position.entry_fee
-        - position.exit_fee
-    )
-    reliability_denominator = position.matched_minutes + position.missing_minutes
-    reliability = (
-        100.0 * position.matched_minutes / reliability_denominator
-        if reliability_denominator
-        else 100.0
-    )
-    first_day = _timestamp(position.entry_timestamp).date()
-    last_day = _timestamp(position.exit_timestamp).date() if position.exit_timestamp else first_day
-    days_held = max(0, (last_day - first_day).days)
-    rom = pnl / full_loss if full_loss > EPS else 0.0
-    annualized = (1.0 + rom) ** (365.0 / max(days_held, 1)) - 1.0 if rom > -1.0 else -1.0
+
+    full_loss = position.calculate_full_loss()
+    pnl = position.calculate_pnl(exit_value, candidate)
+    reliability = position.calculate_reliability()
+    days_held = position.calculate_days_held()
+    rom = position.calculate_rom(pnl, full_loss)
+    annualized = position.calculate_annualized_rom(rom, days_held)
+
+    mid_greeks = position.mid_greeks
+    if mid_greeks is None and position.greeks_trajectory:
+        mid_idx = len(position.greeks_trajectory) // 2
+        mid_greeks = position.greeks_trajectory[mid_idx]
+    if mid_greeks is None:
+        mid_greeks = position.last_greeks
+
     stop_levels = {item.minute: item.stop_level for item in position.trajectory}
+    deltas = {item.minute: item.delta for item in position.trajectory}
     points = [
         TrajectoryPoint(
             _minute_text(minute),
-            stock,
+            underlying_price,
             worst,
             best,
             stop_levels.get(_minute_text(minute), position.stop_level),
+            delta=deltas.get(_minute_text(minute), round(candidate.short_delta, 8)),
         )
-        for minute, stock, worst, best in all_values
+        for minute, underlying_price, worst, best in all_values
     ]
     values_after = [
         worst if path == "worst" else best
-        for minute, stock, worst, best in all_values
+        for minute, underlying_price, worst, best in all_values
         if position.exit_timestamp
         and _timestamp(_minute_text(minute)) > _timestamp(position.exit_timestamp)
     ]
@@ -979,18 +1016,12 @@ def _path_position(
     if position.close_rule.startswith("Stop") and values_after:
         later_peak = max(values_after)
         later_low = min(values_after)
-        if later_peak > exit_value + EPS:
-            counterfactual = CounterfactualOutcome(
-                "STOP_SAVED",
-                round(
-                    (later_peak - exit_value)
-                    * position.quantity
-                    * candidate.short_contract.multiplier,
-                    4,
-                ),
-                "The spread became more expensive after the stop exit.",
-            )
-        elif later_low < position.entry_credit / position.quantity - EPS:
+        credit_per_unit = (
+            position.entry_credit
+            / position.quantity
+            / candidate.short_contract.multiplier
+        )
+        if later_low <= credit_per_unit + EPS:
             counterfactual = CounterfactualOutcome(
                 "WHIPSAWED",
                 round(
@@ -1000,6 +1031,17 @@ def _path_position(
                     4,
                 ),
                 "The spread recovered after the stop exit.",
+            )
+        elif later_peak > exit_value + EPS:
+            counterfactual = CounterfactualOutcome(
+                "STOP_SAVED",
+                round(
+                    (later_peak - exit_value)
+                    * position.quantity
+                    * candidate.short_contract.multiplier,
+                    4,
+                ),
+                "The spread became more expensive after the stop exit.",
             )
     if counterfactual is None and position.close_rule.startswith("Profit"):
         counterfactual = CounterfactualOutcome(
@@ -1044,10 +1086,11 @@ def _path_position(
         execution_mode=path,
         reliability_pct=round(reliability, 4),
         missing_minutes_count=position.missing_minutes,
+        max_missing_gap=position.max_missing_gap,
         stop_movements=tuple(position.stop_movements),
         greeks={
             "entry": position.entry_greeks,
-            "mid": position.mid_greeks or position.last_greeks,
+            "mid": mid_greeks,
             "exit": position.last_greeks,
         },
         counterfactual=counterfactual,
@@ -1062,8 +1105,11 @@ def _path_position(
             )
             for bar in data.underlying_bars
             if bar.security_id == candidate.short_contract.security_id
-            and _timestamp(bar.timestamp).date() >= first_day
-            and (position.exit_timestamp is None or _timestamp(bar.timestamp).date() <= last_day)
+            and _timestamp(bar.timestamp).date() >= _timestamp(position.entry_timestamp).date()
+            and (
+                position.exit_timestamp is None
+                or _timestamp(bar.timestamp).date() <= _timestamp(position.exit_timestamp).date()
+            )
         ),
         trajectory_points=tuple(points),
         quantity=position.quantity,
@@ -1107,12 +1153,12 @@ def _simulate_path(
     symbols = options.symbols
     path = options.path
     ranges = _trade_ranges(data)
-    stock = _stock_by_minute(data)
+    underlying_bars = _underlying_bars_by_minute(data)
     first = _timestamp(specification.start_date + "T00:00:00-05:00")
     last = _timestamp(specification.end_date + "T23:59:59-05:00")
     minutes = sorted(
         minute
-        for (symbol, minute) in stock
+        for (symbol, minute) in underlying_bars
         if symbol in symbols
         and first <= minute <= last
         and time(9, 30) <= minute.timetz().replace(tzinfo=None) <= time(16, 0)
@@ -1153,10 +1199,15 @@ def _simulate_path(
             if not matching:
                 if time(9, 30) <= minute.timetz().replace(tzinfo=None) <= time(16, 0):
                     position.missing_minutes += 1
+                    position.current_missing_gap += 1
+                    position.max_missing_gap = max(
+                        position.max_missing_gap, position.current_missing_gap
+                    )
                 continue
+            position.current_missing_gap = 0
             position.matched_minutes += 1
             worst, best = _spread_values(position.candidate, ranges, minute)
-            stock_price = stock[(security_id, minute)].close
+            underlying_price = underlying_bars[(security_id, minute)].close
             chosen_value = worst if path == "worst" else best
             dte_years = max(
                 (_date(position.candidate.short_contract.expiration) - minute.date()).days / 365.0,
@@ -1165,7 +1216,7 @@ def _simulate_path(
             short_range = ranges[(position.candidate.short_contract.contract_id, minute)]
             short_price = (short_range.low + short_range.high) / 2.0
             pricing = OptionPricingInputs(
-                stock_price,
+                underlying_price,
                 position.candidate.short_contract.strike,
                 dte_years,
                 specification.risk_free_rate,
@@ -1174,10 +1225,21 @@ def _simulate_path(
             position.last_greeks = black_scholes_greeks(
                 pricing, black_scholes_iv(short_price, pricing)
             )
-            if position.mid_greeks is None and minute > _minute(position.entry_timestamp):
-                position.mid_greeks = position.last_greeks
+            position.greeks_trajectory.append(position.last_greeks)
+            current_delta = (
+                round(position.last_greeks.delta, 8)
+                if position.last_greeks
+                else round(position.candidate.short_delta, 8)
+            )
             position.trajectory.append(
-                TrajectoryPoint(_minute_text(minute), stock_price, worst, best, position.stop_level)
+                TrajectoryPoint(
+                    _minute_text(minute),
+                    underlying_price,
+                    worst,
+                    best,
+                    position.stop_level,
+                    delta=current_delta,
+                )
             )
             if (
                 position.pending_exit_reason
@@ -1231,7 +1293,10 @@ def _simulate_path(
                 position.stop_level = credit_per_unit
                 position.stop_movements.append(
                     StopMovement(
-                        _minute_text(minute), stock_price, credit_per_unit, "50% profit stop move"
+                        _minute_text(minute),
+                        underlying_price,
+                        credit_per_unit,
+                        "50% profit stop move",
                     )
                 )
             if (
@@ -1242,7 +1307,7 @@ def _simulate_path(
                 position.stop_movements.append(
                     StopMovement(
                         _minute_text(minute),
-                        stock_price,
+                        underlying_price,
                         0.5 * credit_per_unit,
                         "75% profit stop move",
                     )
@@ -1255,7 +1320,7 @@ def _simulate_path(
                 position.stop_movements.append(
                     StopMovement(
                         _minute_text(minute),
-                        stock_price,
+                        underlying_price,
                         0.25 * credit_per_unit,
                         "87.5% profit stop move",
                     )
@@ -1266,7 +1331,10 @@ def _simulate_path(
             elif chosen_value <= 0.25 * credit_per_unit and remaining_fraction <= 0.5:
                 position.pending_exit_reason = "Profit Target 75%"
                 position.pending_exit_after = minute
-            elif stock[(security_id, minute)].low <= position.candidate.short_contract.strike:
+            elif (
+                underlying_bars[(security_id, minute)].low
+                <= position.candidate.short_contract.strike
+            ):
                 position.pending_exit_reason = "Short Strike Breach"
                 position.pending_exit_after = minute
             elif _earnings_exit_due(data.earnings, security_id, minute):
@@ -1283,7 +1351,7 @@ def _simulate_path(
                 position.exit_timestamp = _minute_text(minute)
                 position.exit_value = (
                     0.0
-                    if stock_price > position.candidate.short_contract.strike
+                    if underlying_price > position.candidate.short_contract.strike
                     else position.candidate.width
                 )
                 position.close_rule = (
@@ -1488,8 +1556,18 @@ def _simulate_path(
                     (_date(candidate.short_contract.expiration) - minute.date()).days / 365.0,
                     1 / 365.0,
                 )
-                stock_price = stock[(security_id, minute)].close
+                underlying_price = underlying_bars[(security_id, minute)].close
                 entry_iv = candidate.implied_volatility
+                entry_greeks = black_scholes_greeks(
+                    OptionPricingInputs(
+                        underlying_price,
+                        candidate.short_contract.strike,
+                        years,
+                        specification.risk_free_rate,
+                        specification.dividend_yield,
+                    ),
+                    entry_iv,
+                )
                 position = _OpenPosition(
                     position_id=f"spread-{position_counter}",
                     candidate=candidate,
@@ -1499,22 +1577,20 @@ def _simulate_path(
                     entry_fee=entry_fee,
                     collateral=collateral,
                     stop_level=2.0 * credit_unit,
-                    entry_greeks=black_scholes_greeks(
-                        OptionPricingInputs(
-                            stock_price,
-                            candidate.short_contract.strike,
-                            years,
-                            specification.risk_free_rate,
-                            specification.dividend_yield,
-                        ),
-                        entry_iv,
-                    ),
+                    entry_greeks=entry_greeks,
+                    last_greeks=entry_greeks,
+                    greeks_trajectory=[entry_greeks],
                 )
                 position.matched_minutes += 1
                 worst, best = _spread_values(candidate, ranges, minute)
                 position.trajectory.append(
                     TrajectoryPoint(
-                        _minute_text(minute), stock_price, worst, best, position.stop_level
+                        _minute_text(minute),
+                        underlying_price,
+                        worst,
+                        best,
+                        position.stop_level,
+                        delta=round(entry_greeks.delta, 8),
                     )
                 )
                 open_positions[security_id] = position
@@ -1553,6 +1629,11 @@ def _simulate_path(
     if any(item.missing_minutes_count > 5 for item in positions):
         warnings.append(
             "One or more positions have more than five missing matching minutes and are unreliable."
+        )
+    if any(item.max_missing_gap > 5 for item in positions):
+        warnings.append(
+            "One or more positions have more than five contiguous missing matching "
+            "minutes and are unreliable."
         )
     return _SimulationResult(
         tuple(positions), blocked, rejection_counts, equity_rows, warnings, actual_entries
@@ -1626,7 +1707,7 @@ def run_option_backtest(
             replace(
                 worst,
                 best_net_pnl=best_pnl,
-                bid_ask_spread_drag=0.0,
+                bid_ask_spread_drag=worst.bid_ask_spread_drag,
                 slippage_cost=round(abs(best_pnl - worst.worst_net_pnl), 4),
             )
         )

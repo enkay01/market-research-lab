@@ -2895,9 +2895,7 @@ def create_app(
                 f"Options Backtest Run failed: {error}",
                 include_traceback=True,
             )
-            if isinstance(error, OptionBacktestError):
-                raise
-            raise OptionBacktestError(str(error)) from error
+            raise
         result_payload = result.to_json()
         result_manifest = result_payload.get("manifest")
         if isinstance(result_manifest, dict):
