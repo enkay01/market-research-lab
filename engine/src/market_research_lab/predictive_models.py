@@ -1630,6 +1630,28 @@ def run_predictive_model(
     else:
         raise PredictiveModelNotFoundError(f"Unknown Predictive Model '{name}'.")
 
+    # The shared runner owns all split, fold, benchmark, and metric orchestration.
+    # Keep this module focused on registry lookup, frame construction, fit, and forecast.
+    from .model_evaluation import ModelEvaluationInput, evaluate_model
+
+    return evaluate_model(
+        ModelEvaluationInput(
+            name=name,
+            frame=frame,
+            feature_column=feature_col,
+            bars=bars,
+            parameters=resolved_parameters,
+            seed=seed,
+            fit=lambda training, params, model_seed: fit_model(name, training, params, model_seed),
+            forecast=predict,
+            metadata=spec.metadata,
+            assumptions=model_assumptions,
+            warnings=model_warnings,
+            limitations=model_limitations,
+            unsupported_claims=model_unsupported,
+        )
+    )
+
     chronological_split = _chronological_split(
         frame,
         PredictiveModelSplitParameters(
