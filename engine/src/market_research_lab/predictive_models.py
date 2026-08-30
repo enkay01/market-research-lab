@@ -10,8 +10,17 @@ from typing import Literal
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from . import model_evaluation as _evaluation_types
 from .json_types import JsonValue
 from .market_data import DailyBar
+from .model_evaluation import PredictiveModelCalculationError
+
+NaiveBenchmarkEvaluation = _evaluation_types.NaiveBenchmarkEvaluation
+PredictiveModelCalculation = _evaluation_types.PredictiveModelCalculation
+PredictiveModelEvaluation = _evaluation_types.PredictiveModelEvaluation
+PredictiveModelFold = _evaluation_types.PredictiveModelFold
+PredictiveModelPeriodMetrics = _evaluation_types.PredictiveModelPeriodMetrics
+PredictiveModelSplit = _evaluation_types.PredictiveModelSplit
 
 
 class PredictiveModelError(ValueError):
@@ -28,10 +37,6 @@ class PredictiveModelParameterError(PredictiveModelError):
 
 class PredictiveModelDataError(PredictiveModelError):
     """Raised when the requested Dataset Version cannot provide model data."""
-
-
-class PredictiveModelCalculationError(PredictiveModelError):
-    """Raised when a Predictive Model cannot be fitted on the supplied data."""
 
 
 SplitName = Literal["training", "validation", "test"]
@@ -133,37 +138,6 @@ def is_naive_benchmark_comparison_complete(
         and test_metrics is not None
         and all(finite_number(test_metrics.get(name)) for name in ("mae", "rmse", "r2"))
     )
-@dataclass(frozen=True)
-class NaiveBenchmarkEvaluation:
-    """Explicit naive benchmark definition and comparable evaluation records."""
-
-    name: NaiveBenchmarkName
-    display_name: str
-    description: str
-    period_metrics: dict[str, dict[str, float]]
-    out_of_sample_comparison: dict[str, JsonValue]
-    completed: bool = False
-
-    def to_json(self) -> dict[str, JsonValue]:
-        """Return the complete benchmark comparison as a JSON-compatible object."""
-        return {
-            "name": self.name,
-            "display_name": self.display_name,
-            "description": self.description,
-            "period_metrics": self.period_metrics,
-            "out_of_sample_comparison": self.out_of_sample_comparison,
-            "completed": self.completed,
-        }
-
-
-@dataclass(frozen=True)
-class PredictiveModelFoldTrainingPolicy:
-    """Typed options that define one fold's eligible training window."""
-
-    decision_session_date: str
-    initial_training_start: str
-    training_window: int
-    evaluation_mode: Literal["expanding", "rolling"]
 
 
 @dataclass(frozen=True)
@@ -281,155 +255,6 @@ class PredictiveModelForecast:
 
 
 PredictiveModelOutput = PredictiveModelPrediction | PredictiveModelForecast
-
-
-@dataclass(frozen=True)
-class PredictiveModelSplit:
-    """One chronological period used by a Predictive Model Run."""
-
-    period: SplitName
-    start: str
-    end: str
-    feature_start: str
-    feature_end: str
-    observations: int
-    labelled_observations: int
-    fit_scope: str
-
-    def to_json(self) -> dict[str, JsonValue]:
-        """Return the split boundaries and leakage policy as JSON."""
-        return {
-            "period": self.period,
-            "start": self.start,
-            "end": self.end,
-            "feature_start": self.feature_start,
-            "feature_end": self.feature_end,
-            "observations": self.observations,
-            "labelled_observations": self.labelled_observations,
-            "fit_scope": self.fit_scope,
-        }
-
-
-@dataclass(frozen=True)
-class PredictiveModelPeriodMetrics:
-    """Metrics for one labelled chronological period."""
-
-    period: SplitName
-    observations: int
-    metrics: dict[str, float]
-    sample_scope: SampleScope
-    benchmark_metrics: dict[str, float] = field(default_factory=dict)
-    comparison: dict[str, JsonValue] = field(default_factory=dict)
-
-    def to_json(self) -> dict[str, JsonValue]:
-        """Return period-labelled metrics for artifacts and interface responses."""
-        return {
-            "period": self.period,
-            "observations": self.observations,
-            "metrics": self.metrics,
-            "benchmark_metrics": self.benchmark_metrics,
-            "comparison": self.comparison,
-            "sample_scope": self.sample_scope,
-        }
-
-
-@dataclass(frozen=True)
-class PredictiveModelFold:
-    """One walk-forward prediction and the artifact that produced it."""
-
-    fold_index: int
-    period: Literal["validation", "test"]
-    prediction_session_date: str
-    target_date: str | None
-    training_start: str
-    training_end: str
-    training_observations: int
-    fit_scope: str
-    artifact: FittedModelArtifact
-    prediction: PredictiveModelOutput
-    metrics: dict[str, float]
-
-    def to_json(self) -> dict[str, JsonValue]:
-        """Return fold provenance, prediction, and single-observation errors."""
-        return {
-            "fold_index": self.fold_index,
-            "period": self.period,
-            "prediction_session_date": self.prediction_session_date,
-            "target_date": self.target_date,
-            "training_start": self.training_start,
-            "training_end": self.training_end,
-            "training_observations": self.training_observations,
-            "fit_scope": self.fit_scope,
-            "artifact": self.artifact.to_json(),
-            "prediction": self.prediction.to_json(),
-            "metrics": self.metrics,
-        }
-
-
-@dataclass(frozen=True)
-class PredictiveModelEvaluation:
-    """Chronological split and metric records for one model calculation."""
-
-    mode: EvaluationMode
-    splits: tuple[PredictiveModelSplit, ...]
-    period_metrics: tuple[PredictiveModelPeriodMetrics, ...]
-    assumptions: tuple[str, ...]
-    warnings: tuple[str, ...]
-    limitations: tuple[str, ...]
-    unsupported_claims: tuple[str, ...]
-    folds: tuple[PredictiveModelFold, ...] = ()
-    benchmark: NaiveBenchmarkEvaluation | None = None
-    is_eligible_for_strategy: bool = False
-    eligibility_reason: str = (
-        "Predictive Model is not eligible for a Strategy until the naive benchmark "
-        "comparison is complete."
-    )
-
-    def to_json(self) -> dict[str, JsonValue]:
-        """Return the complete evaluation record for a Run manifest."""
-        return {
-            "mode": self.mode,
-            "splits": [split.to_json() for split in self.splits],
-            "period_metrics": [metrics.to_json() for metrics in self.period_metrics],
-            "folds": [fold.to_json() for fold in self.folds],
-            "benchmark": self.benchmark.to_json() if self.benchmark else None,
-            "assumptions": list(self.assumptions),
-            "warnings": list(self.warnings),
-            "limitations": list(self.limitations),
-            "unsupported_claims": list(self.unsupported_claims),
-            "is_eligible_for_strategy": self.is_eligible_for_strategy,
-            "eligibility_reason": self.eligibility_reason,
-            "leakage_policy": {
-                "initial_feature_and_preprocessing_fit_scope": "training_only",
-                "future_labels_excluded_from_each_training_window": True,
-                "validation_and_test_labels_excluded_from_initial_training": True,
-                "fold_training_eligibility": (
-                    "feature_session_before_prediction_session_and_label_available_by_"
-                    "prediction_session"
-                ),
-                "fold_feature_and_preprocessing_policy": (
-                    "causal_features_from_session_history_and_learned_state_fit_on_"
-                    "each_fold_training_window"
-                ),
-            },
-        }
-
-
-@dataclass(frozen=True)
-class PredictiveModelCalculation:
-    """Complete calculation result before optional Project persistence."""
-
-    metadata: PredictiveModelMetadata
-    artifact: FittedModelArtifact
-    parameters: dict[str, JsonValue]
-    seed: int | None
-    predictions: list[PredictiveModelOutput]
-    metrics: dict[str, float]
-    training_start: str
-    training_end: str
-    out_of_sample_status: str
-    evaluation: PredictiveModelEvaluation
-    fold_artifacts: list[FittedModelArtifact] = field(default_factory=list)
 
 
 FitFunction = Callable[[pd.DataFrame, dict[str, JsonValue], int | None], FittedModelArtifact]
@@ -569,6 +394,8 @@ def build_supervised_frame(
         rows,
         columns=["session_date", "momentum", "next_session_return", "target_date"],
     )
+
+
 def build_potts_supervised_frame(
     bars: Sequence[DailyBar],
     config: PottsGainLossParameters | None = None,
@@ -1300,6 +1127,3 @@ def run_predictive_model(
             unsupported_claims=unsupported,
         )
     )
-
-
-\r\n
