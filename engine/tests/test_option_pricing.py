@@ -46,3 +46,11 @@ def test_invalid_inputs_have_zero_iv_and_greeks():
 
     assert black_scholes_iv(1.0, inputs) == 0.0
     assert black_scholes_greeks(inputs, 0.2).delta == 0.0
+
+
+def test_non_finite_inputs_do_not_produce_non_finite_outputs():
+    inputs = OptionPricingInputs(float("nan"), 100.0, 1.0)
+
+    assert black_scholes_price(inputs, 0.2) == 0.0
+    assert black_scholes_iv(1.0, inputs) == 0.0
+    assert black_scholes_greeks(inputs, float("nan")).implied_volatility == 0.0

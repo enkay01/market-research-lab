@@ -36,6 +36,24 @@ def _normal_pdf(value: float) -> float:
 
 def black_scholes_price(inputs: OptionPricingInputs, volatility: float) -> float:
     """Calculate one European option price."""
+    if (
+        not all(
+            math.isfinite(value)
+            for value in (
+                inputs.spot,
+                inputs.strike,
+                inputs.years,
+                inputs.rate,
+                inputs.dividend,
+                volatility,
+            )
+        )
+        or inputs.spot <= 0.0
+        or inputs.strike <= 0.0
+        or inputs.years < 0.0
+        or inputs.right not in ("put", "call")
+    ):
+        return 0.0
     if inputs.years <= 0.0:
         return max(
             0.0,
@@ -63,7 +81,18 @@ def black_scholes_price(inputs: OptionPricingInputs, volatility: float) -> float
 
 def black_scholes_iv(option_price: float, inputs: OptionPricingInputs) -> float:
     """Solve European Black-Scholes implied volatility by bisection."""
-    if option_price <= 0.0 or inputs.spot <= 0.0 or inputs.strike <= 0.0 or inputs.years <= 0.0:
+    if (
+        not math.isfinite(option_price)
+        or option_price <= 0.0
+        or not all(
+            math.isfinite(value)
+            for value in (inputs.spot, inputs.strike, inputs.years, inputs.rate, inputs.dividend)
+        )
+        or inputs.spot <= 0.0
+        or inputs.strike <= 0.0
+        or inputs.years <= 0.0
+        or inputs.right not in ("put", "call")
+    ):
         return 0.0
     low, high = 1e-6, 5.0
     low_price = black_scholes_price(inputs, low)
@@ -81,8 +110,23 @@ def black_scholes_iv(option_price: float, inputs: OptionPricingInputs) -> float:
 
 def black_scholes_greeks(inputs: OptionPricingInputs, volatility: float) -> OptionGreeks:
     """Calculate local European Black-Scholes Greeks."""
-    if min(inputs.spot, inputs.strike, inputs.years, volatility) <= 0.0:
-        return OptionGreeks(0.0, 0.0, 0.0, 0.0, max(volatility, 0.0))
+    if (
+        not all(
+            math.isfinite(value)
+            for value in (
+                inputs.spot,
+                inputs.strike,
+                inputs.years,
+                inputs.rate,
+                inputs.dividend,
+                volatility,
+            )
+        )
+        or min(inputs.spot, inputs.strike, inputs.years, volatility) <= 0.0
+        or inputs.right not in ("put", "call")
+    ):
+        safe_volatility = volatility if math.isfinite(volatility) else 0.0
+        return OptionGreeks(0.0, 0.0, 0.0, 0.0, max(safe_volatility, 0.0))
     root = volatility * math.sqrt(inputs.years)
     d1 = (
         math.log(inputs.spot / inputs.strike)
