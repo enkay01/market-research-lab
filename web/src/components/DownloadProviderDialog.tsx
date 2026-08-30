@@ -6,10 +6,8 @@ import {
   HStack,
   Button,
   TextInput,
-  Text,
   Banner,
-  SegmentedControl,
-  SegmentedControlItem,
+  Selector,
 } from "@astryxdesign/core";
 import { api, type ProviderDownloadResponse } from "../api/client";
 
@@ -18,6 +16,20 @@ interface DownloadProviderDialogProps {
   onClose: () => void;
   onSuccess: (response: ProviderDownloadResponse) => void;
 }
+
+const PROVIDER_OPTIONS = [
+  { value: "massive", label: "Massive / Polygon (Stocks & Options)" },
+  { value: "alpaca", label: "Alpaca (Options Minutes)" },
+  { value: "tiingo", label: "Tiingo (EOD Prices)" },
+  { value: "sec_edgar", label: "SEC EDGAR (Fundamentals)" },
+];
+
+const MASSIVE_FEED_OPTIONS = [
+  { value: "daily_bars", label: "Daily Bars (Stocks)" },
+  { value: "minute_bars", label: "Minute Bars (Stocks)" },
+  { value: "option_contracts", label: "Put Option Contracts" },
+  { value: "option_trades", label: "Option Minute Trades" },
+];
 
 export function DownloadProviderDialog({ isOpen, onClose, onSuccess }: DownloadProviderDialogProps) {
   const [provider, setProvider] = useState<"massive" | "alpaca" | "tiingo" | "sec_edgar">("massive");
@@ -103,46 +115,34 @@ export function DownloadProviderDialog({ isOpen, onClose, onSuccess }: DownloadP
       <form onSubmit={handleSubmit}>
         <VStack gap={4}>
           {error && (
-            <Banner status="error" title="Download Error">
-              {error}
-            </Banner>
+            <Banner status="error" title="Download Error" description={error} />
           )}
 
-          <VStack gap={1}>
-            <Text weight="medium">Data Provider</Text>
-            <SegmentedControl
-              label="Select Provider"
-              layout="fill"
+          <VStack gap={3}>
+            <Selector
+              label="Data Provider"
               value={provider}
+              options={PROVIDER_OPTIONS}
               onChange={(val) => {
-                // SAFETY: Value is constrained by SegmentedControlItem values
+                // SAFETY: Value is constrained by PROVIDER_OPTIONS values
                 setProvider(val as "massive" | "alpaca" | "tiingo" | "sec_edgar");
               }}
-              <SegmentedControlItem value="massive" label="Massive / Polygon (Stocks & Options)" />
-              <SegmentedControlItem value="alpaca" label="Alpaca (Options Minutes)" />
-              <SegmentedControlItem value="tiingo" label="Tiingo (EOD Prices)" />
-              <SegmentedControlItem value="sec_edgar" label="SEC EDGAR" />
-            </SegmentedControl>
-          </VStack>
+              isRequired
+            />
 
-          {provider === "massive" && (
-            <VStack gap={1}>
-              <Text weight="medium">Data Feed Type</Text>
-              <SegmentedControl
-                label="Select Feed Type"
+            {provider === "massive" && (
+              <Selector
+                label="Data Feed Type"
                 value={massiveType}
+                options={MASSIVE_FEED_OPTIONS}
                 onChange={(val) => {
-                  // SAFETY: Value is constrained by SegmentedControlItem values
+                  // SAFETY: Value is constrained by MASSIVE_FEED_OPTIONS values
                   setMassiveType(val as "daily_bars" | "minute_bars" | "option_contracts" | "option_trades");
                 }}
-              >
-                <SegmentedControlItem value="daily_bars" label="Daily Bars" />
-                <SegmentedControlItem value="minute_bars" label="Minute Bars" />
-                <SegmentedControlItem value="option_contracts" label="Put Option Contracts" />
-                <SegmentedControlItem value="option_trades" label="Option Minute Trades" />
-              </SegmentedControl>
-            </VStack>
-          )}
+                isRequired
+              />
+            )}
+          </VStack>
 
           {provider === "tiingo" || provider === "alpaca" || provider === "massive" ? (
             <VStack gap={1}>

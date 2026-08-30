@@ -61,9 +61,7 @@ export function ImportDataDialog({ isOpen, onClose, onSuccess }: ImportDataDialo
       <form onSubmit={handleSubmit}>
         <VStack gap={4}>
           {error && (
-            <Banner status="error" title="Import Error">
-              {error}
-            </Banner>
+            <Banner status="error" title="Import Error" description={error} />
           )}
 
           <VStack gap={1}>

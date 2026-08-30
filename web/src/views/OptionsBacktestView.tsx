@@ -137,7 +137,7 @@ export function OptionsBacktestView({ project, onBackToStandard }: OptionsBackte
         </HStack>
       </Card>
 
-      {error && <Banner status="error" title="Options Backtest error">{error}</Banner>}
+      {error && <Banner status="error" title="Options Backtest Error" description={error} />}
 
       <Card padding={3}>
         <VStack gap={3}>
@@ -174,7 +174,9 @@ export function OptionsBacktestView({ project, onBackToStandard }: OptionsBackte
 
           <Card padding={3}><VStack gap={1}><Heading level={4}>Run provenance</Heading><Text size="sm" type="supporting">Run {result.run_id ?? "unsaved"} · Provider {String(result.manifest.provider ?? "unknown")} · Dataset {result.specification.dataset_version_id}</Text><Text size="sm" type="supporting">Strategy revision {result.specification.strategy_revision} · Source {String(result.manifest.source_sha256 ?? "not recorded")}</Text></VStack></Card>
 
-          {result.warnings.length > 0 && <Banner status="warning" title="Run warnings">{result.warnings.join(" ")}</Banner>}
+          {result.warnings.length > 0 && (
+            <Banner status="warning" title="Run Warnings" description={result.warnings.join(" ")} />
+          )}
 
           {selectedPosition && (
             <Card padding={3}>
