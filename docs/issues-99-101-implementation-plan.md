@@ -7,7 +7,7 @@
 
 ## Issue #99: deepen Option Backtest internal seams
 
-The public `run_option_backtest` function, `OptionsBacktestSpecification`, result types, API, persistence, UI, and Definition Revisions do not change.
+The public `run_option_backtest`, `OptionsBacktestSpecification`, result, API, persistence, and UI contract shapes stay unchanged. The extraction may correct invalid internal behavior, including expiration settlement.
 
 | Requirement | Code module | Test | Check |
 |---|---|---|---|
@@ -15,7 +15,7 @@ The public `run_option_backtest` function, `OptionsBacktestSpecification`, resul
 | Isolate DTE, Delta, width, trend, and pullback candidate rules. | `engine/src/market_research_lab/option_spread_selection.py` | `engine/tests/test_option_spread_selection.py` | Synthetic contracts and daily bars accept and reject candidates for each rule. |
 | Use explicit state for entry, trailing profit changes, stop loss, and expiration. | `engine/src/market_research_lab/option_position_lifecycle.py` | `engine/tests/test_option_position_lifecycle.py` | Deterministic minute sequences produce the expected state transitions and settlement. |
 | Separate post-exit counterfactual results from replay. | `engine/src/market_research_lab/option_counterfactual.py` | `engine/tests/test_option_counterfactual.py` | Synthetic post-exit prices produce exact recovery and expiration results. |
-| Preserve the external behavior. | `engine/src/market_research_lab/option_backtest.py` | `engine/tests/test_options_backtest.py` and `engine/tests/test_api_options.py` | Existing golden and API checks pass without contract changes. |
+| Preserve the public contract shapes while correcting invalid internal behavior. | `engine/src/market_research_lab/option_backtest.py` and `engine/src/market_research_lab/option_position_lifecycle.py` | `engine/tests/test_options_backtest.py`, `engine/tests/test_api_options.py`, and `engine/tests/test_option_position_lifecycle.py` | Existing golden and API checks pass. Expiration settlement uses `min(max(short_strike - underlying_price, 0), width)`, with valid OHLC regression tests covering prices above, at, between, and below both strikes. |
 
 Risks are numerical drift at pricing boundaries, a change in candidate rejection order, stale-price use, future-data leakage, and a lifecycle transition that changes the primary worst-price path. Tests use fixed Option Contracts, minute trades, daily bars, earnings facts, and direct state values. They do not need network or filesystem doubles.
 
