@@ -328,6 +328,13 @@ export const api = {
         params: { path: { project_id: projectId, run_id: runId } },
       }),
     ),
+  bulkDeleteRuns: (projectId: string, runIds: string[]) =>
+    dataOrThrow(
+      client.POST("/api/projects/{project_id}/runs/bulk-delete", {
+        params: { path: { project_id: projectId } },
+        body: { run_ids: runIds },
+      }),
+    ),
   importDataset: (source: string, file: File) => {
     const formData = new FormData();
     formData.append("source", source);
@@ -354,10 +361,19 @@ export const api = {
       }),
     ),
   listDatasets: () => dataOrThrow(client.GET("/api/datasets")),
-  deleteDataset: (datasetVersionId: string) =>
+  deleteDataset: (datasetVersionId: string, force: boolean = true) =>
     dataOrThrow(
       client.DELETE("/api/datasets/{dataset_version_id}", {
-        params: { path: { dataset_version_id: datasetVersionId } },
+        params: {
+          path: { dataset_version_id: datasetVersionId },
+          query: { force },
+        },
+      }),
+    ),
+  bulkDeleteDatasets: (datasetVersionIds: string[], force: boolean = true) =>
+    dataOrThrow(
+      client.POST("/api/datasets/bulk-delete", {
+        body: { dataset_version_ids: datasetVersionIds, force },
       }),
     ),
   getPreview: (datasetVersionId: string) =>

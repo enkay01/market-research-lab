@@ -175,6 +175,47 @@ def test_cleanup_api_protects_run_provenance_before_deleting_data(tmp_path):
     assert not parquet_files[0].exists()
 
 
+def test_bulk_delete_api_endpoints(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    content = io.BytesIO(b"symbol,date,open,high,low,close,volume\nAAPL,2024-01-02,100,101,99,100.5,1000\n")
+    res1 = client.post("/api/datasets", files={"file": ("bars1.csv", content, "text/csv")}, data={"source": "bulk-api-1"})
+    content2 = io.BytesIO(b"symbol,date,open,high,low,close,volume\nMSFT,2024-01-02,200,201,199,200.5,1000\n")
+    res2 = client.post("/api/datasets", files={"file": ("bars2.csv", content2, "text/csv")}, data={"source": "bulk-api-2"})
+    d1 = res1.json()["dataset_version_id"]
+    d2 = res2.json()["dataset_version_id"]
+
+    project = client.post("/api/projects", json={"name": "Bulk API Project"}).json()
+    r1 = client.post(f"/api/projects/{project['id']}/runs", json={"dataset_version_ids": [d1]}).json()["id"]
+    r2 = client.post(f"/api/projects/{project['id']}/runs", json={"dataset_version_ids": [d2]}).json()["id"]
+
+    # Bulk delete runs
+    bulk_run_res = client.post(f"/api/projects/{project['id']}/runs/bulk-delete", json={"run_ids": [r1, r2]})
+    assert bulk_run_res.status_code == 200
+    assert set(bulk_run_res.json()["deleted_ids"]) == {r1, r2}
+    assert client.get(f"/api/projects/{project['id']}/runs").json() == []
+
+    # Bulk delete datasets
+    bulk_data_res = client.post("/api/datasets/bulk-delete", json={"dataset_version_ids": [d1, d2], "force": True})
+    assert bulk_data_res.status_code == 200
+    assert set(bulk_data_res.json()["deleted_ids"]) == {d1, d2}
+    assert client.get("/api/datasets").json() == []
+
+
+def test_force_dataset_deletion_bypasses_run_in_use_error(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    content = io.BytesIO(b"symbol,date,open,high,low,close,volume\nAAPL,2024-01-02,100,101,99,100.5,1000\n")
+    res = client.post("/api/datasets", files={"file": ("bars.csv", content, "text/csv")}, data={"source": "force-test"})
+    d_id = res.json()["dataset_version_id"]
+    project = client.post("/api/projects", json={"name": "Force Project"}).json()
+    client.post(f"/api/projects/{project['id']}/runs", params={"dataset_version_id": d_id})
+
+    # Without force, 409
+    assert client.delete(f"/api/datasets/{d_id}").status_code == 409
+    # With force, 204
+    assert client.delete(f"/api/datasets/{d_id}?force=true").status_code == 204
+    assert client.get("/api/datasets").json() == []
+
+
 def test_validation_errors_return_a_stable_error_response(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
 

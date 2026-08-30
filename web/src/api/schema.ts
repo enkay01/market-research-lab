@@ -950,6 +950,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/datasets/bulk-delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bulk Delete Datasets */
+        post: operations["bulk_delete_datasets_api_datasets_bulk_delete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/runs/{run_id}": {
         parameters: {
             query?: never;
@@ -962,6 +979,23 @@ export interface paths {
         post?: never;
         /** Delete Project Run */
         delete: operations["delete_project_run_api_projects__project_id__runs__run_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/runs/bulk-delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bulk Delete Project Runs */
+        post: operations["bulk_delete_project_runs_api_projects__project_id__runs_bulk_delete_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1190,6 +1224,31 @@ export interface components {
             source: string;
             /** File */
             file: string;
+        };
+        /** BulkDeleteDatasetsRequest */
+        BulkDeleteDatasetsRequest: {
+            /** Dataset Version Ids */
+            dataset_version_ids: string[];
+            /**
+             * Force
+             * @default true
+             */
+            force: boolean;
+        };
+        /** BulkDeleteDatasetsResponse */
+        BulkDeleteDatasetsResponse: {
+            /** Deleted Ids */
+            deleted_ids: string[];
+        };
+        /** BulkDeleteRunsRequest */
+        BulkDeleteRunsRequest: {
+            /** Run Ids */
+            run_ids: string[];
+        };
+        /** BulkDeleteRunsResponse */
+        BulkDeleteRunsResponse: {
+            /** Deleted Ids */
+            deleted_ids: string[];
         };
         /** CashFlowForecastYearResponse */
         CashFlowForecastYearResponse: {
@@ -5183,7 +5242,9 @@ export interface operations {
     };
     delete_dataset_api_datasets__dataset_version_id__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                force?: boolean;
+            };
             header?: never;
             path: {
                 dataset_version_id: string;
@@ -5198,6 +5259,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bulk_delete_datasets_api_datasets_bulk_delete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkDeleteDatasetsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkDeleteDatasetsResponse"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -5228,6 +5322,41 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bulk_delete_project_runs_api_projects__project_id__runs_bulk_delete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkDeleteRunsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkDeleteRunsResponse"];
+                };
             };
             /** @description Validation Error */
             422: {

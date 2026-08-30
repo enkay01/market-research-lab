@@ -83,3 +83,35 @@ def test_dataset_version_deletion_removes_catalogue_record_and_file(tmp_path: Pa
     assert not parquet_file.exists()
     with pytest.raises(DatasetVersionNotFoundError):
         store.delete_dataset_version(dataset_version_id)
+
+
+def test_bulk_delete_datasets_and_runs(tmp_path: Path):
+    market_store = MarketDataStore(tmp_path)
+    project_store = ProjectStore(tmp_path)
+
+    v1, p1 = _ingest_daily_bars(market_store, tmp_path)
+    # create second file
+    f2 = tmp_path / "bars2.csv"
+    f2.write_text("symbol,date,open,high,low,close,volume\nMSFT,2024-01-02,200,201,199,200.5,1000\n", encoding="utf-8")
+    v2_obj = market_store.ingest(IngestionRequest(source="cleanup-test-2", file_path=f2, retrieval_time="2024-01-03T00:00:00Z"))
+    v2 = v2_obj.id
+    p2 = market_store.datasets_dir / v2_obj.files[0]
+
+    assert p1.exists() and p2.exists()
+    assert len(market_store.list_dataset_versions()) == 2
+
+    deleted_versions = market_store.bulk_delete_dataset_versions([v1, v2])
+    assert set(deleted_versions) == {v1, v2}
+    assert market_store.list_dataset_versions() == []
+    assert not p1.exists()
+    assert not p2.exists()
+
+    # Test bulk delete runs
+    project = project_store.create_project("Bulk Runs Test")
+    r1 = project_store.create_run(project.id, dataset_version_ids=["v1"])
+    r2 = project_store.create_run(project.id, dataset_version_ids=["v2"])
+    assert len(project_store.list_run_summaries(project.id)) == 2
+
+    deleted_runs = project_store.bulk_delete_runs(project.id, [r1, r2])
+    assert set(deleted_runs) == {r1, r2}
+    assert project_store.list_run_summaries(project.id) == []

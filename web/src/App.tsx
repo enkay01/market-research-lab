@@ -23,7 +23,7 @@ import { ModelsView } from "./views/ModelsView";
 import { BacktestView } from "./views/BacktestView";
 import { AlertsView } from "./views/AlertsView";
 import { StudyView } from "./views/StudyView";
-import { CleanupView } from "./views/CleanupView";
+import { DatasetManagementView } from "./views/DatasetManagementView";
 
 export type DomainTab =
   | "data"
@@ -33,10 +33,11 @@ export type DomainTab =
   | "backtest"
   | "alerts"
   | "study"
+  | "datasets"
   | "cleanup";
 
 function isDomainTab(value: string | null): value is DomainTab {
-  return value !== null && ["data", "research", "valuation", "models", "backtest", "alerts", "study", "cleanup"].includes(value);
+  return value !== null && ["data", "research", "valuation", "models", "backtest", "alerts", "study", "datasets", "cleanup"].includes(value);
 }
 
 export function App() {
@@ -70,20 +71,31 @@ export function App() {
   const [projectError, setProjectError] = useState<string | null>(null);
 
   useEffect(() => {
-    void Promise.all([api.health(), api.listProjects()])
-      .then(([health, availableProjects]) => {
+    let isMounted = true;
+    async function checkHealthAndLoad() {
+      try {
+        const [health, availableProjects] = await Promise.all([api.health(), api.listProjects()]);
+        if (!isMounted) return;
         setProjects(availableProjects);
-        if (availableProjects.length > 0) {
-          setSelectedProject(availableProjects[0]);
-        }
+        setSelectedProject((prev) => prev ?? availableProjects[0]);
         const isOk = health.status === "ok";
         setEngineConnected(isOk);
         setStatusText(isOk ? "Engine Online" : "Engine Unavailable");
-      })
-      .catch((cause: unknown) => {
+      } catch (cause: unknown) {
+        if (!isMounted) return;
         setEngineConnected(false);
         setStatusText(cause instanceof Error ? cause.message : "Engine Offline");
-      });
+      }
+    }
+
+    void checkHealthAndLoad();
+    const interval = setInterval(() => {
+      void checkHealthAndLoad();
+    }, 4000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
   async function handleCreateProject(e: FormEvent<HTMLFormElement>) {
@@ -195,9 +207,9 @@ export function App() {
                 as="button"
               />
               <TopNavItem
-                label="Cleanup"
-                isSelected={activeTab === "cleanup"}
-                onClick={() => setActiveTab("cleanup")}
+                label="Dataset Management"
+                isSelected={activeTab === "datasets" || activeTab === "cleanup"}
+                onClick={() => setActiveTab("datasets")}
                 as="button"
               />
             </HStack>
@@ -265,8 +277,8 @@ export function App() {
         />
       )}
       {activeTab === "study" && <StudyView project={selectedProject} />}
-      {activeTab === "cleanup" && (
-        <CleanupView project={selectedProject} onProjectDeleted={handleProjectDeleted} />
+      {(activeTab === "datasets" || activeTab === "cleanup") && (
+        <DatasetManagementView project={selectedProject} onProjectDeleted={handleProjectDeleted} />
       )}
 
 

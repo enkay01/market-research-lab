@@ -246,6 +246,20 @@ class ProjectStore:
             raise RunNotFoundError(run_id)
         shutil.rmtree(run_directory)
 
+    def bulk_delete_runs(self, project_id: str, run_ids: list[str]) -> list[str]:
+        """Delete multiple generated Run directories from a Project."""
+        self.get_project(project_id)
+        deleted: list[str] = []
+        runs_dir = self._directory(project_id) / "runs"
+        for run_id in run_ids:
+            if not _RUN_ID_REGEX.fullmatch(run_id):
+                continue
+            run_directory = runs_dir / run_id
+            if run_directory.is_dir():
+                shutil.rmtree(run_directory)
+                deleted.append(run_id)
+        return deleted
+
     def find_runs_referencing_dataset(self, dataset_version_id: str) -> list[dict[str, JsonValue]]:
         """Find Project Runs that would lose provenance if data were deleted."""
         if not self.projects_root.is_dir():
