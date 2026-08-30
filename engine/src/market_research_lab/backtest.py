@@ -13,7 +13,7 @@ from typing import Literal, Sequence
 from .exchange_calendar import get_trading_days
 from .json_types import JsonValue
 from .market_data import CorporateAction, DailyBar
-from .portfolio_ledger import PortfolioLedger
+from .portfolio_ledger import PortfolioLedger, SnapshotMetrics
 from .strategies import MarketView, StrategyTarget, evaluate_strategy, get_strategy_spec
 
 
@@ -1435,11 +1435,13 @@ def run_backtest(
         ledger_account.record_snapshot(
             date_str,
             portfolio_val,
-            gross_exposure=gross_exp,
-            net_exposure=net_exp,
-            cash_interest=cash_interest_today,
-            borrow_fees=borrow_fee_today,
-            dividends=dividends_today,
+            SnapshotMetrics(
+                gross_exposure=gross_exp,
+                net_exposure=net_exp,
+                cash_interest=cash_interest_today,
+                borrow_fees=borrow_fee_today,
+                dividends=dividends_today,
+            ),
         )
 
         ledger.append(

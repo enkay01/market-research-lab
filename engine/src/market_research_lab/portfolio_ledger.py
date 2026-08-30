@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any
+
+from .json_types import JsonValue
 
 
 class InsufficientCollateralError(ValueError):
@@ -25,6 +26,17 @@ class CashFlowEntry:
     flow_type: str
     description: str = ""
     balance_after: float = 0.0
+
+
+@dataclass(frozen=True)
+class SnapshotMetrics:
+    """Optional point-in-time metrics recorded alongside ledger valuations."""
+
+    gross_exposure: float = 0.0
+    net_exposure: float = 0.0
+    cash_interest: float = 0.0
+    borrow_fees: float = 0.0
+    dividends: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -201,7 +213,7 @@ class PortfolioLedger:
         )
         return interest
 
-    def lock_collateral(self, amount: float, strict: bool = True) -> None:
+    def lock_collateral(self, amount: float, *, strict: bool = True) -> None:
         """Lock margin collateral for an open spread or short position."""
         if amount < 0:
             raise ValueError("Collateral amount to lock must be non-negative.")
@@ -233,30 +245,26 @@ class PortfolioLedger:
         self,
         timestamp: str,
         portfolio_value: float,
-        *,
-        gross_exposure: float = 0.0,
-        net_exposure: float = 0.0,
-        cash_interest: float = 0.0,
-        borrow_fees: float = 0.0,
-        dividends: float = 0.0,
+        metrics: SnapshotMetrics | None = None,
     ) -> LedgerSnapshot:
         """Record a point-in-time ledger snapshot."""
+        m = metrics or SnapshotMetrics()
         snapshot = LedgerSnapshot(
             timestamp=timestamp,
             cash=self._cash,
             locked_collateral=self._locked_collateral,
             available_cash=self.available_cash,
             portfolio_value=portfolio_value,
-            gross_exposure=gross_exposure,
-            net_exposure=net_exposure,
-            cash_interest=cash_interest,
-            borrow_fees=borrow_fees,
-            dividends=dividends,
+            gross_exposure=m.gross_exposure,
+            net_exposure=m.net_exposure,
+            cash_interest=m.cash_interest,
+            borrow_fees=m.borrow_fees,
+            dividends=m.dividends,
         )
         self._snapshots.append(snapshot)
         return snapshot
 
-    def build_equity_curve(self) -> list[dict[str, Any]]:
+    def build_equity_curve(self) -> list[dict[str, JsonValue]]:
         """Build equity curve dictionary entries from recorded snapshots."""
         return [
             {
@@ -266,9 +274,9 @@ class PortfolioLedger:
             for snapshot in self._snapshots
         ]
 
-    def build_drawdown_curve(self) -> list[dict[str, Any]]:
+    def build_drawdown_curve(self) -> list[dict[str, JsonValue]]:
         """Build peak-to-trough drawdown curve entries from recorded snapshots."""
-        curve: list[dict[str, Any]] = []
+        curve: list[dict[str, JsonValue]] = []
         running_peak = -math.inf
         for snapshot in self._snapshots:
             running_peak = max(running_peak, snapshot.portfolio_value)

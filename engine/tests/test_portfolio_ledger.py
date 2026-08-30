@@ -7,6 +7,7 @@ import pytest
 from market_research_lab.portfolio_ledger import (
     InsufficientCollateralError,
     PortfolioLedger,
+    SnapshotMetrics,
 )
 
 
@@ -160,20 +161,17 @@ def test_snapshot_recording_and_curve_building() -> None:
     s1 = ledger.record_snapshot(
         timestamp="2026-01-02",
         portfolio_value=100_000.0,
-        gross_exposure=0.5,
-        net_exposure=0.5,
+        metrics=SnapshotMetrics(gross_exposure=0.5, net_exposure=0.5),
     )
     s2 = ledger.record_snapshot(
         timestamp="2026-01-05",
         portfolio_value=110_000.0,
-        gross_exposure=0.6,
-        net_exposure=0.6,
+        metrics=SnapshotMetrics(gross_exposure=0.6, net_exposure=0.6),
     )
     s3 = ledger.record_snapshot(
         timestamp="2026-01-06",
         portfolio_value=99_000.0,
-        gross_exposure=0.4,
-        net_exposure=0.4,
+        metrics=SnapshotMetrics(gross_exposure=0.4, net_exposure=0.4),
     )
 
     assert len(ledger.snapshots) == 3
