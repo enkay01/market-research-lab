@@ -6,16 +6,55 @@ import logging
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import Request
+from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
+from ..alerts import InvalidStrategyDefinitionError
+from ..backtest import BacktestError, BacktestParameterError
 from ..configuration import load_provider_credentials
+from ..indicators import IndicatorCalculationError, ParameterValidationError
 from ..json_types import JsonValue
 from ..logging_setup import run_log_context
-from ..market_data import MarketDataStore
-from ..projects import ProjectStore
+from ..market_data import (
+    DatasetVersionNotFoundError,
+    InadequateTemporalProvenanceError,
+    MarketDataStore,
+)
+from ..option_backtest import OptionBacktestError
+from ..predictive_models import (
+    PredictiveModelCalculationError,
+    PredictiveModelDataError,
+    PredictiveModelNotFoundError,
+    PredictiveModelParameterError,
+)
+from ..projects import (
+    ProjectNotFoundError,
+    ProjectStore,
+    RevisionNotFoundError,
+    RevisionNotImmutableError,
+    RunNotFoundError,
+)
 from ..providers import JsonFetcher, ProviderCredentials
+from ..research import (
+    InvalidSecurityIdError,
+    SecurityNotWatchedError,
+)
+from ..strategies import (
+    StrategyEvaluationError,
+    StrategyParameterValidationError,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class ErrorResponse(BaseModel):
+    code: str
+    message: str
+    details: dict[str, JsonValue] = Field(default_factory=dict)
+    diagnostic_id: str | None = None
 
 
 class SecurityNotFoundError(Exception):
@@ -110,4 +149,267 @@ def log_failed_run(
             "%s [diagnostic_id=%s]",
             message,
             diagnostic_id or "none",
+        )
+
+
+def register_domain_exception_handlers(app: FastAPI) -> None:
+    """Register domain-specific exception handlers on a FastAPI application instance."""
+
+    @app.exception_handler(ProjectNotFoundError)
+    async def project_not_found(_: Request, error: ProjectNotFoundError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=ErrorResponse(
+                code="project_not_found", message="The requested Project does not exist."
+            ).model_dump(),
+        )
+
+    @app.exception_handler(RunNotFoundError)
+    async def run_not_found(_: Request, error: RunNotFoundError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=ErrorResponse(
+                code="run_not_found",
+                message=f"The requested Run '{error}' does not exist.",
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(DatasetVersionNotFoundError)
+    async def dataset_version_not_found(
+        _: Request, error: DatasetVersionNotFoundError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=ErrorResponse(
+                code="dataset_version_not_found", message=str(error), details={}
+            ).model_dump(),
+        )
+
+    @app.exception_handler(DatasetVersionInUseError)
+    async def dataset_version_in_use(_: Request, error: DatasetVersionInUseError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=ErrorResponse(
+                code="dataset_version_in_use",
+                message=str(error),
+                details={"references": error.references},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(_: Request, error: RequestValidationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content=ErrorResponse(
+                code="validation_error",
+                message="The request is not valid.",
+                details={"errors": jsonable_encoder(error.errors())},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(InadequateTemporalProvenanceError)
+    async def inadequate_temporal_provenance(
+        _: Request, error: InadequateTemporalProvenanceError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="point_in_time_data_required",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(SecurityNotFoundError)
+    async def security_not_found(_: Request, error: SecurityNotFoundError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=ErrorResponse(
+                code="security_not_found",
+                message=str(error),
+                details={"identifier": error.identifier},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(SecurityNotWatchedError)
+    async def security_not_watched(_: Request, error: SecurityNotWatchedError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="security_not_watched",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(InvalidSecurityIdError)
+    async def invalid_security_id(_: Request, error: InvalidSecurityIdError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content=ErrorResponse(
+                code="invalid_security_id",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(ParameterValidationError)
+    async def parameter_validation_error(
+        _: Request, error: ParameterValidationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content=ErrorResponse(
+                code="parameter_validation_error",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(IndicatorCalculationError)
+    async def indicator_calculation_error(
+        _: Request, error: IndicatorCalculationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="indicator_calculation_error",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(StrategyParameterValidationError)
+    async def strategy_parameter_validation_error(
+        _: Request, error: StrategyParameterValidationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content=ErrorResponse(
+                code="parameter_validation_error",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(StrategyEvaluationError)
+    async def strategy_evaluation_error(_: Request, error: StrategyEvaluationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="strategy_evaluation_error",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(RevisionNotImmutableError)
+    async def revision_not_immutable(_: Request, error: RevisionNotImmutableError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="revision_not_immutable",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(RevisionNotFoundError)
+    async def revision_not_found(_: Request, error: RevisionNotFoundError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=ErrorResponse(
+                code="revision_not_found",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(InvalidStrategyDefinitionError)
+    async def invalid_strategy_definition(
+        _: Request, error: InvalidStrategyDefinitionError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="invalid_strategy_definition",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(BacktestParameterError)
+    async def backtest_parameter_error(_: Request, error: BacktestParameterError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content=ErrorResponse(
+                code="parameter_validation_error",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(OptionBacktestError)
+    async def option_backtest_error(_: Request, error: OptionBacktestError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="options_backtest_error", message=str(error), details={}
+            ).model_dump(),
+        )
+
+    @app.exception_handler(BacktestError)
+    async def backtest_error(_: Request, error: BacktestError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="backtest_error",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(PredictiveModelNotFoundError)
+    async def predictive_model_not_found(
+        _: Request, error: PredictiveModelNotFoundError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=ErrorResponse(
+                code="predictive_model_not_found", message=str(error), details={}
+            ).model_dump(),
+        )
+
+    @app.exception_handler(PredictiveModelParameterError)
+    async def predictive_model_parameter_error(
+        _: Request, error: PredictiveModelParameterError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content=ErrorResponse(
+                code="parameter_validation_error", message=str(error), details={}
+            ).model_dump(),
+        )
+
+    @app.exception_handler(PredictiveModelDataError)
+    async def predictive_model_data_error(
+        _: Request, error: PredictiveModelDataError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=ErrorResponse(
+                code="predictive_model_data_not_found", message=str(error), details={}
+            ).model_dump(),
+        )
+
+    @app.exception_handler(PredictiveModelCalculationError)
+    async def predictive_model_calculation_error(
+        _: Request, error: PredictiveModelCalculationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                code="predictive_model_calculation_error", message=str(error), details={}
+            ).model_dump(),
         )
