@@ -671,7 +671,9 @@ def run_backtest(
                 div_val = action.value
                 curr_s = positions.get(sym, 0.0)
                 div_cash = curr_s * div_val
-                ledger_account.record_dividend(div_cash)
+                ledger_account.record_dividend(
+                    div_cash, description=f"Dividend for {sym}", timestamp=date_str
+                )
                 cash = ledger_account.cash
                 dividends_today += div_cash
                 total_dividends_credited += div_cash
@@ -683,7 +685,12 @@ def run_backtest(
                     open_tr = open_trades.get(sym)
                     if curr_s > EPS:
                         proceeds = curr_s * liq_price
-                        ledger_account.record_cash_flow(proceeds)
+                        ledger_account.record_cash_flow(
+                            proceeds,
+                            flow_type="delisting_liquidation",
+                            description=f"Delisting liquidation proceeds for {sym}",
+                            timestamp=date_str,
+                        )
                         cash = ledger_account.cash
                         if open_tr is not None:
                             trade_pnl = proceeds - open_tr.entry_cost
@@ -711,7 +718,12 @@ def run_backtest(
                             del open_trades[sym]
                     else:
                         cover_cost = abs(curr_s) * liq_price
-                        ledger_account.record_cash_flow(-cover_cost)
+                        ledger_account.record_cash_flow(
+                            -cover_cost,
+                            flow_type="delisting_cover",
+                            description=f"Delisting short cover cost for {sym}",
+                            timestamp=date_str,
+                        )
                         cash = ledger_account.cash
                         if open_tr is not None:
                             trade_pnl = open_tr.entry_cost - cover_cost
@@ -767,6 +779,7 @@ def run_backtest(
                 specification.execution.cash_interest_rate,
                 days=1.0,
                 trading_days_per_year=TRADING_DAYS_PER_YEAR,
+                timestamp=date_str,
             )
             cash = ledger_account.cash
         if current_eligible_at is not None:
@@ -879,7 +892,18 @@ def run_backtest(
                 commission = abs(notional) * specification.execution.commission_rate
                 slippage_cost = sell_qty * open_p * slippage
 
-                ledger_account.record_cash_flow(abs(notional) - commission)
+                ledger_account.record_cash_flow(
+                    abs(notional),
+                    flow_type="fill_sell",
+                    description=f"Sell fill notional for {sym}",
+                    timestamp=date_str,
+                )
+                ledger_account.record_cash_flow(
+                    -commission,
+                    flow_type="commission",
+                    description=f"Sell commission for {sym}",
+                    timestamp=date_str,
+                )
                 cash = ledger_account.cash
                 new_shares = curr_shares - sell_qty
                 positions[sym] = new_shares
@@ -1053,10 +1077,20 @@ def run_backtest(
                 commission = notional * specification.execution.commission_rate
                 slippage_cost = buy_qty * open_p * slippage
 
-                if margin_req >= 1.0:
-                    ledger_account.cash = max(0.0, ledger_account.cash - notional - commission)
-                else:
-                    ledger_account.record_cash_flow(-notional - commission)
+                ledger_account.record_cash_flow(
+                    -notional,
+                    flow_type="fill_buy",
+                    description=f"Buy fill notional for {sym}",
+                    timestamp=date_str,
+                )
+                ledger_account.record_cash_flow(
+                    -commission,
+                    flow_type="commission",
+                    description=f"Buy commission for {sym}",
+                    timestamp=date_str,
+                )
+                if margin_req >= 1.0 and ledger_account.cash < 0.0:
+                    ledger_account.cash = 0.0
                 cash = ledger_account.cash
                 new_shares = curr_shares + buy_qty
                 positions[sym] = new_shares
@@ -1312,7 +1346,13 @@ def run_backtest(
                     borrow_fee_today += daily_fee
 
         if borrow_fee_today > 0.0:
-            ledger_account.cash = max(0.0, ledger_account.cash - borrow_fee_today)
+            ledger_account.record_borrow_fee(
+                borrow_fee_today,
+                description=f"Short borrow fee for session {date_str}",
+                timestamp=date_str,
+            )
+            if ledger_account.cash < 0.0:
+                ledger_account.cash = 0.0
             cash = ledger_account.cash
 
         position_snapshots: dict[str, PositionSnapshot] = {}
@@ -1388,7 +1428,7 @@ def run_backtest(
                                 reason=maint_warning,
                                 requested_weight=position_snapshots.get(
                                     sym, PositionSnapshot(0.0, 0.0, 0.0, 0.0)
-                                ).weight,
+                               ).weight,
                             )
                         )
 
@@ -1437,19 +1477,15 @@ def run_backtest(
                     f"(weight {pending.weight}) has no subsequent bar to fill."
                 )
 
-    running_peak = -math.inf
-    curve: list[EquityPoint] = []
-    drawdown_curve: list[EquityPoint] = []
-    for row in ledger:
-        running_peak = max(running_peak, row.portfolio_value)
-        drawdown = (row.portfolio_value / running_peak - 1.0) if running_peak > 0 else 0.0
-        pt = EquityPoint(
-            session_date=row.session_date,
-            equity=round(row.portfolio_value, 4),
-            drawdown=round(drawdown, 6),
+    drawdown_curve = [
+        EquityPoint(
+            session_date=pt["timestamp"],
+            equity=pt["equity"],
+            drawdown=pt["drawdown"],
         )
-        curve.append(pt)
-        drawdown_curve.append(pt)
+        for pt in ledger_account.build_drawdown_curve()
+    ]
+    curve = list(drawdown_curve)
 
     # -------------------------------------------------------------
     # Benchmark calculations

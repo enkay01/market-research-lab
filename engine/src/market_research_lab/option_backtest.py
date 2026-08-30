@@ -1190,6 +1190,7 @@ def _simulate_path(
                     specification.cash_interest_rate,
                     elapsed_seconds=elapsed_seconds,
                     days_per_year=365.0,
+                    timestamp=_minute_text(minute),
                 )
         previous_minute = minute
         date_text = minute.date().isoformat()
@@ -1254,11 +1255,24 @@ def _simulate_path(
                 position.exit_value = chosen_value
                 position.exit_fee = specification.fee_per_leg * 2.0 * position.quantity
                 position.close_rule = position.pending_exit_reason
-                net_exit_cost = (
+                exit_cost = (
                     chosen_value * position.quantity * position.candidate.short_contract.multiplier
-                    + position.exit_fee
                 )
-                ledger_account.record_cash_flow(-net_exit_cost)
+                ledger_account.record_cash_flow(
+                    -exit_cost,
+                    flow_type="option_exit_cost",
+                    description=(
+                        f"Option exit cost ({position.close_rule}) "
+                        f"for {position.position_id}"
+                    ),
+                    timestamp=_minute_text(minute),
+                )
+                ledger_account.record_cash_flow(
+                    -position.exit_fee,
+                    flow_type="option_exit_fee",
+                    description=f"Option exit fee for {position.position_id}",
+                    timestamp=_minute_text(minute),
+                )
                 ledger_account.release_collateral(position.collateral)
                 positions.append(
                     _path_position(
@@ -1367,13 +1381,28 @@ def _simulate_path(
                     if position.exit_value == 0.0
                     else specification.fee_per_leg * 2.0 * position.quantity
                 )
-                net_exit_cost = (
-                    position.exit_value
-                    * position.quantity
-                    * position.candidate.short_contract.multiplier
-                    + position.exit_fee
-                )
-                ledger_account.record_cash_flow(-net_exit_cost)
+                if position.exit_value > 0.0:
+                    exit_cost = (
+                        position.exit_value
+                        * position.quantity
+                        * position.candidate.short_contract.multiplier
+                    )
+                    ledger_account.record_cash_flow(
+                        -exit_cost,
+                        flow_type="option_exit_cost",
+                        description=(
+                            f"Expiration settlement ({position.close_rule}) "
+                            f"for {position.position_id}"
+                        ),
+                        timestamp=_minute_text(minute),
+                    )
+                if position.exit_fee > 0.0:
+                    ledger_account.record_cash_flow(
+                        -position.exit_fee,
+                        flow_type="option_exit_fee",
+                        description=f"Expiration fee for {position.position_id}",
+                        timestamp=_minute_text(minute),
+                    )
                 ledger_account.release_collateral(position.collateral)
                 positions.append(
                     _path_position(
@@ -1556,7 +1585,18 @@ def _simulate_path(
                 position_counter += 1
                 entry_credit_total = credit_unit * multiplier * quantity
                 entry_fee = specification.fee_per_leg * 2.0 * quantity
-                ledger_account.record_cash_flow(entry_credit_total - entry_fee)
+                ledger_account.record_cash_flow(
+                    entry_credit_total,
+                    flow_type="option_entry_credit",
+                    description=f"Entry credit for spread-{position_counter} on {security_id}",
+                    timestamp=_minute_text(minute),
+                )
+                ledger_account.record_cash_flow(
+                    -entry_fee,
+                    flow_type="option_entry_fee",
+                    description=f"Entry fee for spread-{position_counter} on {security_id}",
+                    timestamp=_minute_text(minute),
+                )
                 ledger_account.lock_collateral(collateral, strict=False)
                 years = max(
                     (_date(candidate.short_contract.expiration) - minute.date()).days / 365.0,
@@ -1614,9 +1654,7 @@ def _simulate_path(
             for entry in [pos.trajectory[-1]]
         )
         minute_equity = ledger_account.calculate_option_equity(open_value)
-        equity_rows.append(
-            {"timestamp": _minute_text(minute), "equity": round(minute_equity, 4)}
-        )
+        ledger_account.record_snapshot(_minute_text(minute), minute_equity)
 
     for security_id, position in open_positions.items():
         warnings.append(f"{position.position_id} remained open at the end of the requested period.")
@@ -1642,8 +1680,9 @@ def _simulate_path(
             "One or more positions have more than five contiguous missing matching "
             "minutes and are unreliable."
         )
+    equity_rows = ledger_account.build_equity_curve()
     return _SimulationResult(
-        tuple(positions), blocked, rejection_counts, equity_rows, warnings, actual_entries
+        tuple(positions), blocked, rejection_counts, tuple(equity_rows), warnings, actual_entries
     )
 
 

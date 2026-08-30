@@ -1,20 +1,33 @@
-"""Unified portfolio ledger and cash interest accounting.
+"""Unified portfolio ledger, cash flow accounting, and equity curve generation.
 
 Consolidates cash balance tracking, signed cash interest compounding,
-margin collateral locks, and mark-to-market valuations across both
-equity and option backtesting engines.
+margin collateral locks, immutable cash flow audit trails, and mark-to-market
+valuations across both equity and option backtesting engines.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
+from typing import Any
 
 
 class InsufficientCollateralError(ValueError):
     """Raised when collateral cannot be locked due to insufficient available cash."""
 
 
-@dataclass
+@dataclass(frozen=True)
+class CashFlowEntry:
+    """Immutable audit record of a cash credit, debit, fee, dividend, or trade settlement."""
+
+    timestamp: str
+    amount: float
+    flow_type: str
+    description: str = ""
+    balance_after: float = 0.0
+
+
+@dataclass(frozen=True)
 class LedgerSnapshot:
     """Mark-to-market snapshot of portfolio ledger state at a point in time."""
 
@@ -31,7 +44,7 @@ class LedgerSnapshot:
 
 
 class PortfolioLedger:
-    """Tracks cash balances, interest compounding, margin collateral, and valuations."""
+    """Tracks cash balances, transaction audit history, margin collateral, and equity curves."""
 
     def __init__(self, initial_cash: float) -> None:
         if initial_cash <= 0:
@@ -42,6 +55,7 @@ class PortfolioLedger:
         self._cumulative_interest: float = 0.0
         self._cumulative_borrow_fees: float = 0.0
         self._cumulative_dividends: float = 0.0
+        self._cash_flows: list[CashFlowEntry] = []
         self._snapshots: list[LedgerSnapshot] = []
 
     @property
@@ -78,14 +92,73 @@ class PortfolioLedger:
         return self._cumulative_dividends
 
     @property
-    def snapshots(self) -> list[LedgerSnapshot]:
-        return self._snapshots
+    def cash_flows(self) -> tuple[CashFlowEntry, ...]:
+        """Immutable audit history of all recorded cash flows."""
+        return tuple(self._cash_flows)
+
+    @property
+    def snapshots(self) -> tuple[LedgerSnapshot, ...]:
+        """Immutable history of all recorded mark-to-market snapshots."""
+        return tuple(self._snapshots)
+
+    def record_cash_flow(
+        self,
+        amount: float,
+        flow_type: str = "transfer",
+        description: str = "",
+        timestamp: str = "",
+    ) -> CashFlowEntry:
+        """Record an immutable cash flow entry and adjust the cash balance."""
+        amt = float(amount)
+        self._cash += amt
+        entry = CashFlowEntry(
+            timestamp=timestamp,
+            amount=amt,
+            flow_type=flow_type,
+            description=description,
+            balance_after=self._cash,
+        )
+        self._cash_flows.append(entry)
+        return entry
+
+    def record_dividend(
+        self,
+        amount: float,
+        description: str = "",
+        timestamp: str = "",
+    ) -> CashFlowEntry:
+        """Record a dividend cash credit into the ledger audit trail."""
+        amt = float(amount)
+        self._cumulative_dividends += amt
+        return self.record_cash_flow(
+            amt,
+            flow_type="dividend",
+            description=description or "Dividend credit",
+            timestamp=timestamp,
+        )
+
+    def record_borrow_fee(
+        self,
+        amount: float,
+        description: str = "",
+        timestamp: str = "",
+    ) -> CashFlowEntry:
+        """Record a short position borrow fee debit into the ledger audit trail."""
+        fee = abs(float(amount))
+        self._cumulative_borrow_fees += fee
+        return self.record_cash_flow(
+            -fee,
+            flow_type="borrow_fee",
+            description=description or "Short borrow fee debit",
+            timestamp=timestamp,
+        )
 
     def apply_daily_interest(
         self,
         annual_rate: float,
         days: float = 1.0,
         trading_days_per_year: float = 252.0,
+        timestamp: str = "",
     ) -> float:
         """Apply signed cash balance interest compounding for discrete daily trading sessions.
 
@@ -95,8 +168,13 @@ class PortfolioLedger:
         if not annual_rate or days <= 0:
             return 0.0
         interest = self._cash * (annual_rate / trading_days_per_year) * days
-        self._cash += interest
         self._cumulative_interest += interest
+        self.record_cash_flow(
+            interest,
+            flow_type="cash_interest",
+            description=f"Daily cash interest ({annual_rate:.4f} annual rate)",
+            timestamp=timestamp,
+        )
         return interest
 
     def apply_time_elapsed_interest(
@@ -104,6 +182,7 @@ class PortfolioLedger:
         annual_rate: float,
         elapsed_seconds: float,
         days_per_year: float = 365.0,
+        timestamp: str = "",
     ) -> float:
         """Apply continuous time-elapsed cash interest compounding.
 
@@ -113,26 +192,17 @@ class PortfolioLedger:
             return 0.0
         elapsed_days = elapsed_seconds / 86400.0
         interest = self._cash * annual_rate * elapsed_days / days_per_year
-        self._cash += interest
         self._cumulative_interest += interest
+        self.record_cash_flow(
+            interest,
+            flow_type="cash_interest",
+            description=f"Time-elapsed cash interest ({annual_rate:.4f} annual rate)",
+            timestamp=timestamp,
+        )
         return interest
 
-    def record_cash_flow(self, amount: float, description: str = "") -> None:
-        """Record a raw cash credit or debit (e.g. fills, fees, trade exits)."""
-        self._cash += float(amount)
-
-    def record_dividend(self, amount: float) -> None:
-        """Record dividend cash flow."""
-        self._cash += float(amount)
-        self._cumulative_dividends += float(amount)
-
-    def record_borrow_fee(self, amount: float) -> None:
-        """Record short borrow fee debit."""
-        self._cash -= float(amount)
-        self._cumulative_borrow_fees += float(amount)
-
     def lock_collateral(self, amount: float, strict: bool = True) -> None:
-        """Lock margin collateral for open spread or short position."""
+        """Lock margin collateral for an open spread or short position."""
         if amount < 0:
             raise ValueError("Collateral amount to lock must be non-negative.")
         if strict and self.available_cash < amount:
@@ -185,3 +255,43 @@ class PortfolioLedger:
         )
         self._snapshots.append(snapshot)
         return snapshot
+
+    def build_equity_curve(self) -> list[dict[str, Any]]:
+        """Build equity curve dictionary entries from recorded snapshots."""
+        return [
+            {
+                "timestamp": snapshot.timestamp,
+                "equity": round(snapshot.portfolio_value, 4),
+            }
+            for snapshot in self._snapshots
+        ]
+
+    def build_drawdown_curve(self) -> list[dict[str, Any]]:
+        """Build peak-to-trough drawdown curve entries from recorded snapshots."""
+        curve: list[dict[str, Any]] = []
+        running_peak = -math.inf
+        for snapshot in self._snapshots:
+            running_peak = max(running_peak, snapshot.portfolio_value)
+            drawdown = (
+                (snapshot.portfolio_value / running_peak - 1.0)
+                if running_peak > 0
+                else 0.0
+            )
+            curve.append(
+                {
+                    "timestamp": snapshot.timestamp,
+                    "equity": round(snapshot.portfolio_value, 4),
+                    "drawdown": round(drawdown, 6),
+                }
+            )
+        return curve
+
+    def max_drawdown(self) -> float:
+        """Compute maximum peak-to-trough drawdown fraction across recorded snapshots."""
+        peak = 0.0
+        worst = 0.0
+        for snapshot in self._snapshots:
+            peak = max(peak, snapshot.portfolio_value)
+            if peak > 0:
+                worst = min(worst, snapshot.portfolio_value / peak - 1.0)
+        return worst
