@@ -12,7 +12,8 @@ export type FundamentalFactResponse = components["schemas"]["FundamentalFactResp
 export type ProviderDownloadRequest =
   | components["schemas"]["TiingoDownloadRequest"]
   | components["schemas"]["SecEdgarDownloadRequest"]
-  | components["schemas"]["AlpacaDownloadRequest"];
+  | components["schemas"]["AlpacaDownloadRequest"]
+  | components["schemas"]["MassiveDownloadRequest"];
 export type ProviderDownloadResponse = components["schemas"]["ProviderDownloadResponse"];
 
 export type Security = components["schemas"]["SecurityResponse"];
@@ -560,6 +561,7 @@ export const api = {
       }),
     ),
   listStrategies: () => dataOrThrow(client.GET("/api/strategies")),
+  getStrategyTemplate: () => dataOrThrow(client.GET("/api/strategies-meta/template")),
   getStrategy: (name: string) =>
     dataOrThrow(
       client.GET("/api/strategies/{name}", {

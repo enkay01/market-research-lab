@@ -6,6 +6,7 @@ import ast
 import contextlib
 import json
 import math
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field as dc_field
@@ -18,6 +19,23 @@ import duckdb
 import pandas as pd
 
 from .json_types import JsonValue
+
+SECURITY_ID_REGEX = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
+
+class InvalidSecurityIdError(ValueError):
+    """Raised when a security_id contains invalid characters or path traversal sequences."""
+
+
+def validate_security_id(security_id: str) -> str:
+    """Validate security_id as a safe, canonical identifier."""
+    cleaned = security_id.strip()
+    if not cleaned or not SECURITY_ID_REGEX.fullmatch(cleaned):
+        raise InvalidSecurityIdError(
+            f"Security ID '{security_id}' is invalid. "
+            "Allowed: alphanumeric, underscores, hyphens (1-64 chars)."
+        )
+    return cleaned
 
 
 class InadequateTemporalProvenanceError(ValueError):
@@ -1075,8 +1093,6 @@ class MarketDataStore:
                 )
 
     def get_security(self, security_id: str) -> Security | None:
-        from .research import validate_security_id
-
         try:
             valid_id = validate_security_id(security_id)
         except Exception:
