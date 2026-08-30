@@ -133,8 +133,6 @@ def is_naive_benchmark_comparison_complete(
         and test_metrics is not None
         and all(finite_number(test_metrics.get(name)) for name in ("mae", "rmse", "r2"))
     )
-
-
 @dataclass(frozen=True)
 class NaiveBenchmarkEvaluation:
     """Explicit naive benchmark definition and comparable evaluation records."""
@@ -571,8 +569,6 @@ def build_supervised_frame(
         rows,
         columns=["session_date", "momentum", "next_session_return", "target_date"],
     )
-
-
 def build_potts_supervised_frame(
     bars: Sequence[DailyBar],
     config: PottsGainLossParameters | None = None,
@@ -1306,3 +1302,4 @@ def run_predictive_model(
     )
 
 
+\r\n
