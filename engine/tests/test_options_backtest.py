@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from market_research_lab.market_data import (
@@ -61,6 +63,34 @@ def _spec() -> OptionsBacktestSpecification:
     )
 
 
+def _expiration_data() -> OptionMarketData:
+    data = _data([(2.0, 0.5)])
+    expiration_timestamp = "2024-02-20T20:30:00Z"
+    expiration_available = "2024-02-20T20:31:00Z"
+    return OptionMarketData(
+        contracts=data.contracts,
+        trades=[
+            *data.trades,
+            OptionTrade("short", expiration_timestamp, 4.0, 100.0, expiration_available),
+            OptionTrade("long", expiration_timestamp, 1.0, 100.0, expiration_available),
+        ],
+        underlying_bars=[
+            *data.underlying_bars,
+            UnderlyingMinuteBar(
+                "SPY",
+                expiration_timestamp,
+                90.0,
+                90.5,
+                89.0,
+                89.0,
+                1000.0,
+                expiration_available,
+            ),
+        ],
+        dataset_version_id="options-v1",
+    )
+
+
 def test_black_scholes_iv_and_greeks_are_local_and_typed():
     pricing = OptionPricingInputs(100.0, 100.0, 30 / 365)
     iv = black_scholes_iv(2.287, pricing)
@@ -96,6 +126,16 @@ def test_worst_and_best_paths_use_the_completed_trade_range():
     )
     assert position.close_rule == "Stop Level"
     assert position.exit_fee == pytest.approx(1.30 * position.quantity)
+
+
+def test_expiration_below_long_strike_settles_at_full_width():
+    result = run_option_backtest(
+        replace(_spec(), end_date="2024-02-20"), market_data=_expiration_data()
+    )
+
+    position = result.positions[0]
+    assert position.close_rule == "Expiration ITM"
+    assert position.worst_net_pnl == pytest.approx(-1763.00)
 
 
 def test_stop_ladder_records_each_reached_movement_and_no_reentry_after_stop():
