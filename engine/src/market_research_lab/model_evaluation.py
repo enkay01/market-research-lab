@@ -21,8 +21,8 @@ if TYPE_CHECKING:
     from .predictive_models import (
         FittedModelArtifact,
         PredictiveModelCalculation,
-        PredictiveModelOutput,
         PredictiveModelFold,
+        PredictiveModelOutput,
         PredictiveModelPeriodMetrics,
         PredictiveModelSplit,
     )
@@ -75,6 +75,7 @@ def _metrics(
 ) -> "PredictiveModelPeriodMetrics":
     from .predictive_models import (
         PredictiveModelCalculationError,
+        PredictiveModelPeriodMetrics,
         PredictiveModelPrediction,
     )
 
