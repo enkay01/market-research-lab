@@ -130,9 +130,7 @@ export function CleanupView({ project, onProjectDeleted }: CleanupViewProps) {
           <LayoutContent padding={3} isScrollable>
           <VStack gap={5}>
             {error && (
-              <Banner status="error" title="Cleanup error">
-                {error}
-              </Banner>
+              <Banner status="error" title="Cleanup error" description={error} />
             )}
 
             <VStack gap={2}>

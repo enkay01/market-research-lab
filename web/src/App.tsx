@@ -208,9 +208,7 @@ export function App() {
         <form onSubmit={handleCreateProject}>
           <VStack gap={4}>
             {projectError && (
-              <Banner status="error" title="Creation Error">
-                {projectError}
-              </Banner>
+              <Banner status="error" title="Creation Error" description={projectError} />
             )}
 
             <VStack gap={1}>

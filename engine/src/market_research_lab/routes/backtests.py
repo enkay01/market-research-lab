@@ -24,7 +24,7 @@ from ..backtest import (
     run_backtest,
 )
 from ..json_types import JsonValue
-from ..market_data import DATASET_TYPE_CORPORATE_ACTIONS, MarketDataStore
+from ..market_data import DATASET_TYPE_CORPORATE_ACTIONS, MarketDataStore, Security
 from ..projects import (
     BacktestRunRecord,
     FailedBacktestRunRecord,
@@ -72,14 +72,6 @@ class BacktestRunRequest(BaseModel):
     execution: ExecutionModelAssumptionsRequest = Field(
         default_factory=ExecutionModelAssumptionsRequest
     )
-
-    @model_validator(mode="after")
-    def validate_symbols(self) -> BacktestRunRequest:
-        if not self.symbol and not self.symbols:
-            raise ValueError("Either 'symbol' or 'symbols' must be provided.")
-        if self.symbols is not None and len(self.symbols) == 0:
-            raise ValueError("'symbols' must not be empty.")
-        return self
 
 
 class FillResponse(BaseModel):
@@ -256,6 +248,42 @@ def _backtest_result_response(
     )
 
 
+def _resolve_target_securities(
+    market_store: MarketDataStore,
+    request: BacktestRunRequest,
+) -> list[Security]:
+    """Resolve target securities from request parameters or dataset history."""
+    target_symbols = (
+        [s.strip().upper() for s in request.symbols if s.strip()]
+        if request.symbols
+        else ([request.symbol.strip().upper()] if request.symbol and request.symbol.strip() else [])
+    )
+    if not target_symbols:
+        bars = market_store.history(request.dataset_version_id)
+        seen: set[str] = set()
+        for b in bars:
+            if b.security_id not in seen:
+                seen.add(b.security_id)
+                target_symbols.append(b.security_id)
+        if not target_symbols:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"No securities found in dataset '{request.dataset_version_id}'.",
+            )
+
+    resolved: list[Security] = []
+    for sym in target_symbols:
+        sec = market_store.get_security(sym)
+        if not sec:
+            market_store.upsert_securities(
+                [Security(security_id=sym, symbol=sym, name=sym, exchange="UNKNOWN")]
+            )
+            sec = market_store.get_security(sym)
+        if sec:
+            resolved.append(sec)
+    return resolved
+
+
 @router.post(
     "/api/projects/{project_id}/backtests",
     response_model=BacktestResultResponse,
@@ -289,30 +317,7 @@ def run_project_backtest(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="start_date must not be after end_date.",
         )
-    target_symbols: list[str] = (
-        request.symbols if request.symbols else ([request.symbol] if request.symbol else [])
-    )
-    resolved_securities = []
-    for sym in target_symbols:
-        sec = market_store.get_security(sym)
-        if not sec:
-            run_id = store.create_failed_backtest_run(
-                str(project_id),
-                FailedBacktestRunRecord(
-                    strategy_revision=request.strategy_revision,
-                    dataset_version_ids=[request.dataset_version_id],
-                    parameters=dict(request.parameters),
-                    error_message=f"Security not found: {sym}",
-                ),
-            )
-            log_failed_run(
-                project_id,
-                run_id,
-                f"Backtest Run failed: Security not found: {sym}",
-                diagnostic_id=None,
-            )
-            raise SecurityNotFoundError(sym)
-        resolved_securities.append(sec)
+    resolved_securities = _resolve_target_securities(market_store, request)
 
     bench_sec = None
     if request.benchmark_symbol:

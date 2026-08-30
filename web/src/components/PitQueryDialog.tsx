@@ -98,9 +98,7 @@ export function PitQueryDialog({ isOpen, onClose, datasetVersions }: PitQueryDia
       <form onSubmit={handleQuery}>
         <VStack gap={4}>
           {error && (
-            <Banner status="error" title="Query Error">
-              {error}
-            </Banner>
+            <Banner status="error" title="Query Error" description={error} />
           )}
 
           <HStack gap={3}>
@@ -163,9 +161,11 @@ export function PitQueryDialog({ isOpen, onClose, datasetVersions }: PitQueryDia
               </HStack>
 
               {results.length === 0 ? (
-                <Banner status="info" title="No Eligible Records">
-                  No records found with availability time earlier than or equal to {asOf}.
-                </Banner>
+                <Banner
+                  status="info"
+                  title="No Eligible Records"
+                  description={`No records found with availability time earlier than or equal to ${asOf}.`}
+                />
               ) : (
                 <div style={{ maxHeight: "240px", overflow: "auto" }}>
                   <Table>

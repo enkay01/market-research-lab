@@ -130,9 +130,7 @@ export function DataView() {
           <LayoutContent padding={0} isScrollable>
             {error && (
               <div style={{ padding: "var(--spacing-3, 12px)" }}>
-                <Banner status="error" title="Data Catalogue Error">
-                  {error}
-                </Banner>
+                <Banner status="error" title="Data Catalogue Error" description={error} />
               </div>
             )}
 
@@ -250,16 +248,21 @@ export function DataView() {
 
                 {/* Validation Banner */}
                 {selectedCoverage.rejected_count > 0 ? (
-                  <Banner status="warning" title="Rejected Rows Detected">
-                    {selectedCoverage.rejected_count} rows rejected during ingestion.
-                    {selectedCoverage.warnings.map((w: string, i: number) => (
-                      <Text key={i}>{w}</Text>
-                    ))}
-                  </Banner>
+                  <Banner
+                    status="warning"
+                    title={`${selectedCoverage.rejected_count} Rejected Rows Detected`}
+                    description={
+                      selectedCoverage.warnings && selectedCoverage.warnings.length > 0
+                        ? selectedCoverage.warnings.join("; ")
+                        : `${selectedCoverage.rejected_count} rows rejected during ingestion.`
+                    }
+                  />
                 ) : (
-                  <Banner status="success" title="Validated Point-in-Time Dataset">
-                    All {selectedCoverage.row_count} rows parsed and verified against point-in-time rules.
-                  </Banner>
+                  <Banner
+                    status="success"
+                    title="Validated Point-in-Time Dataset"
+                    description={`All ${selectedCoverage.row_count.toLocaleString()} rows parsed and verified against point-in-time rules.`}
+                  />
                 )}
 
                 {/* Record Summary Table */}
