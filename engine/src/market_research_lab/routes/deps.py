@@ -19,7 +19,7 @@ from ..json_types import JsonValue
 from ..logging_setup import run_log_context
 from ..market_data import (
     DatasetVersionNotFoundError,
-    InadequateTemporalProvenanceError,
+    InsufficientTimestampError,
     InvalidSecurityIdError,
     MarketDataStore,
 )
@@ -195,9 +195,9 @@ def register_domain_exception_handlers(app: FastAPI) -> None:
             ).model_dump(),
         )
 
-    @app.exception_handler(InadequateTemporalProvenanceError)
+    @app.exception_handler(InsufficientTimestampError)
     async def inadequate_temporal_provenance(
-        _: Request, error: InadequateTemporalProvenanceError
+        _: Request, error: InsufficientTimestampError
     ) -> JSONResponse:
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -7,7 +7,7 @@ import contextlib
 import json
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from datetime import datetime
@@ -38,7 +38,7 @@ def validate_security_id(security_id: str) -> str:
     return cleaned
 
 
-class InadequateTemporalProvenanceError(ValueError):
+class InsufficientTimestampError(ValueError):
     """Raised when market observations lack required point-in-time eligibility timestamps."""
 
 
@@ -386,6 +386,408 @@ def _parse_incomplete_fields(raw: str | Sequence[str] | None) -> tuple[str, ...]
             return (str(raw),)
 
 
+
+@dataclass(frozen=True)
+class IngestionValidationResult:
+    valid_rows: list[dict[str, JsonValue]]
+    warnings: list[str]
+    missing_fields: dict[str, int]
+
+
+@dataclass(frozen=True)
+class DatasetCoverageRange:
+    coverage_start: str | None
+    coverage_end: str | None
+
+
+def _calculate_dataset_coverage_range(df_valid: pd.DataFrame) -> DatasetCoverageRange:
+    if "session_date" in df_valid.columns:
+        return DatasetCoverageRange(
+            coverage_start=df_valid["session_date"].min(),
+            coverage_end=df_valid["session_date"].max(),
+        )
+    if "effective_date" in df_valid.columns:
+        return DatasetCoverageRange(
+            coverage_start=df_valid["effective_date"].min(),
+            coverage_end=df_valid["effective_date"].max(),
+        )
+    if "timestamp" in df_valid.columns:
+        return DatasetCoverageRange(
+            coverage_start=df_valid["timestamp"].min(),
+            coverage_end=df_valid["timestamp"].max(),
+        )
+    if ("period_start" in df_valid.columns and df_valid["period_start"].notna().any()) or (
+        "period_end" in df_valid.columns and df_valid["period_end"].notna().any()
+    ):
+        starts = (
+            df_valid["period_start"].dropna()
+            if "period_start" in df_valid.columns
+            else pd.Series(dtype="object")
+        )
+        ends = (
+            df_valid["period_end"].dropna()
+            if "period_end" in df_valid.columns
+            else pd.Series(dtype="object")
+        )
+        c_start = starts.min() if not starts.empty else ends.min()
+        c_end = ends.max() if not ends.empty else starts.max()
+        return DatasetCoverageRange(coverage_start=c_start, coverage_end=c_end)
+    if "fiscal_period" in df_valid.columns:
+        return DatasetCoverageRange(
+            coverage_start=df_valid["fiscal_period"].min(),
+            coverage_end=df_valid["fiscal_period"].max(),
+        )
+    return DatasetCoverageRange(coverage_start=None, coverage_end=None)
+
+
+def _detect_dataset_type(df_raw: pd.DataFrame) -> str:
+    is_fundamental = {"field", "fiscal_period", "value"}.issubset(set(df_raw.columns))
+    is_corporate_action = {"effective_date", "value"}.issubset(set(df_raw.columns)) and (
+        "type" in df_raw.columns or "action_type" in df_raw.columns
+    )
+    is_daily_bar = {"open", "high", "low", "close", "volume"}.issubset(set(df_raw.columns))
+    option_markers = {"contract_id", "expiration", "option_type", "right", "trade_time"}
+    is_options = bool(option_markers.intersection(set(df_raw.columns))) and (
+        "contract_id" in df_raw.columns or "expiration" in df_raw.columns
+    )
+
+    if is_options:
+        return DATASET_TYPE_OPTIONS
+    if is_corporate_action:
+        return DATASET_TYPE_CORPORATE_ACTIONS
+    if is_fundamental:
+        return DATASET_TYPE_FUNDAMENTALS
+    if is_daily_bar:
+        return DATASET_TYPE_DAILY_BARS
+
+    required = {"symbol", "date", "open", "high", "low", "close", "volume"}
+    missing_cols = required - set(df_raw.columns)
+    raise ValueError(f"Missing required columns: {sorted(missing_cols)}")
+
+
+def _parse_option_contract_record(
+    store: MarketDataStore, raw: dict[str, JsonValue]
+) -> dict[str, JsonValue]:
+    for field_name in ("contract_id", "security_id", "expiration", "strike", "right"):
+        if raw.get(field_name) is None:
+            raise ValueError(f"{field_name} is missing")
+    raw["strike"] = store._finite_raw_number(raw.get("strike"), "strike")
+    right = str(raw.get("right") or raw.get("option_type") or "").lower()
+    if right not in {"put", "call"}:
+        raise ValueError("right must be put or call")
+    raw["right"] = right
+    return raw
+
+
+def _parse_option_trade_record(
+    store: MarketDataStore, raw: dict[str, JsonValue]
+) -> dict[str, JsonValue]:
+    for field_name in ("contract_id", "timestamp", "price"):
+        if raw.get(field_name) is None and not (
+            field_name == "timestamp" and raw.get("trade_time") is not None
+        ):
+            raise ValueError(f"{field_name} is missing")
+    raw["timestamp"] = raw.get("timestamp") or raw.get("trade_time")
+    raw["price"] = store._finite_raw_number(raw.get("price"), "price")
+    if raw.get("size") is not None:
+        raw["size"] = store._finite_raw_number(raw["size"], "size")
+    return raw
+
+
+def _parse_underlying_bar_record(
+    store: MarketDataStore, raw: dict[str, JsonValue]
+) -> dict[str, JsonValue]:
+    for field_name in ("security_id", "timestamp", "open", "high", "low", "close"):
+        if raw.get(field_name) is None:
+            raise ValueError(f"{field_name} is missing")
+    for field_name in ("open", "high", "low", "close", "volume"):
+        if raw.get(field_name) is not None:
+            raw[field_name] = store._finite_raw_number(raw[field_name], field_name)
+    return raw
+
+
+def _parse_daily_bar_record(
+    store: MarketDataStore, raw: dict[str, JsonValue]
+) -> dict[str, JsonValue]:
+    for field_name in ("security_id", "date", "open", "high", "low", "close"):
+        if raw.get(field_name) is None:
+            raise ValueError(f"{field_name} is missing")
+    for field_name in ("open", "high", "low", "close", "volume"):
+        if raw.get(field_name) is not None:
+            raw[field_name] = store._finite_raw_number(raw[field_name], field_name)
+    return raw
+
+
+def _parse_earnings_record(
+    store: MarketDataStore, raw: dict[str, JsonValue]
+) -> dict[str, JsonValue]:
+    for field_name in ("security_id", "event_date", "timing"):
+        if raw.get(field_name) is None:
+            raise ValueError(f"{field_name} is missing")
+    if str(raw["timing"]).lower() not in {"before_open", "after_close", "unknown"}:
+        raise ValueError("timing must be before_open, after_close, or unknown")
+    return raw
+
+
+_OPTION_RECORD_PARSERS: dict[
+    str,
+    Callable[[MarketDataStore, dict[str, JsonValue]], dict[str, JsonValue]],
+] = {
+    "contract": _parse_option_contract_record,
+    "trade": _parse_option_trade_record,
+    "underlying_bar": _parse_underlying_bar_record,
+    "daily_bar": _parse_daily_bar_record,
+    "earnings": _parse_earnings_record,
+}
+
+
+def _validate_options_dataset(
+    store: MarketDataStore, df_raw: pd.DataFrame, request: IngestionRequest
+) -> IngestionValidationResult:
+    warnings: list[str] = []
+    valid_rows: list[dict[str, JsonValue]] = []
+    missing_fields: dict[str, int] = {}
+
+    check_cols = [
+        "record_type",
+        "contract_id",
+        "security_id",
+        "symbol",
+        "expiration",
+        "strike",
+        "right",
+        "timestamp",
+        "trade_time",
+        "price",
+        "available_at",
+    ]
+    for col in check_cols:
+        if col in df_raw.columns:
+            missing_fields[col] = int(df_raw[col].map(store._is_missing).sum())
+
+    for i, row in df_raw.iterrows():
+        row_num = i + 1
+        try:
+            raw = {
+                str(key): (None if store._is_missing(value) else value)
+                for key, value in row.to_dict().items()
+            }
+            record_type = str(raw.get("record_type") or "").lower()
+            if not record_type:
+                record_type = (
+                    "trade"
+                    if raw.get("price") is not None and raw.get("timestamp") is not None
+                    else "contract"
+                )
+
+            parser = _OPTION_RECORD_PARSERS.get(record_type)
+            if parser is None:
+                raise ValueError(
+                    "record_type must be contract, trade, underlying_bar, daily_bar, or earnings"
+                )
+
+            parsed_raw = parser(store, raw)
+            parsed_raw["record_type"] = record_type
+            parsed_raw["source"] = request.source
+            parsed_raw["retrieval_time"] = request.retrieval_time
+            valid_rows.append(parsed_raw)
+        except Exception as error:
+            warnings.append(f"Rejected row {row_num}: {error}")
+
+    return IngestionValidationResult(
+        valid_rows=valid_rows, warnings=warnings, missing_fields=missing_fields
+    )
+
+
+def _validate_fundamentals_dataset(
+    store: MarketDataStore, df_raw: pd.DataFrame, request: IngestionRequest
+) -> IngestionValidationResult:
+    warnings: list[str] = []
+    valid_rows: list[dict[str, JsonValue]] = []
+    missing_fields: dict[str, int] = {}
+
+    check_cols = [
+        "security_id",
+        "symbol",
+        "field",
+        "fiscal_period",
+        "value",
+        "unit",
+        "filed_at",
+        "available_at",
+        "period_start",
+        "period_end",
+        "eligibility_provenance",
+    ]
+    for col in check_cols:
+        if col in df_raw.columns:
+            missing_fields[col] = int(df_raw[col].isna().sum() + (df_raw[col] == "").sum())
+
+    for i, row in df_raw.iterrows():
+        row_num = i + 1
+        try:
+            sec_id = store._security_id(row)
+            field = store._required_text(row, "field")
+            fiscal_period = store._required_text(row, "fiscal_period")
+
+            raw_val = row["value"]
+            if store._is_missing(raw_val):
+                raise ValueError("value is missing")
+
+            val: float | str = str(raw_val).strip()
+            with contextlib.suppress(ValueError, TypeError):
+                numeric_val = float(raw_val)
+                if not math.isfinite(numeric_val):
+                    raise ValueError("value must be finite")
+                val = numeric_val
+
+            unit = store._optional_text(row, "unit", "units", default="USD") or "USD"
+            filed_at = store._optional_text(row, "filed_at")
+            available_at = store._optional_text(row, "available_at")
+            raw_incomplete = row.get("incomplete_fields")
+            incomplete_fields = _parse_incomplete_fields(raw_incomplete)
+
+            valid_rows.append(
+                {
+                    "security_id": sec_id,
+                    "field": field,
+                    "fiscal_period": fiscal_period,
+                    "value": val,
+                    "unit": unit,
+                    "filed_at": filed_at,
+                    "available_at": available_at,
+                    "period_start": store._optional_text(row, "period_start"),
+                    "period_end": store._optional_text(row, "period_end"),
+                    "eligibility_provenance": store._optional_text(row, "eligibility_provenance"),
+                    "source": request.source,
+                    "retrieval_time": request.retrieval_time,
+                    "incomplete_fields": incomplete_fields,
+                }
+            )
+        except Exception as e:
+            warnings.append(f"Rejected row {row_num}: {e}")
+
+    return IngestionValidationResult(
+        valid_rows=valid_rows, warnings=warnings, missing_fields=missing_fields
+    )
+
+
+def _validate_corporate_actions_dataset(
+    store: MarketDataStore, df_raw: pd.DataFrame, request: IngestionRequest
+) -> IngestionValidationResult:
+    warnings: list[str] = []
+    valid_rows: list[dict[str, JsonValue]] = []
+    missing_fields: dict[str, int] = {}
+
+    check_cols = [
+        "security_id",
+        "symbol",
+        "type",
+        "action_type",
+        "effective_date",
+        "value",
+        "unit",
+        "units",
+        "available_at",
+        "eligibility_provenance",
+    ]
+    for col in check_cols:
+        if col in df_raw.columns:
+            missing_fields[col] = int(df_raw[col].map(store._is_missing).sum())
+
+    for i, row in df_raw.iterrows():
+        row_num = i + 1
+        try:
+            valid_rows.append(
+                {
+                    "security_id": store._security_id(row),
+                    "type": store._required_text_from_fields(row, "type", "action_type"),
+                    "effective_date": store._canonical_date(
+                        store._required_text(row, "effective_date")
+                    ),
+                    "value": store._required_number(row, "value"),
+                    "units": store._optional_text(row, "units", "unit", default="USD") or "USD",
+                    "source": request.source,
+                    "retrieval_time": request.retrieval_time,
+                    "available_at": store._optional_text(row, "available_at"),
+                    "eligibility_provenance": store._optional_text(row, "eligibility_provenance"),
+                }
+            )
+        except Exception as e:
+            warnings.append(f"Rejected row {row_num}: {e}")
+
+    return IngestionValidationResult(
+        valid_rows=valid_rows, warnings=warnings, missing_fields=missing_fields
+    )
+
+
+def _validate_daily_bars_dataset(
+    store: MarketDataStore, df_raw: pd.DataFrame, request: IngestionRequest
+) -> IngestionValidationResult:
+    warnings: list[str] = []
+    valid_rows: list[dict[str, JsonValue]] = []
+    missing_fields: dict[str, int] = {}
+
+    required = {"open", "high", "low", "close", "volume"}
+    for col in list(required) + ["symbol", "date", "session_date"]:
+        if col in df_raw.columns:
+            missing_fields[col] = int(df_raw[col].map(store._is_missing).sum())
+
+    for i, row in df_raw.iterrows():
+        row_num = i + 1
+        try:
+            sec_id = store._security_id(row)
+            date_str = store._required_text_from_fields(row, "date", "session_date")
+            date = store._canonical_date(date_str)
+
+            open_px = store._required_number(row, "open")
+            high_px = store._required_number(row, "high")
+            low_px = store._required_number(row, "low")
+            close_px = store._required_number(row, "close")
+            volume = store._required_number(row, "volume")
+
+            units = store._optional_text(row, "units", "unit", default="USD") or "USD"
+            available_at = store._optional_text(row, "available_at")
+
+            valid_rows.append(
+                {
+                    "security_id": sec_id,
+                    "session_date": date,
+                    "open": open_px,
+                    "high": high_px,
+                    "low": low_px,
+                    "close": close_px,
+                    "volume": volume,
+                    "units": units,
+                    "source": request.source,
+                    "retrieval_time": request.retrieval_time,
+                    "available_at": available_at,
+                    "eligibility_provenance": store._optional_text(row, "eligibility_provenance"),
+                    "adjusted_open": store._optional_number(row, "adjusted_open", "adj_open"),
+                    "adjusted_high": store._optional_number(row, "adjusted_high", "adj_high"),
+                    "adjusted_low": store._optional_number(row, "adjusted_low", "adj_low"),
+                    "adjusted_close": store._optional_number(row, "adjusted_close", "adj_close"),
+                }
+            )
+        except Exception as e:
+            warnings.append(f"Rejected row {row_num}: {e}")
+
+    return IngestionValidationResult(
+        valid_rows=valid_rows, warnings=warnings, missing_fields=missing_fields
+    )
+
+
+_INGESTION_VALIDATORS: dict[
+    str,
+    Callable[[MarketDataStore, pd.DataFrame, IngestionRequest], IngestionValidationResult],
+] = {
+    DATASET_TYPE_OPTIONS: _validate_options_dataset,
+    DATASET_TYPE_FUNDAMENTALS: _validate_fundamentals_dataset,
+    DATASET_TYPE_CORPORATE_ACTIONS: _validate_corporate_actions_dataset,
+    DATASET_TYPE_DAILY_BARS: _validate_daily_bars_dataset,
+}
+
+
 class MarketDataStore:
     def __init__(self, workspace_root: Path) -> None:
         self.workspace_root = workspace_root
@@ -554,7 +956,7 @@ class MarketDataStore:
         dataset_type: str = DATASET_TYPE_DAILY_BARS,
     ) -> pd.Series:
         if not has_provenance or not self._has_complete_temporal_provenance(df, dataset_type):
-            raise InadequateTemporalProvenanceError(TEMPORAL_PROVENANCE_ERROR_MESSAGE)
+            raise InsufficientTimestampError(TEMPORAL_PROVENANCE_ERROR_MESSAGE)
 
         return pd.to_datetime(self._eligibility_values(df, dataset_type), utc=True, errors="raise")
 
@@ -565,306 +967,15 @@ class MarketDataStore:
 
     def _publish_dataframe(self, request: IngestionRequest, df_raw: pd.DataFrame) -> DatasetVersion:
         """Validate and persist one canonical Market Dataset."""
+        dataset_type = _detect_dataset_type(df_raw)
+        validator = _INGESTION_VALIDATORS.get(dataset_type)
+        if validator is None:
+            raise ValueError(f"Unsupported dataset type: {dataset_type}")
 
-        # Detect one canonical record family from the supplied columns.
-        is_fundamental = {"field", "fiscal_period", "value"}.issubset(set(df_raw.columns))
-        is_corporate_action = {"effective_date", "value"}.issubset(set(df_raw.columns)) and (
-            "type" in df_raw.columns or "action_type" in df_raw.columns
-        )
-        is_daily_bar = {"open", "high", "low", "close", "volume"}.issubset(set(df_raw.columns))
-        option_markers = {"contract_id", "expiration", "option_type", "right", "trade_time"}
-        is_options = bool(option_markers.intersection(set(df_raw.columns))) and (
-            "contract_id" in df_raw.columns or "expiration" in df_raw.columns
-        )
-
-        if is_options:
-            dataset_type = DATASET_TYPE_OPTIONS
-        elif is_corporate_action:
-            dataset_type = DATASET_TYPE_CORPORATE_ACTIONS
-        elif is_fundamental:
-            dataset_type = DATASET_TYPE_FUNDAMENTALS
-        elif is_daily_bar:
-            dataset_type = DATASET_TYPE_DAILY_BARS
-        else:
-            required = {"symbol", "date", "open", "high", "low", "close", "volume"}
-            missing_cols = required - set(df_raw.columns)
-            raise ValueError(f"Missing required columns: {sorted(missing_cols)}")
-
-        warnings: list[str] = []
-        valid_rows: list[dict[str, JsonValue]] = []
-        missing_fields: dict[str, int] = {}
-
-        if dataset_type == DATASET_TYPE_OPTIONS:
-            check_cols = [
-                "record_type",
-                "contract_id",
-                "security_id",
-                "symbol",
-                "expiration",
-                "strike",
-                "right",
-                "timestamp",
-                "trade_time",
-                "price",
-                "available_at",
-            ]
-            for col in check_cols:
-                if col in df_raw.columns:
-                    missing_fields[col] = int(df_raw[col].map(self._is_missing).sum())
-
-            for i, row in df_raw.iterrows():
-                row_num = i + 1
-                try:
-                    raw = {
-                        str(key): (None if self._is_missing(value) else value)
-                        for key, value in row.to_dict().items()
-                    }
-                    record_type = str(raw.get("record_type") or "").lower()
-                    if not record_type:
-                        record_type = (
-                            "trade"
-                            if raw.get("price") is not None and raw.get("timestamp") is not None
-                            else "contract"
-                        )
-                    if record_type not in {
-                        "contract",
-                        "trade",
-                        "underlying_bar",
-                        "daily_bar",
-                        "earnings",
-                    }:
-                        raise ValueError(
-                            "record_type must be contract, trade, underlying_bar, "
-                            "daily_bar, or earnings"
-                        )
-                    if record_type == "contract":
-                        for field_name in (
-                            "contract_id",
-                            "security_id",
-                            "expiration",
-                            "strike",
-                            "right",
-                        ):
-                            if raw.get(field_name) is None:
-                                raise ValueError(f"{field_name} is missing")
-                        raw["strike"] = self._finite_raw_number(raw.get("strike"), "strike")
-                        right = str(raw.get("right") or raw.get("option_type") or "").lower()
-                        if right not in {"put", "call"}:
-                            raise ValueError("right must be put or call")
-                        raw["right"] = right
-                    elif record_type == "trade":
-                        for field_name in ("contract_id", "timestamp", "price"):
-                            if raw.get(field_name) is None and not (
-                                field_name == "timestamp" and raw.get("trade_time") is not None
-                            ):
-                                raise ValueError(f"{field_name} is missing")
-                        raw["timestamp"] = raw.get("timestamp") or raw.get("trade_time")
-                        raw["price"] = self._finite_raw_number(raw.get("price"), "price")
-                        if raw.get("size") is not None:
-                            raw["size"] = self._finite_raw_number(raw["size"], "size")
-                    elif record_type == "underlying_bar":
-                        for field_name in (
-                            "security_id",
-                            "timestamp",
-                            "open",
-                            "high",
-                            "low",
-                            "close",
-                        ):
-                            if raw.get(field_name) is None:
-                                raise ValueError(f"{field_name} is missing")
-                        for field_name in ("open", "high", "low", "close", "volume"):
-                            if raw.get(field_name) is not None:
-                                raw[field_name] = self._finite_raw_number(
-                                    raw[field_name], field_name
-                                )
-                    elif record_type == "daily_bar":
-                        for field_name in ("security_id", "date", "open", "high", "low", "close"):
-                            if raw.get(field_name) is None:
-                                raise ValueError(f"{field_name} is missing")
-                        for field_name in ("open", "high", "low", "close", "volume"):
-                            if raw.get(field_name) is not None:
-                                raw[field_name] = self._finite_raw_number(
-                                    raw[field_name], field_name
-                                )
-                    else:
-                        for field_name in ("security_id", "event_date", "timing"):
-                            if raw.get(field_name) is None:
-                                raise ValueError(f"{field_name} is missing")
-                        if str(raw["timing"]).lower() not in {
-                            "before_open",
-                            "after_close",
-                            "unknown",
-                        }:
-                            raise ValueError("timing must be before_open, after_close, or unknown")
-                    raw["record_type"] = record_type
-                    raw["source"] = request.source
-                    raw["retrieval_time"] = request.retrieval_time
-                    valid_rows.append(raw)
-                except Exception as error:
-                    warnings.append(f"Rejected row {row_num}: {error}")
-
-        elif dataset_type == DATASET_TYPE_FUNDAMENTALS:
-            check_cols = [
-                "security_id",
-                "symbol",
-                "field",
-                "fiscal_period",
-                "value",
-                "unit",
-                "filed_at",
-                "available_at",
-                "period_start",
-                "period_end",
-                "eligibility_provenance",
-            ]
-            for col in check_cols:
-                if col in df_raw.columns:
-                    missing_count = int(df_raw[col].isna().sum() + (df_raw[col] == "").sum())
-                    missing_fields[col] = missing_count
-
-            for i, row in df_raw.iterrows():
-                row_num = i + 1
-                try:
-                    sec_id = self._security_id(row)
-
-                    field = self._required_text(row, "field")
-
-                    fiscal_period = self._required_text(row, "fiscal_period")
-
-                    raw_val = row["value"]
-                    if self._is_missing(raw_val):
-                        raise ValueError("value is missing")
-
-                    val: float | str = str(raw_val).strip()
-                    with contextlib.suppress(ValueError, TypeError):
-                        numeric_val = float(raw_val)
-                        if not math.isfinite(numeric_val):
-                            raise ValueError("value must be finite")
-                        val = numeric_val
-
-                    unit = self._optional_text(row, "unit", "units", default="USD") or "USD"
-                    filed_at = self._optional_text(row, "filed_at")
-                    available_at = self._optional_text(row, "available_at")
-                    raw_incomplete = row.get("incomplete_fields")
-                    incomplete_fields = _parse_incomplete_fields(raw_incomplete)
-
-                    valid_rows.append(
-                        {
-                            "security_id": sec_id,
-                            "field": field,
-                            "fiscal_period": fiscal_period,
-                            "value": val,
-                            "unit": unit,
-                            "filed_at": filed_at,
-                            "available_at": available_at,
-                            "period_start": self._optional_text(row, "period_start"),
-                            "period_end": self._optional_text(row, "period_end"),
-                            "eligibility_provenance": self._optional_text(
-                                row, "eligibility_provenance"
-                            ),
-                            "source": request.source,
-                            "retrieval_time": request.retrieval_time,
-                            "incomplete_fields": incomplete_fields,
-                        }
-                    )
-                except Exception as e:
-                    warnings.append(f"Rejected row {row_num}: {e}")
-
-        elif dataset_type == DATASET_TYPE_CORPORATE_ACTIONS:
-            check_cols = [
-                "security_id",
-                "symbol",
-                "type",
-                "action_type",
-                "effective_date",
-                "value",
-                "unit",
-                "units",
-                "available_at",
-                "eligibility_provenance",
-            ]
-            for col in check_cols:
-                if col in df_raw.columns:
-                    missing_fields[col] = int(df_raw[col].map(self._is_missing).sum())
-
-            for i, row in df_raw.iterrows():
-                row_num = i + 1
-                try:
-                    valid_rows.append(
-                        {
-                            "security_id": self._security_id(row),
-                            "type": self._required_text_from_fields(row, "type", "action_type"),
-                            "effective_date": self._canonical_date(
-                                self._required_text(row, "effective_date")
-                            ),
-                            "value": self._required_number(row, "value"),
-                            "units": self._optional_text(row, "units", "unit", default="USD")
-                            or "USD",
-                            "source": request.source,
-                            "retrieval_time": request.retrieval_time,
-                            "available_at": self._optional_text(row, "available_at"),
-                            "eligibility_provenance": self._optional_text(
-                                row, "eligibility_provenance"
-                            ),
-                        }
-                    )
-                except Exception as e:
-                    warnings.append(f"Rejected row {row_num}: {e}")
-
-        else:
-            required = {"open", "high", "low", "close", "volume"}
-            for col in list(required) + ["symbol", "date", "session_date"]:
-                if col in df_raw.columns:
-                    missing_fields[col] = int(df_raw[col].map(self._is_missing).sum())
-
-            for i, row in df_raw.iterrows():
-                row_num = i + 1
-                try:
-                    sec_id = self._security_id(row)
-                    date_str = self._required_text_from_fields(row, "date", "session_date")
-                    date = self._canonical_date(date_str)
-
-                    open_px = self._required_number(row, "open")
-                    high_px = self._required_number(row, "high")
-                    low_px = self._required_number(row, "low")
-                    close_px = self._required_number(row, "close")
-                    volume = self._required_number(row, "volume")
-
-                    units = self._optional_text(row, "units", "unit", default="USD") or "USD"
-                    available_at = self._optional_text(row, "available_at")
-
-                    valid_rows.append(
-                        {
-                            "security_id": sec_id,
-                            "session_date": date,
-                            "open": open_px,
-                            "high": high_px,
-                            "low": low_px,
-                            "close": close_px,
-                            "volume": volume,
-                            "units": units,
-                            "source": request.source,
-                            "retrieval_time": request.retrieval_time,
-                            "available_at": available_at,
-                            "eligibility_provenance": self._optional_text(
-                                row, "eligibility_provenance"
-                            ),
-                            "adjusted_open": self._optional_number(
-                                row, "adjusted_open", "adj_open"
-                            ),
-                            "adjusted_high": self._optional_number(
-                                row, "adjusted_high", "adj_high"
-                            ),
-                            "adjusted_low": self._optional_number(row, "adjusted_low", "adj_low"),
-                            "adjusted_close": self._optional_number(
-                                row, "adjusted_close", "adj_close"
-                            ),
-                        }
-                    )
-                except Exception as e:
-                    warnings.append(f"Rejected row {row_num}: {e}")
-
+        validation = validator(self, df_raw, request)
+        valid_rows = validation.valid_rows
+        warnings = validation.warnings
+        missing_fields = validation.missing_fields
         if not valid_rows:
             error_preview = "; ".join(warnings[:5]) if warnings else "No valid records present."
             raise ValueError(
@@ -877,36 +988,9 @@ class MarketDataStore:
 
         df_valid = pd.DataFrame(valid_rows)
         has_temporal_provenance = self._has_complete_temporal_provenance(df_valid, dataset_type)
-        if "session_date" in df_valid.columns:
-            coverage_start = df_valid["session_date"].min()
-            coverage_end = df_valid["session_date"].max()
-        elif "effective_date" in df_valid.columns:
-            coverage_start = df_valid["effective_date"].min()
-            coverage_end = df_valid["effective_date"].max()
-        elif "timestamp" in df_valid.columns:
-            coverage_start = df_valid["timestamp"].min()
-            coverage_end = df_valid["timestamp"].max()
-        elif ("period_start" in df_valid.columns and df_valid["period_start"].notna().any()) or (
-            "period_end" in df_valid.columns and df_valid["period_end"].notna().any()
-        ):
-            starts = (
-                df_valid["period_start"].dropna()
-                if "period_start" in df_valid.columns
-                else pd.Series(dtype="object")
-            )
-            ends = (
-                df_valid["period_end"].dropna()
-                if "period_end" in df_valid.columns
-                else pd.Series(dtype="object")
-            )
-            coverage_start = starts.min() if not starts.empty else ends.min()
-            coverage_end = ends.max() if not ends.empty else starts.max()
-        elif "fiscal_period" in df_valid.columns:
-            coverage_start = df_valid["fiscal_period"].min()
-            coverage_end = df_valid["fiscal_period"].max()
-        else:
-            coverage_start = None
-            coverage_end = None
+        cov = _calculate_dataset_coverage_range(df_valid)
+        coverage_start = cov.coverage_start
+        coverage_end = cov.coverage_end
 
         # Arrow cannot store a mixed numeric/string object column. Preserve the
         # canonical value semantics by serializing mixed fundamentals as text;

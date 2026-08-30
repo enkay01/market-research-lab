@@ -5,103 +5,45 @@ from __future__ import annotations
 import csv
 import html
 import io
+from dataclasses import dataclass
 
 from .json_types import JsonValue
+
+
+@dataclass(frozen=True)
+class ReportMetaInfo:
+    title_symbol: str
+    strategy_name: str
+    strategy_rev: str
+    run_id: str
+    start_date: str
+    end_date: str
+    starting_cash: float
+    schedule: str
+    benchmark_id: str
+    universe_list: list[str]
+    dataset_version_list: list[str]
+
+
+@dataclass(frozen=True)
+class ExecutionAssumptionsInfo:
+    spec: dict[str, JsonValue]
+    execution: dict[str, JsonValue]
+    universe_list: list[str]
+    benchmark_id: str
+    strategy_name: str
+    strategy_rev: str
+    price_field: str
+    schedule: str
 
 # ---------------------------------------------------------------------------
 # Backtest HTML and CSV Exporters
 # ---------------------------------------------------------------------------
 
 
-def generate_backtest_html_report(
-    result_data: dict[str, JsonValue],
-    manifest_data: dict[str, JsonValue],
-) -> str:
-    """Generate a self-contained, human-readable HTML Backtest report."""
-    spec_raw = result_data.get("specification")
-    spec = spec_raw if isinstance(spec_raw, dict) else {}
-    strategy_name = html.escape(str(spec.get("strategy_name") or "unnamed_strategy"))
-    strategy_rev = html.escape(
-        str(
-            result_data.get("strategy_revision")
-            or spec.get("strategy_revision")
-            or manifest_data.get("definition_revisions", [""])[0]
-            or "v1"
-        )
-    )
-    run_id = html.escape(str(result_data.get("run_id") or manifest_data.get("id") or "N/A"))
-    security_id = html.escape(str(spec.get("security_id") or "N/A"))
-    start_date = html.escape(str(spec.get("start_date") or ""))
-    end_date = html.escape(str(spec.get("end_date") or ""))
-    starting_cash = float(spec.get("starting_cash", 100000.0))
 
-    exec_raw = spec.get("execution")
-    execution = exec_raw if isinstance(exec_raw, dict) else {}
-    commission_rate = float(execution.get("commission_rate", 0.0))
-    slippage_rate = float(execution.get("slippage_rate", 0.0))
-    cash_interest_rate = float(execution.get("cash_interest_rate", 0.0))
-    schedule = html.escape(str(execution.get("schedule") or "daily"))
-    price_field = html.escape(str(spec.get("price_field") or "close"))
-
-    dataset_versions = manifest_data.get("dataset_versions")
-    if not dataset_versions:
-        dataset_versions = (
-            [spec.get("dataset_version_id")] if spec.get("dataset_version_id") else []
-        )
-    dataset_version_list = (
-        dataset_versions if isinstance(dataset_versions, list) else [str(dataset_versions)]
-    )
-
-    universe_raw = spec.get("universe") or manifest_data.get("universe")
-    if not universe_raw:
-        universe_raw = [security_id] if security_id and security_id != "N/A" else []
-    universe_list = universe_raw if isinstance(universe_raw, list) else [str(universe_raw)]
-    benchmark_id = html.escape(
-        str(spec.get("benchmark_security_id") or manifest_data.get("benchmark_security_id") or "")
-    )
-
-    raw_warnings = result_data.get("warnings")
-    warnings = raw_warnings if isinstance(raw_warnings, list) else []
-
-    raw_rejections = result_data.get("rejections")
-    rejections = raw_rejections if isinstance(raw_rejections, list) else []
-
-    metrics_raw = result_data.get("metrics")
-    metrics = metrics_raw if isinstance(metrics_raw, dict) else {}
-
-    total_return = float(metrics.get("total_return", 0.0))
-    ann_return = float(metrics.get("annualized_return", 0.0))
-    ann_vol = float(metrics.get("annualized_volatility", 0.0))
-    sharpe = float(metrics.get("sharpe_ratio", 0.0))
-    sortino = float(metrics.get("sortino_ratio", 0.0))
-    max_dd = float(metrics.get("max_drawdown", 0.0))
-    calmar = float(metrics.get("calmar_ratio", 0.0))
-    turnover = float(metrics.get("turnover", 0.0))
-    gross_exp = float(metrics.get("gross_exposure", 0.0))
-    net_exp = float(metrics.get("net_exposure", 0.0))
-    hit_rate = metrics.get("hit_rate")
-    bench_rel = metrics.get("benchmark_relative_return")
-    num_trades = int(metrics.get("num_trades", 0))
-    num_fills = int(metrics.get("num_fills", 0))
-
-    result_manifest_raw = result_data.get("manifest")
-    result_manifest = result_manifest_raw if isinstance(result_manifest_raw, dict) else {}
-    costs_raw = result_manifest.get("costs")
-    costs = costs_raw if isinstance(costs_raw, dict) else {}
-    portfolio_impact_raw = costs.get("portfolio_impact")
-    portfolio_impact = portfolio_impact_raw if isinstance(portfolio_impact_raw, dict) else {}
-
-    hit_rate_str = f"{float(hit_rate) * 100:.1f}%" if hit_rate is not None else "—"
-    bench_rel_str = f"{float(bench_rel) * 100:+.2f}%" if bench_rel is not None else "—"
-
-    universe_display = ", ".join(universe_list) if universe_list else security_id
-    title_symbol = (
-        universe_display
-        if len(universe_list) <= 3
-        else f"{universe_list[0]} +{len(universe_list) - 1} more"
-    )
-
-    doc = [
+def _render_html_header(title_symbol: str, strategy_name: str, strategy_rev: str) -> list[str]:
+    return [
         "<!DOCTYPE html>",
         '<html lang="en">',
         "<head>",
@@ -173,31 +115,42 @@ def generate_backtest_html_report(
         "  </style>",
         "</head>",
         "<body>",
-        f"  <h1>Backtest Report: {title_symbol} — {strategy_name}</h1>",
+    ]
+
+
+def _render_meta_box(meta: ReportMetaInfo) -> list[str]:
+    return [
+        f"  <h1>Backtest Report: {meta.title_symbol} — {meta.strategy_name}</h1>",
         '  <div class="meta">',
         '    <div class="meta-grid">',
-        f"      <div><strong>Strategy:</strong> {strategy_name} ({strategy_rev})</div>",
-        f"      <div><strong>Run ID:</strong> {run_id}</div>",
-        f"      <div><strong>Simulation Range:</strong> {start_date} to {end_date}</div>",
-        f"      <div><strong>Starting Cash:</strong> ${starting_cash:,.2f} USD</div>",
+        f"      <div><strong>Strategy:</strong> {meta.strategy_name} ({meta.strategy_rev})</div>",
+        f"      <div><strong>Run ID:</strong> {meta.run_id}</div>",
+        f"      <div><strong>Simulation Range:</strong> {meta.start_date} to {meta.end_date}</div>",
+        f"      <div><strong>Starting Cash:</strong> ${meta.starting_cash:,.2f} USD</div>",
         (
             "      <div><strong>Sample Status:</strong> Out-of-sample "
             "(Point-in-time sequential simulation)</div>"
         ),
-        f"      <div><strong>Execution:</strong> Next-bar open ({schedule})</div>",
-        f"      <div><strong>Benchmark:</strong> {benchmark_id if benchmark_id else 'None'}</div>",
+        f"      <div><strong>Execution:</strong> Next-bar open ({meta.schedule})</div>",
+        f"      <div><strong>Benchmark:</strong> {meta.benchmark_id if meta.benchmark_id else 'None'}</div>",
         "    </div>",
         '    <div style="margin-top: 12px;"><strong>Universe Securities:</strong> '
-        + "".join(f'<span class="badge">{html.escape(str(s))}</span>' for s in universe_list)
+        + "".join(f'<span class="badge">{html.escape(str(s))}</span>' for s in meta.universe_list)
         + "    </div>",
         '    <div style="margin-top: 8px;"><strong>Dataset Versions:</strong> '
         + "".join(
-            f'<span class="badge">{html.escape(str(ds))}</span>' for ds in dataset_version_list
+            f'<span class="badge">{html.escape(str(ds))}</span>' for ds in meta.dataset_version_list
         )
         + "    </div>",
         "  </div>",
     ]
 
+
+def _render_warnings_and_rejections(
+    warnings: list[JsonValue],
+    rejections: list[JsonValue],
+) -> list[str]:
+    doc: list[str] = []
     if warnings:
         doc.append('  <div class="warning"><strong>Warnings:</strong><ul>')
         for w in warnings:
@@ -218,83 +171,85 @@ def generate_backtest_html_report(
             else:
                 doc.append(f"    <li>{html.escape(str(r))}</li>")
         doc.append("  </ul></div>")
+    return doc
 
-    # Headline Performance Metrics
-    doc.append("  <h2>Performance Overview</h2>")
-    doc.append('  <div class="metric-grid">')
-    doc.append(
+
+def _render_performance_metrics_grid(metrics: dict[str, JsonValue]) -> list[str]:
+    total_return = float(metrics.get("total_return", 0.0))
+    ann_return = float(metrics.get("annualized_return", 0.0))
+    ann_vol = float(metrics.get("annualized_volatility", 0.0))
+    sharpe = float(metrics.get("sharpe_ratio", 0.0))
+    sortino = float(metrics.get("sortino_ratio", 0.0))
+    max_dd = float(metrics.get("max_drawdown", 0.0))
+    calmar = float(metrics.get("calmar_ratio", 0.0))
+    turnover = float(metrics.get("turnover", 0.0))
+    gross_exp = float(metrics.get("gross_exposure", 0.0))
+    net_exp = float(metrics.get("net_exposure", 0.0))
+    hit_rate = metrics.get("hit_rate")
+    bench_rel = metrics.get("benchmark_relative_return")
+    num_trades = int(metrics.get("num_trades", 0))
+    num_fills = int(metrics.get("num_fills", 0))
+
+    hit_rate_str = f"{float(hit_rate) * 100:.1f}%" if hit_rate is not None else "—"
+    bench_rel_str = f"{float(bench_rel) * 100:+.2f}%" if bench_rel is not None else "—"
+
+    return [
+        "  <h2>Performance Overview</h2>",
+        '  <div class="metric-grid">',
         '    <div class="metric-card"><div class="metric-label">Total Return</div>'
-        f'<div class="metric-value">{total_return * 100:+.2f}%</div></div>'
-    )
-    doc.append(
+        f'<div class="metric-value">{total_return * 100:+.2f}%</div></div>',
         '    <div class="metric-card"><div class="metric-label">Annualized Return</div>'
-        f'<div class="metric-value">{ann_return * 100:+.2f}%</div></div>'
-    )
-    doc.append(
+        f'<div class="metric-value">{ann_return * 100:+.2f}%</div></div>',
         '    <div class="metric-card"><div class="metric-label">Annual Volatility</div>'
-        f'<div class="metric-value">{ann_vol * 100:.2f}%</div></div>'
-    )
-    doc.append(
+        f'<div class="metric-value">{ann_vol * 100:.2f}%</div></div>',
         '    <div class="metric-card"><div class="metric-label">Sharpe Ratio</div>'
-        f'<div class="metric-value">{sharpe:.2f}</div></div>'
-    )
-    doc.append(
+        f'<div class="metric-value">{sharpe:.2f}</div></div>',
         '    <div class="metric-card"><div class="metric-label">Sortino Ratio</div>'
-        f'<div class="metric-value">{sortino:.2f}</div></div>'
-    )
-    doc.append(
+        f'<div class="metric-value">{sortino:.2f}</div></div>',
         '    <div class="metric-card"><div class="metric-label">Max Drawdown</div>'
-        f'<div class="metric-value">{max_dd * 100:.2f}%</div></div>'
-    )
-    doc.append(
+        f'<div class="metric-value">{max_dd * 100:.2f}%</div></div>',
         '    <div class="metric-card"><div class="metric-label">Calmar Ratio</div>'
-        f'<div class="metric-value">{calmar:.2f}</div></div>'
-    )
-    doc.append(
+        f'<div class="metric-value">{calmar:.2f}</div></div>',
         '    <div class="metric-card"><div class="metric-label">Hit Rate / Win Rate</div>'
-        f'<div class="metric-value">{hit_rate_str}</div></div>'
-    )
-    doc.append(
+        f'<div class="metric-value">{hit_rate_str}</div></div>',
         '    <div class="metric-card"><div class="metric-label">Turnover</div>'
-        f'<div class="metric-value">{turnover:.2f}x</div></div>'
-    )
-    doc.append(
+        f'<div class="metric-value">{turnover:.2f}x</div></div>',
         '    <div class="metric-card"><div class="metric-label">Gross / Net Exposure</div>'
-        f'<div class="metric-value">{gross_exp * 100:.0f}% / {net_exp * 100:.0f}%</div></div>'
-    )
-    doc.append(
+        f'<div class="metric-value">{gross_exp * 100:.0f}% / {net_exp * 100:.0f}%</div></div>',
         '    <div class="metric-card"><div class="metric-label">Benchmark Relative</div>'
-        f'<div class="metric-value">{bench_rel_str}</div></div>'
-    )
-    doc.append(
+        f'<div class="metric-value">{bench_rel_str}</div></div>',
         '    <div class="metric-card"><div class="metric-label">Trades / Fills</div>'
-        f'<div class="metric-value">{num_trades} / {num_fills}</div></div>'
-    )
-    doc.append("  </div>")
+        f'<div class="metric-value">{num_trades} / {num_fills}</div></div>',
+        "  </div>",
+    ]
 
-    # Execution Assumptions Table
-    doc.append("  <h2>Execution Model & Strategy Assumptions</h2>")
-    doc.append("  <table>")
-    doc.append(
-        '    <thead><tr><th>Parameter / Assumption</th><th class="num">Value</th></tr></thead>'
-    )
-    doc.append("    <tbody>")
-    doc.append(
-        '      <tr><td>Universe</td><td class="num">'
-        f'{html.escape(", ".join(universe_list))}</td></tr>'
-    )
-    if benchmark_id:
-        doc.append(
-            f'      <tr><td>Benchmark Security</td><td class="num">{benchmark_id}</td></tr>'
-        )
-    doc.append(f'      <tr><td>Strategy</td><td class="num">{strategy_name}</td></tr>')
-    doc.append(f'      <tr><td>Strategy Revision</td><td class="num">{strategy_rev}</td></tr>')
-    doc.append(f'      <tr><td>Price Field</td><td class="num">{price_field}</td></tr>')
-    doc.append(f'      <tr><td>Rebalance Schedule</td><td class="num">{schedule}</td></tr>')
-    borrow_fee_rate = float(execution.get("borrow_fee_rate", 0.0))
-    raw_unavail = execution.get("unavailable_borrow", [])
+
+def _render_execution_assumptions_table(info: ExecutionAssumptionsInfo) -> list[str]:
+    commission_rate = float(info.execution.get("commission_rate", 0.0))
+    slippage_rate = float(info.execution.get("slippage_rate", 0.0))
+    cash_interest_rate = float(info.execution.get("cash_interest_rate", 0.0))
+    borrow_fee_rate = float(info.execution.get("borrow_fee_rate", 0.0))
+    raw_unavail = info.execution.get("unavailable_borrow", [])
     unavailable_borrow = raw_unavail if isinstance(raw_unavail, list) else []
+    max_leverage = float(info.execution.get("max_leverage", 1.0))
+    margin_req = float(info.execution.get("margin_requirement", 1.0))
+    maint_margin = float(info.execution.get("maintenance_margin", 0.25))
+    leverage_mode = html.escape(str(info.execution.get("leverage_mode") or "reject"))
 
+    doc = [
+        "  <h2>Execution Model & Strategy Assumptions</h2>",
+        "  <table>",
+        '    <thead><tr><th>Parameter / Assumption</th><th class="num">Value</th></tr></thead>',
+        "    <tbody>",
+        '      <tr><td>Universe</td><td class="num">'
+        f'{html.escape(", ".join(info.universe_list))}</td></tr>',
+    ]
+    if info.benchmark_id:
+        doc.append(f'      <tr><td>Benchmark Security</td><td class="num">{info.benchmark_id}</td></tr>')
+    doc.append(f'      <tr><td>Strategy</td><td class="num">{info.strategy_name}</td></tr>')
+    doc.append(f'      <tr><td>Strategy Revision</td><td class="num">{info.strategy_rev}</td></tr>')
+    doc.append(f'      <tr><td>Price Field</td><td class="num">{info.price_field}</td></tr>')
+    doc.append(f'      <tr><td>Rebalance Schedule</td><td class="num">{info.schedule}</td></tr>')
     doc.append(
         '      <tr><td>Commission Rate</td><td class="num">'
         f'{commission_rate * 10000:.1f} bps ({commission_rate * 100:.3f}%)</td></tr>'
@@ -317,26 +272,15 @@ def generate_backtest_html_report(
     if unavailable_borrow:
         unavail_str = html.escape(", ".join(str(u) for u in unavailable_borrow))
         doc.append(f'      <tr><td>Unavailable Borrow</td><td class="num">{unavail_str}</td></tr>')
-    max_leverage = float(execution.get("max_leverage", 1.0))
-    margin_req = float(execution.get("margin_requirement", 1.0))
-    maint_margin = float(execution.get("maintenance_margin", 0.25))
-    leverage_mode = html.escape(str(execution.get("leverage_mode") or "reject"))
-
     doc.append(
         '      <tr><td>Max Leverage Limit</td>'
         f'<td class="num">{max_leverage:.2f}x ({max_leverage * 100:.0f}% gross exposure)</td></tr>'
     )
-    doc.append(
-        f'      <tr><td>Margin Requirement</td><td class="num">{margin_req * 100:.1f}%</td></tr>'
-    )
-    doc.append(
-        f'      <tr><td>Maintenance Margin</td><td class="num">{maint_margin * 100:.1f}%</td></tr>'
-    )
-    doc.append(
-        f'      <tr><td>Leverage Constraint Mode</td><td class="num">{leverage_mode}</td></tr>'
-    )
+    doc.append(f'      <tr><td>Margin Requirement</td><td class="num">{margin_req * 100:.1f}%</td></tr>')
+    doc.append(f'      <tr><td>Maintenance Margin</td><td class="num">{maint_margin * 100:.1f}%</td></tr>')
+    doc.append(f'      <tr><td>Leverage Constraint Mode</td><td class="num">{leverage_mode}</td></tr>')
 
-    params_raw = spec.get("parameters")
+    params_raw = info.spec.get("parameters")
     if isinstance(params_raw, dict):
         for k, v in sorted(params_raw.items()):
             doc.append(
@@ -345,15 +289,20 @@ def generate_backtest_html_report(
             )
     doc.append("    </tbody>")
     doc.append("  </table>")
+    return doc
 
-    # Cost attribution table
-    doc.append("  <h2>Cost Attribution</h2>")
-    doc.append("  <table>")
-    doc.append(
+
+def _render_cost_attribution_table(
+    costs: dict[str, JsonValue],
+    portfolio_impact: dict[str, JsonValue],
+) -> list[str]:
+    doc = [
+        "  <h2>Cost Attribution</h2>",
+        "  <table>",
         '    <thead><tr><th>Category</th><th class="num">Amount</th>'
-        '<th class="num">Portfolio Impact</th></tr></thead>'
-    )
-    doc.append("    <tbody>")
+        '<th class="num">Portfolio Impact</th></tr></thead>',
+        "    <tbody>",
+    ]
     for label, key in (
         ("Commission", "total_commission"),
         ("Slippage", "total_slippage"),
@@ -376,11 +325,11 @@ def generate_backtest_html_report(
     )
     doc.append("    </tbody>")
     doc.append("  </table>")
+    return doc
 
-    # Closed Trades Table
-    raw_trades = result_data.get("trades")
-    trades = raw_trades if isinstance(raw_trades, list) else []
-    doc.append(f"  <h2>Closed Trades ({len(trades)})</h2>")
+
+def _render_closed_trades_table(trades: list[JsonValue]) -> list[str]:
+    doc = [f"  <h2>Closed Trades ({len(trades)})</h2>"]
     if trades:
         doc.append('  <div class="scroll-table">')
         doc.append("    <table>")
@@ -421,11 +370,11 @@ def generate_backtest_html_report(
         doc.append("  </div>")
     else:
         doc.append("  <p><em>No round-trip trades completed during this Backtest run.</em></p>")
+    return doc
 
-    # Fills Table
-    raw_fills = result_data.get("fills")
-    fills = raw_fills if isinstance(raw_fills, list) else []
-    doc.append(f"  <h2>Simulated Execution Fills ({len(fills)})</h2>")
+
+def _render_fills_table(fills: list[JsonValue]) -> list[str]:
+    doc = [f"  <h2>Simulated Execution Fills ({len(fills)})</h2>"]
     if fills:
         doc.append('  <div class="scroll-table">')
         doc.append("    <table>")
@@ -461,11 +410,11 @@ def generate_backtest_html_report(
         doc.append("  </div>")
     else:
         doc.append("  <p><em>No fills occurred during this Backtest run.</em></p>")
+    return doc
 
-    # Mark-to-market Ledger Table
-    raw_ledger = result_data.get("ledger")
-    ledger = raw_ledger if isinstance(raw_ledger, list) else []
-    doc.append(f"  <h2>Daily Mark-to-Market Ledger ({len(ledger)} sessions)</h2>")
+
+def _render_ledger_table(ledger: list[JsonValue]) -> list[str]:
+    doc = [f"  <h2>Daily Mark-to-Market Ledger ({len(ledger)} sessions)</h2>"]
     if ledger:
         doc.append('  <div class="scroll-table">')
         doc.append("    <table>")
@@ -520,6 +469,118 @@ def generate_backtest_html_report(
         doc.append("      </tbody>")
         doc.append("    </table>")
         doc.append("  </div>")
+    return doc
+
+
+def generate_backtest_html_report(
+    result_data: dict[str, JsonValue],
+    manifest_data: dict[str, JsonValue],
+) -> str:
+    """Generate a self-contained, human-readable HTML Backtest report."""
+    spec_raw = result_data.get("specification")
+    spec = spec_raw if isinstance(spec_raw, dict) else {}
+    strategy_name = html.escape(str(spec.get("strategy_name") or "unnamed_strategy"))
+    strategy_rev = html.escape(
+        str(
+            result_data.get("strategy_revision")
+            or spec.get("strategy_revision")
+            or manifest_data.get("definition_revisions", [""])[0]
+            or "v1"
+        )
+    )
+    run_id = html.escape(str(result_data.get("run_id") or manifest_data.get("id") or "N/A"))
+    security_id = html.escape(str(spec.get("security_id") or "N/A"))
+    start_date = html.escape(str(spec.get("start_date") or ""))
+    end_date = html.escape(str(spec.get("end_date") or ""))
+    starting_cash = float(spec.get("starting_cash", 100000.0))
+
+    exec_raw = spec.get("execution")
+    execution = exec_raw if isinstance(exec_raw, dict) else {}
+    schedule = html.escape(str(execution.get("schedule") or "daily"))
+    price_field = html.escape(str(spec.get("price_field") or "close"))
+
+    dataset_versions = manifest_data.get("dataset_versions")
+    if not dataset_versions:
+        dataset_versions = (
+            [spec.get("dataset_version_id")] if spec.get("dataset_version_id") else []
+        )
+    dataset_version_list = (
+        dataset_versions if isinstance(dataset_versions, list) else [str(dataset_versions)]
+    )
+
+    universe_raw = spec.get("universe") or manifest_data.get("universe")
+    if not universe_raw:
+        universe_raw = [security_id] if security_id and security_id != "N/A" else []
+    universe_list = universe_raw if isinstance(universe_raw, list) else [str(universe_raw)]
+    benchmark_id = html.escape(
+        str(spec.get("benchmark_security_id") or manifest_data.get("benchmark_security_id") or "")
+    )
+
+    raw_warnings = result_data.get("warnings")
+    warnings = raw_warnings if isinstance(raw_warnings, list) else []
+
+    raw_rejections = result_data.get("rejections")
+    rejections = raw_rejections if isinstance(raw_rejections, list) else []
+
+    metrics_raw = result_data.get("metrics")
+    metrics = metrics_raw if isinstance(metrics_raw, dict) else {}
+
+    result_manifest_raw = result_data.get("manifest")
+    result_manifest = result_manifest_raw if isinstance(result_manifest_raw, dict) else {}
+    costs_raw = result_manifest.get("costs")
+    costs = costs_raw if isinstance(costs_raw, dict) else {}
+    portfolio_impact_raw = costs.get("portfolio_impact")
+    portfolio_impact = portfolio_impact_raw if isinstance(portfolio_impact_raw, dict) else {}
+
+    universe_display = ", ".join(universe_list) if universe_list else security_id
+    title_symbol = (
+        universe_display
+        if len(universe_list) <= 3
+        else f"{universe_list[0]} +{len(universe_list) - 1} more"
+    )
+
+    doc: list[str] = []
+    doc.extend(_render_html_header(title_symbol, strategy_name, strategy_rev))
+    meta_info = ReportMetaInfo(
+        title_symbol=title_symbol,
+        strategy_name=strategy_name,
+        strategy_rev=strategy_rev,
+        run_id=run_id,
+        start_date=start_date,
+        end_date=end_date,
+        starting_cash=starting_cash,
+        schedule=schedule,
+        benchmark_id=benchmark_id,
+        universe_list=universe_list,
+        dataset_version_list=dataset_version_list,
+    )
+    doc.extend(_render_meta_box(meta_info))
+    doc.extend(_render_warnings_and_rejections(warnings, rejections))
+    doc.extend(_render_performance_metrics_grid(metrics))
+    exec_info = ExecutionAssumptionsInfo(
+        spec=spec,
+        execution=execution,
+        universe_list=universe_list,
+        benchmark_id=benchmark_id,
+        strategy_name=strategy_name,
+        strategy_rev=strategy_rev,
+        price_field=price_field,
+        schedule=schedule,
+    )
+    doc.extend(_render_execution_assumptions_table(exec_info))
+    doc.extend(_render_cost_attribution_table(costs, portfolio_impact))
+
+    raw_trades = result_data.get("trades")
+    trades = raw_trades if isinstance(raw_trades, list) else []
+    doc.extend(_render_closed_trades_table(trades))
+
+    raw_fills = result_data.get("fills")
+    fills = raw_fills if isinstance(raw_fills, list) else []
+    doc.extend(_render_fills_table(fills))
+
+    raw_ledger = result_data.get("ledger")
+    ledger = raw_ledger if isinstance(raw_ledger, list) else []
+    doc.extend(_render_ledger_table(ledger))
 
     doc.append(
         '  <footer style="margin-top: 40px; color: #94a3b8; font-size: 0.8rem;">'

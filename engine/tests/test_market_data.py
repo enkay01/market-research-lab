@@ -10,7 +10,7 @@ from market_research_lab.market_data import (
     CorporateAction,
     DailyBar,
     FundamentalFact,
-    InadequateTemporalProvenanceError,
+    InsufficientTimestampError,
     IngestionRequest,
     MarketDataStore,
     Security,
@@ -99,7 +99,7 @@ def test_row_level_missing_available_at_rejected_from_historical_query():
 
         # One row is missing available_at
         with pytest.raises(
-            InadequateTemporalProvenanceError,
+            InsufficientTimestampError,
             match="Market observations lack required point-in-time eligibility timestamps",
         ):
             store.history(version.id, as_of="2023-01-02T18:00:00Z")
@@ -126,7 +126,7 @@ def test_invalid_available_at_is_inadequate_for_historical_use():
         )
 
         assert store.coverage(version.id).has_temporal_provenance is False
-        with pytest.raises(InadequateTemporalProvenanceError):
+        with pytest.raises(InsufficientTimestampError):
             store.history(version.id, as_of="2023-01-02T18:00:00Z")
 
 
@@ -324,7 +324,7 @@ def test_data_lacking_temporal_provenance_rejected_from_historical_query():
 
         # Querying with as_of specified must raise InadequateTemporalProvenanceError
         with pytest.raises(
-            InadequateTemporalProvenanceError,
+            InsufficientTimestampError,
             match="Market observations lack required point-in-time eligibility timestamps",
         ):
             store.history(version.id, as_of="2023-01-01T18:00:00Z")
