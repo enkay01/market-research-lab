@@ -1012,7 +1012,7 @@ def _simulate_path(
                         -exit_cost,
                         flow_type="option_exit_cost",
                         description=(
-                            f"Expiration settlement ({position.close_rule}) "
+                            f"Expiration settlement ({transition.reason.value}) "
                             f"for {position.position_id}"
                         ),
                         timestamp=_minute_text(minute),
