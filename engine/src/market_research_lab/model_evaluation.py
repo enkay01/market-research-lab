@@ -30,6 +30,47 @@ if TYPE_CHECKING:
 EvaluationMode = Literal["holdout", "expanding", "rolling"]
 NaiveBenchmarkName = Literal["zero_return", "historical_mean", "persistence"]
 
+NaiveBenchmarkPredictor = Callable[[str, Sequence[float], Mapping[str, float]], float]
+
+
+@dataclass(frozen=True)
+class NaiveBenchmarkSpec:
+    name: NaiveBenchmarkName
+    display_name: str
+    description: str
+    predict: NaiveBenchmarkPredictor
+
+
+def _zero_return(_: str, __: Sequence[float], ___: Mapping[str, float]) -> float:
+    return 0.0
+
+
+def _historical_mean(_: str, targets: Sequence[float], __: Mapping[str, float]) -> float:
+    return sum(targets) / len(targets) if targets else 0.0
+
+
+def _persistence(session_date: str, _: Sequence[float], prior: Mapping[str, float]) -> float:
+    return float(prior.get(session_date, 0.0))
+
+
+NAIVE_BENCHMARKS: dict[NaiveBenchmarkName, NaiveBenchmarkSpec] = {
+    "zero_return": NaiveBenchmarkSpec(
+        "zero_return", "Zero Return Benchmark", "Unconditional zero-return forecast.", _zero_return
+    ),
+    "historical_mean": NaiveBenchmarkSpec(
+        "historical_mean",
+        "Historical Mean Benchmark",
+        "Constant forecast equal to the eligible training mean.",
+        _historical_mean,
+    ),
+    "persistence": NaiveBenchmarkSpec(
+        "persistence",
+        "Persistence Benchmark",
+        "Forecast using the most recent observed return.",
+        _persistence,
+    ),
+}
+
 
 @dataclass(frozen=True)
 class ModelEvaluationParameters:
@@ -68,7 +109,7 @@ class _RegressionMetrics:
     r2: float
 
 
-def _metrics(
+def evaluate_period_metrics(
     period: str,
     predictions: Sequence["PredictiveModelOutput"],
     benchmarks: Sequence[tuple[str, str | None, float]],
@@ -150,7 +191,6 @@ def _metrics(
 def evaluate_model(request: ModelEvaluationInput) -> "PredictiveModelCalculation":
     """Run holdout or walk-forward evaluation through one shared path."""
     from .predictive_models import (
-        _NAIVE_BENCHMARKS,
         NaiveBenchmarkEvaluation,
         PredictiveModelCalculation,
         PredictiveModelCalculationError,
@@ -219,7 +259,7 @@ def evaluate_model(request: ModelEvaluationInput) -> "PredictiveModelCalculation
         raise PredictiveModelCalculationError(
             "Training, validation, and test target periods must be strictly chronological."
         )
-    benchmark = _NAIVE_BENCHMARKS[options.naive_benchmark]
+    benchmark = NAIVE_BENCHMARKS[options.naive_benchmark]
     sorted_bars = sorted(request.bars, key=lambda b: b.session_date)
     prior_returns = {
         bar.session_date: (bar.close / sorted_bars[i - 1].close - 1.0)
@@ -255,9 +295,8 @@ def evaluate_model(request: ModelEvaluationInput) -> "PredictiveModelCalculation
                     (s, str(row.target_date), benchmark.predict(s, training_targets, prior_returns))
                 )
     else:
-        for fold_index, (period_name, period_frame) in enumerate(
-            (("validation", validation), ("test", test)), 1
-        ):
+        fold_index = 1
+        for period_name, period_frame in (("validation", validation), ("test", test)):
             for _, row in period_frame.iterrows():
                 eligible = labelled[
                     (labelled.session_date < row.session_date)
@@ -313,6 +352,7 @@ def evaluate_model(request: ModelEvaluationInput) -> "PredictiveModelCalculation
                         else {},
                     )
                 )
+                fold_index += 1
     final_artifact = fold_artifacts[-1]
     period_by_target = {
         str(row.target_date): period
@@ -342,8 +382,8 @@ def evaluate_model(request: ModelEvaluationInput) -> "PredictiveModelCalculation
         if isinstance(x, PredictiveModelPrediction)
     ]
     period_metrics = (
-        _metrics("training", training_preds, bench_by_period["training"]),
-        _metrics(
+        evaluate_period_metrics("training", training_preds, bench_by_period["training"]),
+        evaluate_period_metrics(
             "validation",
             [
                 x
@@ -352,7 +392,7 @@ def evaluate_model(request: ModelEvaluationInput) -> "PredictiveModelCalculation
             ],
             bench_by_period["validation"],
         ),
-        _metrics(
+        evaluate_period_metrics(
             "test",
             [
                 x
@@ -398,6 +438,16 @@ def evaluate_model(request: ModelEvaluationInput) -> "PredictiveModelCalculation
     }
     for m in period_metrics:
         metrics.update({f"{m.period}_{k}": float(v) for k, v in m.metrics.items()})
+        metrics.update(
+            {f"{m.period}_benchmark_{k}": float(v) for k, v in m.benchmark_metrics.items()}
+        )
+        metrics.update(
+            {
+                f"{m.period}_{k}": float(v)
+                for k, v in m.comparison.items()
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
+            }
+        )
     evaluation = PredictiveModelEvaluation(
         options.evaluation_mode,
         periods,
