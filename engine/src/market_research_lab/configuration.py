@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from .providers import AlpacaCredentials, ProviderCredentials
+from .providers import AlpacaCredentials, MassiveCredentials, ProviderCredentials
 
 
 def load_provider_credentials(env_file: Path | None = None) -> ProviderCredentials:
@@ -32,5 +32,8 @@ def load_provider_credentials(env_file: Path | None = None) -> ProviderCredentia
         alpaca=AlpacaCredentials(
             api_key=value("ALPACA_API_KEY"),
             api_secret=value("ALPACA_API_SECRET"),
+        ),
+        massive=MassiveCredentials(
+            api_key=value("MASSIVE_API_KEY") or value("POLYGON_API_KEY"),
         ),
     )

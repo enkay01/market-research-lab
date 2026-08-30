@@ -145,24 +145,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/projects/{project_id}/research/{security_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Security Thesis */
-        get: operations["get_security_thesis_api_projects__project_id__research__security_id__get"];
-        /** Save Security Thesis */
-        put: operations["save_security_thesis_api_projects__project_id__research__security_id__put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/projects/{project_id}/runs": {
         parameters: {
             query?: never;
@@ -335,142 +317,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/valuations/comparables": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Calculate Comparable Valuation */
-        post: operations["calculate_comparable_valuation_api_valuations_comparables_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/projects/{project_id}/valuations/comparables": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Save Comparable Valuation */
-        post: operations["save_comparable_valuation_api_projects__project_id__valuations_comparables_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/projects/{project_id}/valuations/seed/{security_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Seed Dcf Valuation */
-        get: operations["seed_dcf_valuation_api_projects__project_id__valuations_seed__security_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/valuations/dcf": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Calculate Dcf Valuation */
-        post: operations["calculate_dcf_valuation_api_valuations_dcf_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/projects/{project_id}/valuations/dcf": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Save Dcf Valuation */
-        post: operations["save_dcf_valuation_api_projects__project_id__valuations_dcf_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/projects/{project_id}/valuations/compare": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Compare Valuations */
-        post: operations["compare_valuations_api_projects__project_id__valuations_compare_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/projects/{project_id}/valuations/{run_id}/export/{format_type}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Export Valuation */
-        get: operations["export_valuation_api_projects__project_id__valuations__run_id__export__format_type__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/projects/{project_id}/valuations": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Saved Valuations */
-        get: operations["list_saved_valuations_api_projects__project_id__valuations_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/indicators": {
         parameters: {
             query?: never;
@@ -516,6 +362,23 @@ export interface paths {
         put?: never;
         /** Calculate Indicator Endpoint */
         post: operations["calculate_indicator_endpoint_api_indicators_calculate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/strategies-meta/template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Custom Strategy Template */
+        get: operations["get_custom_strategy_template_api_strategies_meta_template_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -658,109 +521,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/predictive-models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Predictive Models */
-        get: operations["get_predictive_models_api_predictive_models_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/predictive-models/{name}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Predictive Model By Name */
-        get: operations["get_predictive_model_by_name_api_predictive_models__name__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/predictive-models/run": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Run Predictive Model Preview */
-        post: operations["run_predictive_model_preview_api_predictive_models_run_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/projects/{project_id}/predictive-models/runs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Project Predictive Model Runs */
-        get: operations["list_project_predictive_model_runs_api_projects__project_id__predictive_models_runs_get"];
-        put?: never;
-        /** Save Predictive Model Run */
-        post: operations["save_predictive_model_run_api_projects__project_id__predictive_models_runs_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/projects/{project_id}/predictive-models/runs/{run_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Project Predictive Model Run */
-        get: operations["get_project_predictive_model_run_api_projects__project_id__predictive_models_runs__run_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/projects/{project_id}/predictive-models/runs/{run_id}/export/{format_type}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Export Predictive Model */
-        get: operations["export_predictive_model_api_projects__project_id__predictive_models_runs__run_id__export__format_type__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/projects/{project_id}/backtests": {
         parameters: {
             query?: never;
@@ -893,40 +653,6 @@ export interface paths {
         get: operations["export_options_backtest_api_projects__project_id__options_backtests__run_id__export__format_type__get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/projects/{project_id}/alerts": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Project Signals */
-        get: operations["list_project_signals_api_projects__project_id__alerts_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/projects/{project_id}/alerts/refresh": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Refresh Project Alerts */
-        post: operations["refresh_project_alerts_api_projects__project_id__alerts_refresh_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1250,126 +976,6 @@ export interface components {
             /** Deleted Ids */
             deleted_ids: string[];
         };
-        /** CashFlowForecastYearResponse */
-        CashFlowForecastYearResponse: {
-            /** Year */
-            year: number;
-            /** Revenue */
-            revenue: number;
-            /** Revenue Growth */
-            revenue_growth: number;
-            /** Operating Income */
-            operating_income: number;
-            /** Tax */
-            tax: number;
-            /** Nopat */
-            nopat: number;
-            /** Reinvestment */
-            reinvestment: number;
-            /** Free Cash Flow */
-            free_cash_flow: number;
-            /** Discount Factor */
-            discount_factor: number;
-            /** Present Value */
-            present_value: number;
-        };
-        /** ComparableCompanyInputResponse */
-        ComparableCompanyInputResponse: {
-            /** Security Id */
-            security_id: string;
-            /** Symbol */
-            symbol: string;
-            /** Name */
-            name: string;
-            /** Currency */
-            currency: string;
-            /** Market Cap */
-            market_cap: number | null;
-            /** Total Debt */
-            total_debt: number | null;
-            /** Cash */
-            cash: number | null;
-            /** Revenue */
-            revenue: number | null;
-            /** Ebitda */
-            ebitda: number | null;
-            /** Net Income */
-            net_income: number | null;
-            /** Free Cash Flow */
-            free_cash_flow: number | null;
-            /** Dataset Version Ids */
-            dataset_version_ids: string[];
-            /** Provenance */
-            provenance: {
-                [key: string]: string;
-            };
-            /** Units */
-            units: {
-                [key: string]: string;
-            };
-            /** Input Dataset Versions */
-            input_dataset_versions: {
-                [key: string]: string[];
-            };
-        };
-        /** ComparableCompanyValuationResponse */
-        ComparableCompanyValuationResponse: {
-            /** Security Id */
-            security_id: string;
-            /** Symbol */
-            symbol: string;
-            /** Name */
-            name: string;
-            /** Currency */
-            currency: string;
-            /** Market Cap */
-            market_cap: number | null;
-            /** Enterprise Value */
-            enterprise_value: number | null;
-            /** Price To Earnings */
-            price_to_earnings: number | null;
-            /** Ev To Revenue */
-            ev_to_revenue: number | null;
-            /** Ev To Ebitda */
-            ev_to_ebitda: number | null;
-            /** Free Cash Flow Yield */
-            free_cash_flow_yield: number | null;
-            inputs: components["schemas"]["ComparableCompanyInputResponse"];
-            /**
-             * Status
-             * @default ok
-             */
-            status: string;
-            /**
-             * Has Valuation
-             * @default true
-             */
-            has_valuation: boolean;
-        };
-        /** ComparableValuationRequest */
-        ComparableValuationRequest: {
-            /** Target Security Id */
-            target_security_id: string;
-            /** Peer Security Ids */
-            peer_security_ids: string[];
-        };
-        /** ComparableValuationResponse */
-        ComparableValuationResponse: {
-            target: components["schemas"]["ComparableCompanyValuationResponse"];
-            /** Peers */
-            peers: components["schemas"]["ComparableCompanyValuationResponse"][];
-            peer_medians: components["schemas"]["ComparableCompanyValuationResponse"];
-            /** Warnings */
-            warnings: string[];
-            /** Dataset Version Ids */
-            dataset_version_ids: string[];
-            /** Calculated At */
-            calculated_at: string;
-            /** Method Revision */
-            method_revision?: string | null;
-            /** Run Id */
-            run_id?: string | null;
-        };
         /** ConstraintRejectionResponse */
         ConstraintRejectionResponse: {
             /** Session Date */
@@ -1681,243 +1287,6 @@ export interface components {
              */
             leverage_mode: string;
         };
-        /** FCFFDCFInputResponse */
-        FCFFDCFInputResponse: {
-            /** Base Revenue */
-            base_revenue: number;
-            /** Revenue Growth Rate */
-            revenue_growth_rate: number;
-            /** Operating Margin */
-            operating_margin: number;
-            /** Tax Rate */
-            tax_rate: number;
-            /** Reinvestment Rate */
-            reinvestment_rate: number;
-            /** Wacc */
-            wacc: number;
-            /** Terminal Growth Rate */
-            terminal_growth_rate: number;
-            /** Shares Outstanding */
-            shares_outstanding: number;
-            /** Total Debt */
-            total_debt: number;
-            /** Cash */
-            cash: number;
-            /** Forecast Years */
-            forecast_years: number;
-            /** Provenance */
-            provenance?: {
-                [key: string]: string;
-            };
-            /** Units */
-            units?: {
-                [key: string]: string;
-            };
-            /** Input Warnings */
-            input_warnings?: string[];
-        };
-        /** FCFFDCFRequest */
-        FCFFDCFRequest: {
-            /** Target Security Id */
-            target_security_id: string;
-            /**
-             * Base Revenue
-             * @description Base period revenue
-             */
-            base_revenue: number;
-            /**
-             * Revenue Growth Rate
-             * @description Forecast revenue growth rate
-             */
-            revenue_growth_rate: number;
-            /**
-             * Operating Margin
-             * @description Forecast operating margin
-             */
-            operating_margin: number;
-            /**
-             * Tax Rate
-             * @description Effective tax rate
-             */
-            tax_rate: number;
-            /**
-             * Reinvestment Rate
-             * @description Reinvestment rate as fraction of NOPAT
-             */
-            reinvestment_rate: number;
-            /**
-             * Wacc
-             * @description Weighted Average Cost of Capital
-             */
-            wacc: number;
-            /**
-             * Terminal Growth Rate
-             * @description Perpetual terminal growth rate
-             */
-            terminal_growth_rate: number;
-            /**
-             * Shares Outstanding
-             * @description Shares outstanding
-             */
-            shares_outstanding: number;
-            /**
-             * Total Debt
-             * @description Total debt
-             * @default 0
-             */
-            total_debt: number;
-            /**
-             * Cash
-             * @description Cash and cash equivalents
-             * @default 0
-             */
-            cash: number;
-            /**
-             * Forecast Years
-             * @description Number of forecast years
-             * @default 5
-             */
-            forecast_years: number;
-            /** Revenue Growth Rates */
-            revenue_growth_rates?: number[] | null;
-            /** Operating Margins */
-            operating_margins?: number[] | null;
-            /** Reinvestment Rates */
-            reinvestment_rates?: number[] | null;
-        };
-        /** FCFFDCFSeedResponse */
-        FCFFDCFSeedResponse: {
-            /** Security Id */
-            security_id: string;
-            /** Symbol */
-            symbol: string;
-            /** Name */
-            name: string;
-            /** Currency */
-            currency: string;
-            /** Base Revenue */
-            base_revenue?: number | null;
-            /**
-             * Operating Margin
-             * @default 0.2
-             */
-            operating_margin: number;
-            /**
-             * Tax Rate
-             * @default 0.21
-             */
-            tax_rate: number;
-            /**
-             * Reinvestment Rate
-             * @default 0.2
-             */
-            reinvestment_rate: number;
-            /**
-             * Wacc
-             * @default 0.085
-             */
-            wacc: number;
-            /**
-             * Terminal Growth Rate
-             * @default 0.025
-             */
-            terminal_growth_rate: number;
-            /**
-             * Revenue Growth Rate
-             * @default 0.07
-             */
-            revenue_growth_rate: number;
-            /** Shares Outstanding */
-            shares_outstanding?: number | null;
-            /**
-             * Total Debt
-             * @default 0
-             */
-            total_debt: number;
-            /**
-             * Cash
-             * @default 0
-             */
-            cash: number;
-            /** Market Cap */
-            market_cap?: number | null;
-            /** Latest Price */
-            latest_price?: number | null;
-            /**
-             * Forecast Years
-             * @default 5
-             */
-            forecast_years: number;
-            /** Dataset Version Ids */
-            dataset_version_ids?: string[];
-            /** Provenance */
-            provenance?: {
-                [key: string]: string;
-            };
-            /** Units */
-            units?: {
-                [key: string]: string;
-            };
-            /** Warnings */
-            warnings?: string[];
-        };
-        /** FCFFDCFValuationResponse */
-        FCFFDCFValuationResponse: {
-            /** Security Id */
-            security_id: string;
-            /** Symbol */
-            symbol: string;
-            /** Name */
-            name: string;
-            /** Currency */
-            currency: string;
-            /** Forecast Years */
-            forecast_years: number;
-            /** Forecast Cash Flows */
-            forecast_cash_flows: components["schemas"]["CashFlowForecastYearResponse"][];
-            /** Terminal Cash Flow */
-            terminal_cash_flow: number | null;
-            /** Terminal Value */
-            terminal_value: number | null;
-            /** Pv Terminal Value */
-            pv_terminal_value: number | null;
-            /** Terminal Value Contribution */
-            terminal_value_contribution: number | null;
-            /** Enterprise Value */
-            enterprise_value: number | null;
-            /** Cash */
-            cash: number;
-            /** Total Debt */
-            total_debt: number;
-            /** Equity Value */
-            equity_value: number | null;
-            /** Shares Outstanding */
-            shares_outstanding: number;
-            /** Value Per Share */
-            value_per_share: number | null;
-            /** Scenarios */
-            scenarios: components["schemas"]["ScenarioResponse"][];
-            sensitivity: components["schemas"]["SensitivityMatrixResponse"];
-            /** Warnings */
-            warnings: string[];
-            /** Dataset Version Ids */
-            dataset_version_ids: string[];
-            /** Calculated At */
-            calculated_at: string;
-            inputs?: components["schemas"]["FCFFDCFInputResponse"] | null;
-            /** Provenance */
-            provenance?: {
-                [key: string]: string;
-            };
-            /** Units */
-            units?: {
-                [key: string]: string;
-            };
-            /** Method Revision */
-            method_revision?: string | null;
-            /** Run Id */
-            run_id?: string | null;
-        };
         /** FillResponse */
         FillResponse: {
             /** Trade Id */
@@ -2133,29 +1502,31 @@ export interface components {
             /** Delistings */
             delistings?: string[];
         };
-        /** NaiveBenchmarkEvaluationResponse */
-        NaiveBenchmarkEvaluationResponse: {
-            /** Name */
-            name: string;
-            /** Display Name */
-            display_name: string;
-            /** Description */
-            description: string;
-            /** Period Metrics */
-            period_metrics: {
-                [key: string]: {
-                    [key: string]: number;
-                };
-            };
-            /** Out Of Sample Comparison */
-            out_of_sample_comparison: {
-                [key: string]: components["schemas"]["JsonValue-Output"];
-            };
+        /** MassiveDownloadRequest */
+        MassiveDownloadRequest: {
             /**
-             * Completed
-             * @default false
+             * Start Date
+             * Format: date
              */
-            completed: boolean;
+            start_date: string;
+            /**
+             * End Date
+             * Format: date
+             */
+            end_date: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            provider: "massive";
+            /** Symbol */
+            symbol: string;
+            /**
+             * Data Type
+             * @default stocks_daily
+             * @enum {string}
+             */
+            data_type: "stocks_daily" | "stocks_minute" | "options";
         };
         /** OptionsBacktestResponse */
         OptionsBacktestResponse: {
@@ -2341,302 +1712,6 @@ export interface components {
             /** Weight */
             weight: number;
         };
-        /** PredictiveModelArtifactResponse */
-        PredictiveModelArtifactResponse: {
-            /** Model Name */
-            model_name: string;
-            /** Feature Name */
-            feature_name: string;
-            /** Target Name */
-            target_name: string;
-            /** Horizon */
-            horizon: number;
-            /** Intercept */
-            intercept: number;
-            /** Coefficient */
-            coefficient: number;
-            /** Training Start */
-            training_start: string;
-            /** Training End */
-            training_end: string;
-            /** Training Observations */
-            training_observations: number;
-            /** Parameters */
-            parameters: {
-                [key: string]: components["schemas"]["JsonValue-Output"];
-            };
-            /** Seed */
-            seed: number | null;
-            /** Training Metrics */
-            training_metrics: {
-                [key: string]: number;
-            };
-            /** Feature Definition */
-            feature_definition?: {
-                [key: string]: components["schemas"]["JsonValue-Output"];
-            };
-            /** Preprocessing */
-            preprocessing?: {
-                [key: string]: components["schemas"]["JsonValue-Output"];
-            };
-        };
-        /** PredictiveModelFoldResponse */
-        PredictiveModelFoldResponse: {
-            /** Fold Index */
-            fold_index: number;
-            /**
-             * Period
-             * @enum {string}
-             */
-            period: "validation" | "test";
-            /** Prediction Session Date */
-            prediction_session_date: string;
-            /** Target Date */
-            target_date: string | null;
-            /** Training Start */
-            training_start: string;
-            /** Training End */
-            training_end: string;
-            /** Training Observations */
-            training_observations: number;
-            /** Fit Scope */
-            fit_scope: string;
-            artifact: components["schemas"]["PredictiveModelArtifactResponse"];
-            /** Prediction */
-            prediction: components["schemas"]["PredictiveModelPredictionResponse"] | components["schemas"]["PredictiveModelForecastResponse"];
-            /** Metrics */
-            metrics: {
-                [key: string]: number;
-            };
-        };
-        /** PredictiveModelForecastResponse */
-        PredictiveModelForecastResponse: {
-            /** Session Date */
-            session_date: string;
-            /** Feature Value */
-            feature_value: number;
-            /** Predicted Value */
-            predicted_value: number;
-            /** Actual Target */
-            actual_target?: null;
-            /** Target Date */
-            target_date?: null;
-            /** Period */
-            period?: null;
-        };
-        /** PredictiveModelMetadataResponse */
-        PredictiveModelMetadataResponse: {
-            /** Name */
-            name: string;
-            /** Display Name */
-            display_name: string;
-            /** Description */
-            description: string;
-            /** Target */
-            target: string;
-            /** Horizon */
-            horizon: number;
-            /** Features */
-            features: string[];
-            /** Training Window */
-            training_window: number;
-            /** Parameters */
-            parameters: components["schemas"]["PredictiveModelParameterResponse"][];
-            /** Output Meaning */
-            output_meaning: string;
-            /** Outputs */
-            outputs: string[];
-        };
-        /** PredictiveModelParameterResponse */
-        PredictiveModelParameterResponse: {
-            /** Name */
-            name: string;
-            /** Param Type */
-            param_type: string;
-            default: components["schemas"]["JsonValue-Output"];
-            /** Description */
-            description: string;
-            /** Min Value */
-            min_value?: number | null;
-            /** Max Value */
-            max_value?: number | null;
-            /** Options */
-            options?: string[] | null;
-        };
-        /** PredictiveModelPeriodMetricsResponse */
-        PredictiveModelPeriodMetricsResponse: {
-            /**
-             * Period
-             * @enum {string}
-             */
-            period: "training" | "validation" | "test";
-            /** Observations */
-            observations: number;
-            /** Metrics */
-            metrics: {
-                [key: string]: number;
-            };
-            /** Benchmark Metrics */
-            benchmark_metrics?: {
-                [key: string]: number;
-            };
-            /** Comparison */
-            comparison?: {
-                [key: string]: components["schemas"]["JsonValue-Output"];
-            };
-            /**
-             * Sample Scope
-             * @enum {string}
-             */
-            sample_scope: "in_sample" | "validation" | "out_of_sample";
-        };
-        /** PredictiveModelPredictionResponse */
-        PredictiveModelPredictionResponse: {
-            /** Session Date */
-            session_date: string;
-            /** Feature Value */
-            feature_value: number;
-            /** Predicted Value */
-            predicted_value: number;
-            /** Actual Target */
-            actual_target: number;
-            /** Target Date */
-            target_date?: string | null;
-            /** Period */
-            period?: ("training" | "validation" | "test") | null;
-        };
-        /** PredictiveModelRunRequest */
-        PredictiveModelRunRequest: {
-            /** Name */
-            name: string;
-            /** Dataset Version Id */
-            dataset_version_id: string;
-            /** Symbol */
-            symbol: string;
-            /** Parameters */
-            parameters?: {
-                [key: string]: components["schemas"]["JsonValue-Input"];
-            };
-            /** Seed */
-            seed?: number | null;
-            /** As Of */
-            as_of?: string | null;
-        };
-        /** PredictiveModelRunResponse */
-        PredictiveModelRunResponse: {
-            /** Run Id */
-            run_id?: string | null;
-            /** Model Revision */
-            model_revision?: string | null;
-            /**
-             * Status
-             * @default preview
-             * @enum {string}
-             */
-            status: "preview" | "completed";
-            /** Model Name */
-            model_name: string;
-            /** Display Name */
-            display_name: string;
-            /** Description */
-            description: string;
-            /** Symbol */
-            symbol: string;
-            /** Dataset Version Id */
-            dataset_version_id: string;
-            /** Dataset Version Ids */
-            dataset_version_ids: string[];
-            /** Parameters */
-            parameters: {
-                [key: string]: components["schemas"]["JsonValue-Output"];
-            };
-            /** Seed */
-            seed: number | null;
-            /** Target */
-            target: string;
-            /** Horizon */
-            horizon: number;
-            /** Features */
-            features: string[];
-            /** Training Window */
-            training_window: number;
-            /** Output Meaning */
-            output_meaning: string;
-            /** Outputs */
-            outputs: string[];
-            artifact: components["schemas"]["PredictiveModelArtifactResponse"];
-            /** Predictions */
-            predictions: (components["schemas"]["PredictiveModelPredictionResponse"] | components["schemas"]["PredictiveModelForecastResponse"])[];
-            /** Metrics */
-            metrics: {
-                [key: string]: number;
-            };
-            /** Training Start */
-            training_start: string;
-            /** Training End */
-            training_end: string;
-            /** Completed At */
-            completed_at?: string | null;
-            /** As Of */
-            as_of?: string | null;
-            /** Out Of Sample Status */
-            out_of_sample_status: string;
-            /**
-             * Evaluation Mode
-             * @default holdout
-             * @enum {string}
-             */
-            evaluation_mode: "holdout" | "expanding" | "rolling";
-            /** Splits */
-            splits?: components["schemas"]["PredictiveModelSplitResponse"][];
-            /** Period Metrics */
-            period_metrics?: components["schemas"]["PredictiveModelPeriodMetricsResponse"][];
-            /** Fold Artifacts */
-            fold_artifacts?: components["schemas"]["PredictiveModelArtifactResponse"][];
-            /** Folds */
-            folds?: components["schemas"]["PredictiveModelFoldResponse"][];
-            benchmark?: components["schemas"]["NaiveBenchmarkEvaluationResponse"] | null;
-            /** Assumptions */
-            assumptions?: string[];
-            /** Warnings */
-            warnings?: string[];
-            /** Limitations */
-            limitations?: string[];
-            /** Unsupported Claims */
-            unsupported_claims?: string[];
-            /**
-             * Is Eligible For Strategy
-             * @default false
-             */
-            is_eligible_for_strategy: boolean;
-            /**
-             * Eligibility Reason
-             * @default Predictive Model is not eligible for a Strategy until the naive benchmark comparison is complete.
-             */
-            eligibility_reason: string;
-        };
-        /** PredictiveModelSplitResponse */
-        PredictiveModelSplitResponse: {
-            /**
-             * Period
-             * @enum {string}
-             */
-            period: "training" | "validation" | "test";
-            /** Start */
-            start: string;
-            /** End */
-            end: string;
-            /** Feature Start */
-            feature_start: string;
-            /** Feature End */
-            feature_end: string;
-            /** Observations */
-            observations: number;
-            /** Labelled Observations */
-            labelled_observations: number;
-            /** Fit Scope */
-            fit_scope: string;
-        };
         /** ProjectCreateRequest */
         ProjectCreateRequest: {
             /** Name */
@@ -2662,34 +1737,6 @@ export interface components {
             dataset_version_id: string;
             /** Dataset Version Ids */
             dataset_version_ids: string[];
-        };
-        /** ResearchThesisResponse */
-        ResearchThesisResponse: {
-            /** Security Id */
-            security_id: string;
-            /** Content */
-            content: string;
-            /** Updated At */
-            updated_at?: string | null;
-            /** Summary */
-            summary?: string | null;
-            /** Evidence */
-            evidence?: string[];
-            /** Risks */
-            risks?: string[];
-            /** Catalysts */
-            catalysts?: string[];
-            /** Assumptions */
-            assumptions?: string[];
-            /** Sources */
-            sources?: string[];
-            /** Dated Updates */
-            dated_updates?: string[];
-        };
-        /** ResearchThesisSaveRequest */
-        ResearchThesisSaveRequest: {
-            /** Content */
-            content: string;
         };
         /** RunResponse */
         RunResponse: {
@@ -2748,38 +1795,6 @@ export interface components {
             revision: string;
             /** Saved At */
             saved_at: string;
-        };
-        /** SavedValuationResponse */
-        SavedValuationResponse: {
-            /** Run Id */
-            run_id: string;
-            /** Method Revision */
-            method_revision: string;
-            /** Calculated At */
-            calculated_at: string;
-            /** Result */
-            result: {
-                [key: string]: components["schemas"]["JsonValue-Output"];
-            };
-        };
-        /** ScenarioResponse */
-        ScenarioResponse: {
-            /** Name */
-            name: string;
-            /** Wacc */
-            wacc: number;
-            /** Terminal Growth Rate */
-            terminal_growth_rate: number;
-            /** Revenue Growth Rate */
-            revenue_growth_rate: number;
-            /** Operating Margin */
-            operating_margin: number;
-            /** Enterprise Value */
-            enterprise_value: number | null;
-            /** Equity Value */
-            equity_value: number | null;
-            /** Value Per Share */
-            value_per_share: number | null;
         };
         /** SecEdgarDownloadRequest */
         SecEdgarDownloadRequest: {
@@ -2857,65 +1872,6 @@ export interface components {
             alerts?: {
                 [key: string]: components["schemas"]["JsonValue-Output"];
             }[];
-        };
-        /** SensitivityMatrixResponse */
-        SensitivityMatrixResponse: {
-            /** Wacc Values */
-            wacc_values: number[];
-            /** Terminal Growth Values */
-            terminal_growth_values: number[];
-            /** Grid */
-            grid: (number | null)[][];
-        };
-        /** SignalRefreshFailureResponse */
-        SignalRefreshFailureResponse: {
-            /** Strategy Revision */
-            strategy_revision: string;
-            /** Error */
-            error: string;
-        };
-        /** SignalRefreshResponse */
-        SignalRefreshResponse: {
-            /** Signals */
-            signals?: components["schemas"]["SignalResponse"][];
-            /** Failures */
-            failures?: components["schemas"]["SignalRefreshFailureResponse"][];
-        };
-        /** SignalResponse */
-        SignalResponse: {
-            /** Signal Id */
-            signal_id: string;
-            /** Strategy Name */
-            strategy_name: string;
-            /** Strategy Revision */
-            strategy_revision: string;
-            /** Security Id */
-            security_id: string;
-            /** Action */
-            action: string;
-            /** Weight */
-            weight: number;
-            /** Decision Time */
-            decision_time: string;
-            /** Data Time */
-            data_time: string;
-            /** Dataset Version Id */
-            dataset_version_id: string;
-            /** Rationale */
-            rationale: string;
-            /** Indicator State */
-            indicator_state?: string | null;
-            /**
-             * Created At
-             * @default
-             */
-            created_at: string;
-            /**
-             * Data State
-             * @default stale-data
-             * @enum {string}
-             */
-            data_state: "fresh" | "stale-data";
         };
         /** StrategyEvaluateRequest */
         StrategyEvaluateRequest: {
@@ -3002,6 +1958,11 @@ export interface components {
             /** Indicator State */
             indicator_state?: string | null;
         };
+        /** StrategyTemplateResponse */
+        StrategyTemplateResponse: {
+            /** Code */
+            code: string;
+        };
         /** TiingoDownloadRequest */
         TiingoDownloadRequest: {
             /** Start Date */
@@ -3053,61 +2014,6 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
-        };
-        /** ValuationComparisonItemResponse */
-        ValuationComparisonItemResponse: {
-            /** Run Id */
-            run_id: string;
-            /** Method */
-            method: string;
-            /** Method Revision */
-            method_revision: string;
-            /** Security Id */
-            security_id: string;
-            /** Symbol */
-            symbol: string;
-            /** Name */
-            name: string;
-            /** Currency */
-            currency: string;
-            /** Calculated At */
-            calculated_at: string;
-            /** Value Per Share */
-            value_per_share?: number | null;
-            /** Enterprise Value */
-            enterprise_value?: number | null;
-            /** Equity Value */
-            equity_value?: number | null;
-            /** Terminal Value Contribution */
-            terminal_value_contribution?: number | null;
-            /** Price To Earnings */
-            price_to_earnings?: number | null;
-            /** Ev To Revenue */
-            ev_to_revenue?: number | null;
-            /** Ev To Ebitda */
-            ev_to_ebitda?: number | null;
-            /** Free Cash Flow Yield */
-            free_cash_flow_yield?: number | null;
-            /** Key Assumptions */
-            key_assumptions?: {
-                [key: string]: components["schemas"]["JsonValue-Output"];
-            };
-            /** Warnings */
-            warnings?: string[];
-            /** Dataset Version Ids */
-            dataset_version_ids?: string[];
-        };
-        /** ValuationComparisonRequest */
-        ValuationComparisonRequest: {
-            /** Run Ids */
-            run_ids: string[];
-        };
-        /** ValuationComparisonResponse */
-        ValuationComparisonResponse: {
-            /** Items */
-            items: components["schemas"]["ValuationComparisonItemResponse"][];
-            /** Compared At */
-            compared_at: string;
         };
         /** WatchlistAddRequest */
         WatchlistAddRequest: {
@@ -3568,74 +2474,6 @@ export interface operations {
             };
         };
     };
-    get_security_thesis_api_projects__project_id__research__security_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-                security_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResearchThesisResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    save_security_thesis_api_projects__project_id__research__security_id__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-                security_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResearchThesisSaveRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResearchThesisResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_project_runs_api_projects__project_id__runs_get: {
         parameters: {
             query?: never;
@@ -4001,7 +2839,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TiingoDownloadRequest"] | components["schemas"]["SecEdgarDownloadRequest"] | components["schemas"]["AlpacaDownloadRequest"];
+                "application/json": components["schemas"]["TiingoDownloadRequest"] | components["schemas"]["SecEdgarDownloadRequest"] | components["schemas"]["AlpacaDownloadRequest"] | components["schemas"]["MassiveDownloadRequest"];
             };
         };
         responses: {
@@ -4012,273 +2850,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProviderDownloadResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    calculate_comparable_valuation_api_valuations_comparables_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ComparableValuationRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ComparableValuationResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    save_comparable_valuation_api_projects__project_id__valuations_comparables_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ComparableValuationRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ComparableValuationResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    seed_dcf_valuation_api_projects__project_id__valuations_seed__security_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-                security_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FCFFDCFSeedResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    calculate_dcf_valuation_api_valuations_dcf_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FCFFDCFRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FCFFDCFValuationResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    save_dcf_valuation_api_projects__project_id__valuations_dcf_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FCFFDCFRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FCFFDCFValuationResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    compare_valuations_api_projects__project_id__valuations_compare_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ValuationComparisonRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ValuationComparisonResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    export_valuation_api_projects__project_id__valuations__run_id__export__format_type__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-                run_id: string;
-                format_type: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_saved_valuations_api_projects__project_id__valuations_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SavedValuationResponse"][];
                 };
             };
             /** @description Validation Error */
@@ -4372,6 +2943,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_custom_strategy_template_api_strategies_meta_template_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyTemplateResponse"];
                 };
             };
         };
@@ -4613,230 +3204,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_predictive_models_api_predictive_models_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PredictiveModelMetadataResponse"][];
-                };
-            };
-        };
-    };
-    get_predictive_model_by_name_api_predictive_models__name__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PredictiveModelMetadataResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    run_predictive_model_preview_api_predictive_models_run_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PredictiveModelRunRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PredictiveModelRunResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_project_predictive_model_runs_api_projects__project_id__predictive_models_runs_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PredictiveModelRunResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    save_predictive_model_run_api_projects__project_id__predictive_models_runs_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PredictiveModelRunRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PredictiveModelRunResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_project_predictive_model_run_api_projects__project_id__predictive_models_runs__run_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-                run_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PredictiveModelRunResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    export_predictive_model_api_projects__project_id__predictive_models_runs__run_id__export__format_type__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-                run_id: string;
-                format_type: "html" | "csv" | "json";
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        manifest: {
-                            [key: string]: unknown;
-                        };
-                        predictive_model: {
-                            [key: string]: unknown;
-                        };
-                    };
-                    "text/html": string;
-                    "text/csv": string;
-                };
             };
             /** @description Validation Error */
             422: {
@@ -5165,68 +3532,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_project_signals_api_projects__project_id__alerts_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SignalResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    refresh_project_alerts_api_projects__project_id__alerts_refresh_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SignalRefreshResponse"];
                 };
             };
             /** @description Validation Error */

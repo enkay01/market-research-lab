@@ -17,8 +17,7 @@ from uuid import uuid4
 
 from .json_types import JsonValue
 
-if TYPE_CHECKING:
-    from .research import ResearchThesis
+
 
 
 class ProjectNotFoundError(Exception):
@@ -1187,7 +1186,7 @@ class ProjectStore:
         return [str(sec_id) for sec_id in data.get("security_ids", [])]
 
     def add_to_watchlist(self, project_id: str, security_id: str) -> list[str]:
-        from .research import validate_security_id
+        from .market_data import validate_security_id
 
         valid_id = validate_security_id(security_id)
         self.get_project(project_id)
@@ -1200,7 +1199,7 @@ class ProjectStore:
         return current
 
     def remove_from_watchlist(self, project_id: str, security_id: str) -> list[str]:
-        from .research import validate_security_id
+        from .market_data import validate_security_id
 
         valid_id = validate_security_id(security_id)
         self.get_project(project_id)
@@ -1213,13 +1212,14 @@ class ProjectStore:
         return current
 
     def is_watched(self, project_id: str, security_id: str) -> bool:
-        from .research import validate_security_id
+        from .market_data import validate_security_id
 
         valid_id = validate_security_id(security_id)
         return valid_id in self.get_watchlist(project_id)
 
     def get_thesis(self, project_id: str, security_id: str) -> ResearchThesis | None:
-        from .research import SecurityNotWatchedError, get_thesis, validate_security_id
+        from .market_data import validate_security_id
+        from .routes.deps import SecurityNotWatchedError
 
         valid_id = validate_security_id(security_id)
         if not self.is_watched(project_id, valid_id):
@@ -1227,7 +1227,8 @@ class ProjectStore:
         return get_thesis(self._directory(project_id), valid_id)
 
     def save_thesis(self, project_id: str, security_id: str, content: str) -> ResearchThesis:
-        from .research import SecurityNotWatchedError, save_thesis, validate_security_id
+        from .market_data import validate_security_id
+        from .routes.deps import SecurityNotWatchedError
 
         valid_id = validate_security_id(security_id)
         if not self.is_watched(project_id, valid_id):
@@ -1235,7 +1236,7 @@ class ProjectStore:
         return save_thesis(self._directory(project_id), valid_id, content)
 
     def list_theses(self, project_id: str) -> dict[str, ResearchThesis]:
-        from .research import list_theses
+        
 
         self.get_project(project_id)
         return list_theses(self._directory(project_id))
@@ -1243,7 +1244,7 @@ class ProjectStore:
     def list_valuations_for_security(
         self, project_id: str, security_id: str
     ) -> list[dict[str, JsonValue]]:
-        from .research import validate_security_id
+        from .market_data import validate_security_id
 
         valid_id = validate_security_id(security_id)
         self.get_project(project_id)
@@ -1284,7 +1285,7 @@ class ProjectStore:
     def list_runs_for_security(
         self, project_id: str, security_id: str
     ) -> list[dict[str, JsonValue]]:
-        from .research import validate_security_id
+        from .market_data import validate_security_id
 
         valid_id = validate_security_id(security_id)
         self.get_project(project_id)

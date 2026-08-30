@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -206,6 +207,13 @@ class AlpacaCredentials:
 
 
 @dataclass(frozen=True)
+class MassiveCredentials:
+    """Massive / Polygon credentials held by the local process."""
+
+    api_key: str | None = None
+
+
+@dataclass(frozen=True)
 class TiingoDownloadSpec:
     symbols: tuple[str, ...]
     start_date: date | None = None
@@ -227,10 +235,56 @@ class AlpacaDownloadSpec:
 
 
 @dataclass(frozen=True)
+class MassiveDownloadSpec:
+    symbol: str
+    start_date: date
+    end_date: date
+    data_type: Literal["stocks_daily", "stocks_minute", "options"] = "stocks_daily"
+
+
+@dataclass(frozen=True)
 class ProviderCredentials:
     tiingo_api_token: str = ""
     sec_edgar_user_agent: str = ""
     alpaca: AlpacaCredentials = field(default_factory=AlpacaCredentials)
+    massive: MassiveCredentials = field(default_factory=MassiveCredentials)
+
+
+class MassiveAggResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    timestamp: int = Field(alias="t")
+    open: float = Field(alias="o")
+    high: float = Field(alias="h")
+    low: float = Field(alias="l")
+    close: float = Field(alias="c")
+    volume: float = Field(alias="v")
+
+
+class MassiveAggsResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    results: list[MassiveAggResponse] = Field(default_factory=list)
+    next_url: str | None = None
+
+
+class MassiveOptionContractResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    ticker: str
+    underlying_ticker: str
+    strike_price: float
+    expiration_date: str
+    contract_type: str
+    shares_per_contract: float = 100.0
+    exercise_style: str = "american"
+
+
+class MassiveOptionContractsResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    results: list[MassiveOptionContractResponse] = Field(default_factory=list)
+    next_url: str | None = None
 
 
 @dataclass
@@ -796,3 +850,217 @@ def download_sec_edgar(
     if not result.fundamental_facts:
         raise ProviderDownloadError("SEC EDGAR returned no quarterly or annual facts.")
     return result
+
+
+def _massive_ms_to_iso(ms: int, *, daily: bool = False) -> str:
+    dt = datetime.fromtimestamp(ms / 1000.0, tz=UTC)
+    if daily:
+        return dt.date().isoformat()
+    return dt.isoformat()
+
+
+def _massive_available_at(ms: int, *, daily: bool = False) -> str:
+    dt = datetime.fromtimestamp(ms / 1000.0, tz=UTC)
+    if daily:
+        return (dt + timedelta(days=1)).isoformat()
+    return (dt + timedelta(minutes=1)).isoformat()
+
+
+def download_massive(
+    request: MassiveDownloadSpec,
+    *,
+    credentials: MassiveCredentials,
+    retrieval_time: str,
+    fetch_json: JsonFetcher | None = None,
+) -> ProviderDownload:
+    """Download daily or minute bars, or options chains/trades from Massive / Polygon."""
+    fetch = fetch_json or _fetch_json
+    if not credentials.api_key:
+        raise ProviderDownloadError(
+            "Massive credentials are missing: set MASSIVE_API_KEY or POLYGON_API_KEY."
+        )
+
+    symbol = request.symbol.strip().upper()
+    if not symbol:
+        raise ProviderDownloadError("Massive requires a non-empty symbol.")
+    if request.start_date > request.end_date:
+        raise ProviderDownloadError("Massive start_date must be on or before end_date.")
+
+    headers = {"Authorization": f"Bearer {credentials.api_key}", "Accept": "application/json"}
+    start_str = request.start_date.isoformat()
+    end_str = request.end_date.isoformat()
+    result = ProviderDownload(
+        securities=[Security(security_id=symbol, symbol=symbol, name=symbol, currency="USD")]
+    )
+
+    if request.data_type in ("stocks_daily", "stocks_minute"):
+        timespan = "day" if request.data_type == "stocks_daily" else "minute"
+        url = (
+            f"https://api.polygon.io/v2/aggs/ticker/{quote(symbol, safe='')}/range/1/{timespan}/"
+            f"{start_str}/{end_str}?adjusted=true&sort=asc&limit=50000"
+        )
+        payload = _call(fetch, url, headers, "Massive")
+        try:
+            aggs = MassiveAggsResponse.model_validate(payload).results
+        except ValidationError as error:
+            raise ProviderDownloadError(
+                f"Massive returned invalid aggregates for {symbol}."
+            ) from error
+
+        if not aggs:
+            raise ProviderDownloadError(f"Massive returned no data for {symbol}.")
+
+        for agg in aggs:
+            if request.data_type == "stocks_daily":
+                session_date = _massive_ms_to_iso(agg.timestamp, daily=True)
+                available_at = _massive_available_at(agg.timestamp, daily=True)
+                result.daily_bars.append(
+                    {
+                        "security_id": symbol,
+                        "date": session_date,
+                        "open": agg.open,
+                        "high": agg.high,
+                        "low": agg.low,
+                        "close": agg.close,
+                        "volume": agg.volume,
+                        "adjusted_open": agg.open,
+                        "adjusted_high": agg.high,
+                        "adjusted_low": agg.low,
+                        "adjusted_close": agg.close,
+                        "units": "USD",
+                        "available_at": available_at,
+                        "eligibility_provenance": "completed_day",
+                        "source": "massive",
+                        "retrieval_time": retrieval_time,
+                    }
+                )
+            else:
+                ts_iso = _massive_ms_to_iso(agg.timestamp, daily=False)
+                available_at = _massive_available_at(agg.timestamp, daily=False)
+                result.options_records.append(
+                    {
+                        "record_type": "underlying_bar",
+                        "security_id": symbol,
+                        "timestamp": ts_iso,
+                        "open": agg.open,
+                        "high": agg.high,
+                        "low": agg.low,
+                        "close": agg.close,
+                        "volume": agg.volume,
+                        "available_at": available_at,
+                        "eligibility_provenance": "completed_minute",
+                        "source": "massive",
+                        "retrieval_time": retrieval_time,
+                    }
+                )
+    elif request.data_type == "options":
+        # 1. Underlying minute bars
+        url = (
+            f"https://api.polygon.io/v2/aggs/ticker/{quote(symbol, safe='')}/range/1/minute/"
+            f"{start_str}/{end_str}?adjusted=true&sort=asc&limit=50000"
+        )
+        aggs: list[MassiveAggResponse] = []
+        with contextlib.suppress(Exception):
+            payload = _call(fetch, url, headers, "Massive")
+            aggs = MassiveAggsResponse.model_validate(payload).results
+
+        for agg in aggs:
+            ts_iso = _massive_ms_to_iso(agg.timestamp, daily=False)
+            available_at = _massive_available_at(agg.timestamp, daily=False)
+            result.options_records.append(
+                {
+                    "record_type": "underlying_bar",
+                    "security_id": symbol,
+                    "timestamp": ts_iso,
+                    "open": agg.open,
+                    "high": agg.high,
+                    "low": agg.low,
+                    "close": agg.close,
+                    "volume": agg.volume,
+                    "available_at": available_at,
+                    "eligibility_provenance": "completed_minute",
+                    "source": "massive",
+                    "retrieval_time": retrieval_time,
+                }
+            )
+            result.options_records.append(
+                {
+                    "record_type": "daily_bar",
+                    "security_id": symbol,
+                    "date": ts_iso[:10],
+                    "open": agg.open,
+                    "high": agg.high,
+                    "low": agg.low,
+                    "close": agg.close,
+                    "volume": agg.volume,
+                    "available_at": _massive_available_at(agg.timestamp, daily=True),
+                    "eligibility_provenance": "completed_day",
+                    "source": "massive",
+                    "retrieval_time": retrieval_time,
+                }
+            )
+
+        # 2. Put contracts
+        contract_url = (
+            f"https://api.polygon.io/v3/reference/options/contracts?"
+            f"underlying_ticker={quote(symbol, safe='')}&contract_type=put&"
+            f"expiration_date.gte={start_str}&"
+            f"expiration_date.lte={(request.end_date + timedelta(days=45)).isoformat()}&limit=1000"
+        )
+        payload = _call(fetch, contract_url, headers, "Massive")
+        try:
+            contracts = MassiveOptionContractsResponse.model_validate(payload).results
+        except ValidationError as error:
+            raise ProviderDownloadError(
+                "Massive returned invalid option contracts."
+            ) from error
+
+        contract_available_at = f"{start_str}T00:00:00+00:00"
+        for contract in contracts:
+            contract_ticker = contract.ticker.replace("O:", "")
+            result.options_records.append(
+                {
+                    "record_type": "contract",
+                    "contract_id": contract_ticker,
+                    "contract_symbol": contract_ticker,
+                    "security_id": symbol,
+                    "expiration": contract.expiration_date,
+                    "strike": contract.strike_price,
+                    "right": contract.contract_type.lower(),
+                    "multiplier": contract.shares_per_contract,
+                    "exercise_style": contract.exercise_style.lower(),
+                    "settlement_type": "physical",
+                    "available_at": contract_available_at,
+                    "eligibility_provenance": "contract_snapshot",
+                    "source": "massive",
+                    "retrieval_time": retrieval_time,
+                }
+            )
+            # Minute bars for option contract
+            trade_url = (
+                f"https://api.polygon.io/v2/aggs/ticker/O:{quote(contract_ticker, safe='')}/range/1/minute/"
+                f"{start_str}/{end_str}?sort=asc&limit=50000"
+            )
+            try:
+                opt_payload = _call(fetch, trade_url, headers, "Massive")
+                opt_aggs = MassiveAggsResponse.model_validate(opt_payload).results
+                for opt_agg in opt_aggs:
+                    ts_iso = _massive_ms_to_iso(opt_agg.timestamp, daily=False)
+                    result.options_records.append(
+                        {
+                            "record_type": "trade",
+                            "contract_id": contract_ticker,
+                            "timestamp": ts_iso,
+                            "price": opt_agg.close,
+                            "size": opt_agg.volume,
+                            "available_at": _massive_available_at(opt_agg.timestamp, daily=False),
+                            "eligibility_provenance": "completed_minute",
+                            "source": "massive",
+                            "retrieval_time": retrieval_time,
+                        }
+                    )
+            except Exception:
+                continue
+
+    return result
+

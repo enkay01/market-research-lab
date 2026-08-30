@@ -20,9 +20,10 @@ interface DownloadProviderDialogProps {
 }
 
 export function DownloadProviderDialog({ isOpen, onClose, onSuccess }: DownloadProviderDialogProps) {
-  const [provider, setProvider] = useState<"tiingo" | "sec_edgar" | "alpaca">("tiingo");
+  const [provider, setProvider] = useState<"massive" | "alpaca" | "tiingo" | "sec_edgar">("massive");
   const [symbols, setSymbols] = useState("AAPL, MSFT");
   const [ciks, setCiks] = useState("0000320193");
+  const [massiveType, setMassiveType] = useState<"daily_bars" | "minute_bars" | "option_contracts" | "option_trades">("daily_bars");
   const [startDate, setStartDate] = useState("2024-01-01");
   const [endDate, setEndDate] = useState("2024-12-31");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -45,30 +46,39 @@ export function DownloadProviderDialog({ isOpen, onClose, onSuccess }: DownloadP
         .map((c) => c.trim())
         .filter(Boolean);
 
-      const requestPayload =
-        provider === "tiingo"
-          ? {
-              provider: "tiingo" as const,
-              symbols: parsedSymbols,
-              start_date: startDate || undefined,
-              end_date: endDate || undefined,
-            }
-          : provider === "sec_edgar"
-            ? {
-                provider: "sec_edgar" as const,
-                ciks: parsedCiks,
-                start_date: startDate || undefined,
-                end_date: endDate || undefined,
-              }
-            : {
-                provider: "alpaca" as const,
-                symbol: parsedSymbols[0] ?? "",
-                start_date: startDate,
-                end_date: endDate,
-              };
+      let requestPayload: any;
+      if (provider === "massive") {
+        requestPayload = {
+          provider: "massive" as const,
+          symbol: parsedSymbols[0] ?? "SPY",
+          dataset_type: massiveType,
+          start_date: startDate || undefined,
+          end_date: endDate || undefined,
+        };
+      } else if (provider === "tiingo") {
+        requestPayload = {
+          provider: "tiingo" as const,
+          symbols: parsedSymbols,
+          start_date: startDate || undefined,
+          end_date: endDate || undefined,
+        };
+      } else if (provider === "sec_edgar") {
+        requestPayload = {
+          provider: "sec_edgar" as const,
+          ciks: parsedCiks,
+          start_date: startDate || undefined,
+          end_date: endDate || undefined,
+        };
+      } else {
+        requestPayload = {
+          provider: "alpaca" as const,
+          symbol: parsedSymbols[0] ?? "",
+          start_date: startDate,
+          end_date: endDate,
+        };
+      }
 
       const response = await api.downloadDataset(requestPayload);
-
       onSuccess(response);
       onClose();
     } catch (cause: unknown) {
@@ -87,8 +97,8 @@ export function DownloadProviderDialog({ isOpen, onClose, onSuccess }: DownloadP
       }}
     >
       <DialogHeader
-        title="Download Provider Data"
-        subtitle="Fetch market data directly into the local catalogue. Credentials stay in local configuration."
+        title="Download Market Data"
+        subtitle="Fetch market data directly into the local catalog from Massive (Polygon), Alpaca, Tiingo, or SEC EDGAR."
       />
       <form onSubmit={handleSubmit}>
         <VStack gap={4}>
@@ -106,24 +116,49 @@ export function DownloadProviderDialog({ isOpen, onClose, onSuccess }: DownloadP
               value={provider}
               onChange={(val) => {
                 // SAFETY: Value is constrained by SegmentedControlItem values
-                setProvider(val as "tiingo" | "sec_edgar" | "alpaca");
+                setProvider(val as "massive" | "alpaca" | "tiingo" | "sec_edgar");
               }}
-            >
-              <SegmentedControlItem value="tiingo" label="Tiingo (EOD)" />
+              <SegmentedControlItem value="massive" label="Massive / Polygon (Stocks & Options)" />
+              <SegmentedControlItem value="alpaca" label="Alpaca (Options Minutes)" />
+              <SegmentedControlItem value="tiingo" label="Tiingo (EOD Prices)" />
               <SegmentedControlItem value="sec_edgar" label="SEC EDGAR" />
-              <SegmentedControlItem value="alpaca" label="Alpaca (Options)" />
             </SegmentedControl>
           </VStack>
 
-          {provider === "tiingo" || provider === "alpaca" ? (
+          {provider === "massive" && (
+            <VStack gap={1}>
+              <Text weight="medium">Data Feed Type</Text>
+              <SegmentedControl
+                label="Select Feed Type"
+                value={massiveType}
+                onChange={(val) => {
+                  // SAFETY: Value is constrained by SegmentedControlItem values
+                  setMassiveType(val as "daily_bars" | "minute_bars" | "option_contracts" | "option_trades");
+                }}
+              >
+                <SegmentedControlItem value="daily_bars" label="Daily Bars" />
+                <SegmentedControlItem value="minute_bars" label="Minute Bars" />
+                <SegmentedControlItem value="option_contracts" label="Put Option Contracts" />
+                <SegmentedControlItem value="option_trades" label="Option Minute Trades" />
+              </SegmentedControl>
+            </VStack>
+          )}
+
+          {provider === "tiingo" || provider === "alpaca" || provider === "massive" ? (
             <VStack gap={1}>
               <TextInput
-                label={provider === "alpaca" ? "Underlying Symbol" : "Ticker Symbols (comma-separated)"}
+                label={provider === "tiingo" ? "Ticker Symbols (comma-separated)" : "Underlying Symbol"}
                 value={symbols}
                 onChange={(val) => setSymbols(String(val ?? ""))}
-                placeholder="e.g. AAPL, MSFT, SPY"
+                placeholder="e.g. SPY, AAPL, MSFT"
                 isRequired
-                description={provider === "alpaca" ? "Requires ALPACA_API_KEY and ALPACA_API_SECRET in local .env.local or process environment." : "Requires TIINGO_API_TOKEN in local .env.local or process environment."}
+                description={
+                  provider === "massive"
+                    ? "Requires MASSIVE_API_KEY or POLYGON_API_KEY in local .env.local or process environment."
+                    : provider === "alpaca"
+                      ? "Requires ALPACA_API_KEY and ALPACA_API_SECRET in local .env.local."
+                      : "Requires TIINGO_API_TOKEN in local .env.local."
+                }
               />
             </VStack>
           ) : (

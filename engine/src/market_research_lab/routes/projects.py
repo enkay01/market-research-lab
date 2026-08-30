@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 
@@ -20,10 +21,7 @@ from pydantic import BaseModel, Field, field_validator
 from ..json_types import JsonValue
 from ..market_data import MarketDataStore
 from ..projects import Project, ProjectStore
-from ..research import (
-    ResearchThesis,
-    default_thesis_template,
-)
+
 from .deps import SecurityNotFoundError, get_market_store, get_project_store, non_blank_name
 
 router = APIRouter()
@@ -202,15 +200,9 @@ def _build_watchlist_response(
             if req_ex != sec_ex:
                 continue
 
-        thesis = store.get_thesis(project_id, sid)
-        has_thesis = thesis is not None and bool(thesis.content.strip())
-        thesis_updated_at = thesis.updated_at if thesis else None
-        thesis_preview = thesis.summary if thesis else None
-
-        if opts.thesis_status == "has_thesis" and not has_thesis:
-            continue
-        if opts.thesis_status == "no_thesis" and has_thesis:
-            continue
+        has_thesis = False
+        thesis_updated_at = None
+        thesis_preview = None
 
         items.append(
             WatchlistItemResponse(
@@ -326,20 +318,64 @@ def save_definition(
     )
 
 
+@dataclass(frozen=True)
+class DefinitionPathTarget:
+    project_id: str
+    kind: str
+    name: str
+
+
+def _extract_definition_path(
+    project_id: UUID,
+    kind: str,
+    name: str,
+) -> DefinitionPathTarget:
+    return DefinitionPathTarget(project_id=str(project_id), kind=kind, name=name)
+
+
+@dataclass(frozen=True)
+class RevisionPathTarget:
+    project_id: str
+    kind: str
+    name: str
+    revision: str
+
+
+def _extract_revision_path(
+    project_id: UUID,
+    kind: str = FastAPIPath(pattern=r"^[a-z][a-z_]*$"),
+    name: str = FastAPIPath(min_length=1, max_length=128),
+    revision: str = FastAPIPath(pattern=r"^v[1-9][0-9]*$"),
+) -> RevisionPathTarget:
+    return RevisionPathTarget(
+        project_id=str(project_id), kind=kind, name=name, revision=revision
+    )
+
+
+class CreateRunOptions(BaseModel):
+    dataset_version_id: str | None = None
+    historical: bool = False
+
+
 @router.put(
     "/api/projects/{project_id}/definitions/{kind}/{name}/draft",
     response_model=DraftResponse,
     tags=["definitions"],
 )
 def save_draft(
-    project_id: UUID,
-    kind: str,
-    name: str,
     request: DraftRequest,
+    target: DefinitionPathTarget = Depends(_extract_definition_path),
     store: ProjectStore = Depends(get_project_store),
 ) -> DraftResponse:
-    store.save_draft(str(project_id), kind=kind, name=name, definition=request.definition)
-    return DraftResponse(name=name, definition=request.definition, saved_at="saved locally")
+    store.save_draft(
+        target.project_id,
+        kind=target.kind,
+        name=target.name,
+        definition=request.definition,
+    )
+    return DraftResponse(
+        name=target.name, definition=request.definition, saved_at="saved locally"
+    )
 
 
 @router.get(
@@ -362,17 +398,16 @@ def get_draft(
     tags=["definitions"],
 )
 def read_definition_revision(
-    project_id: UUID,
-    kind: str = FastAPIPath(pattern=r"^[a-z][a-z_]*$"),
-    name: str = FastAPIPath(min_length=1, max_length=128),
-    revision: str = FastAPIPath(pattern=r"^v[1-9][0-9]*$"),
+    target: RevisionPathTarget = Depends(_extract_revision_path),
     store: ProjectStore = Depends(get_project_store),
 ) -> DefinitionRevisionResponse:
-    wrapped = store.read_revision(str(project_id), kind=kind, name=name, revision=revision)
+    wrapped = store.read_revision(
+        target.project_id, kind=target.kind, name=target.name, revision=target.revision
+    )
     return DefinitionRevisionResponse(
-        kind=kind,
-        name=str(wrapped.get("name", name)),
-        revision=revision,
+        kind=target.kind,
+        name=str(wrapped.get("name", target.name)),
+        revision=target.revision,
         definition=wrapped.get("definition", {}),
     )
 
@@ -432,46 +467,6 @@ def remove_from_project_watchlist(
     return _build_watchlist_response(str(project_id), store, market_store)
 
 
-@router.get(
-    "/api/projects/{project_id}/research/{security_id}",
-    response_model=ResearchThesisResponse,
-    tags=["research"],
-)
-def get_security_thesis(
-    project_id: UUID,
-    security_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
-    store: ProjectStore = Depends(get_project_store),
-    market_store: MarketDataStore = Depends(get_market_store),
-) -> ResearchThesisResponse:
-    thesis = store.get_thesis(str(project_id), security_id)
-    if not thesis:
-        sec = market_store.get_security(security_id)
-        symbol = sec.symbol if sec else security_id
-        template = default_thesis_template(symbol)
-        return ResearchThesisResponse(
-            security_id=security_id,
-            content=template,
-            updated_at=None,
-            summary=None,
-        )
-    return _thesis_response(thesis)
-
-
-@router.put(
-    "/api/projects/{project_id}/research/{security_id}",
-    response_model=ResearchThesisResponse,
-    tags=["research"],
-)
-def save_security_thesis(
-    project_id: UUID,
-    request: ResearchThesisSaveRequest,
-    security_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
-    store: ProjectStore = Depends(get_project_store),
-) -> ResearchThesisResponse:
-    thesis = store.save_thesis(str(project_id), security_id, request.content)
-    return _thesis_response(thesis)
-
-
 @router.post(
     "/api/projects/{project_id}/runs",
     response_model=RunResponse,
@@ -480,20 +475,18 @@ def save_security_thesis(
 )
 def create_run(
     project_id: UUID,
-    *,
-    dataset_version_id: str | None = Query(default=None),
-    historical: bool = Query(default=False),
+    options: Annotated[CreateRunOptions, Query()] = CreateRunOptions(),
     store: ProjectStore = Depends(get_project_store),
     market_store: MarketDataStore = Depends(get_market_store),
 ) -> RunResponse:
-    if historical and dataset_version_id is None:
+    if options.historical and options.dataset_version_id is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="A historical Run requires a Dataset Version.",
         )
-    if historical and dataset_version_id is not None:
-        market_store.ensure_historical_eligibility(dataset_version_id)
-    dataset_version_ids = [dataset_version_id] if dataset_version_id else []
+    if options.historical and options.dataset_version_id is not None:
+        market_store.ensure_historical_eligibility(options.dataset_version_id)
+    dataset_version_ids = [options.dataset_version_id] if options.dataset_version_id else []
     return RunResponse(
         id=store.create_run(str(project_id), dataset_version_ids=dataset_version_ids),
         status="pending",

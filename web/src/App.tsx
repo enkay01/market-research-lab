@@ -17,52 +17,28 @@ import {
 } from "@astryxdesign/core";
 import { api, type Project } from "./api/client";
 import { DataView } from "./views/DataView";
-import { ResearchView } from "./views/ResearchView";
-import { ValuationView } from "./views/ValuationView";
-import { ModelsView } from "./views/ModelsView";
+import { CreateStrategyView } from "./views/CreateStrategyView";
 import { BacktestView } from "./views/BacktestView";
-import { AlertsView } from "./views/AlertsView";
-import { StudyView } from "./views/StudyView";
-import { DatasetManagementView } from "./views/DatasetManagementView";
 
-export type DomainTab =
-  | "data"
-  | "research"
-  | "valuation"
-  | "models"
-  | "backtest"
-  | "alerts"
-  | "study"
-  | "datasets"
-  | "cleanup";
+export type DomainTab = "datasets" | "strategies" | "backtest";
 
 function isDomainTab(value: string | null): value is DomainTab {
-  return value !== null && ["data", "research", "valuation", "models", "backtest", "alerts", "study", "datasets", "cleanup"].includes(value);
+  return value !== null && ["datasets", "strategies", "backtest"].includes(value);
 }
 
 export function App() {
   const [activeTab, setActiveTab] = useState<DomainTab>(() => {
     const params = new URLSearchParams(window.location.search);
     const tabParam = params.get("tab");
-    const hasVariant = params.has("variant");
-    if (hasVariant || tabParam === "backtest") {
-      return "backtest";
-    }
     if (isDomainTab(tabParam)) {
       return tabParam;
     }
-    return "data";
+    return "datasets";
   });
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | undefined>();
   const [engineConnected, setEngineConnected] = useState(false);
   const [statusText, setStatusText] = useState("Connecting…");
-  const [focusSecurityId, setFocusSecurityId] = useState<string | null>(null);
-
-  function openSecurity(securityId: string) {
-    setFocusSecurityId(securityId);
-    setActiveTab("research");
-  }
 
   // Project Creation Modal
   const [isNewProjectOpen, setIsNewProjectOpen] = useState(false);
@@ -117,13 +93,6 @@ export function App() {
     }
   }
 
-  function handleProjectDeleted(projectId: string) {
-    const remaining = projects.filter((project) => project.id !== projectId);
-    setProjects(remaining);
-    setSelectedProject(remaining[0]);
-    setActiveTab("data");
-  }
-
   const projectOptions = projects.map((p) => ({
     value: p.id,
     label: p.name,
@@ -165,51 +134,21 @@ export function App() {
           startContent={
             <HStack gap={1}>
               <TopNavItem
-                label="Market Data"
-                isSelected={activeTab === "data"}
-                onClick={() => setActiveTab("data")}
+                label="1. Download Dataset"
+                isSelected={activeTab === "datasets"}
+                onClick={() => setActiveTab("datasets")}
                 as="button"
               />
               <TopNavItem
-                label="Security Research"
-                isSelected={activeTab === "research"}
-                onClick={() => setActiveTab("research")}
+                label="2. Create Strategy"
+                isSelected={activeTab === "strategies"}
+                onClick={() => setActiveTab("strategies")}
                 as="button"
               />
               <TopNavItem
-                label="Valuation"
-                isSelected={activeTab === "valuation"}
-                onClick={() => setActiveTab("valuation")}
-                as="button"
-              />
-              <TopNavItem
-                label="Models & Indicators"
-                isSelected={activeTab === "models"}
-                onClick={() => setActiveTab("models")}
-                as="button"
-              />
-              <TopNavItem
-                label="Backtests"
+                label="3. Test Strategy & View Results"
                 isSelected={activeTab === "backtest"}
                 onClick={() => setActiveTab("backtest")}
-                as="button"
-              />
-              <TopNavItem
-                label="Alerts"
-                isSelected={activeTab === "alerts"}
-                onClick={() => setActiveTab("alerts")}
-                as="button"
-              />
-              <TopNavItem
-                label="Study"
-                isSelected={activeTab === "study"}
-                onClick={() => setActiveTab("study")}
-                as="button"
-              />
-              <TopNavItem
-                label="Dataset Management"
-                isSelected={activeTab === "datasets" || activeTab === "cleanup"}
-                onClick={() => setActiveTab("datasets")}
                 as="button"
               />
             </HStack>
@@ -261,27 +200,10 @@ export function App() {
         />
       }
     >
-      {/* Domain View Switcher */}
-      {activeTab === "data" && <DataView />}
-      {activeTab === "research" && (
-        <ResearchView project={selectedProject} focusSecurityId={focusSecurityId} />
-      )}
-      {activeTab === "valuation" && <ValuationView project={selectedProject} />}
-      {activeTab === "models" && <ModelsView project={selectedProject} />}
+      {/* 3 Core Views */}
+      {activeTab === "datasets" && <DataView />}
+      {activeTab === "strategies" && <CreateStrategyView project={selectedProject} />}
       {activeTab === "backtest" && <BacktestView project={selectedProject} />}
-      {activeTab === "alerts" && (
-        <AlertsView
-          project={selectedProject}
-          engineConnected={engineConnected}
-          onOpenSecurity={openSecurity}
-        />
-      )}
-      {activeTab === "study" && <StudyView project={selectedProject} />}
-      {(activeTab === "datasets" || activeTab === "cleanup") && (
-        <DatasetManagementView project={selectedProject} onProjectDeleted={handleProjectDeleted} />
-      )}
-
-
       {/* New Project Dialog */}
       <Dialog
         isOpen={isNewProjectOpen}
@@ -291,7 +213,7 @@ export function App() {
       >
         <DialogHeader
           title="Create New Project"
-          subtitle="Group research theses, valuation revisions, models, and backtest runs."
+          subtitle="Group custom strategy revisions and backtest execution runs."
         />
         <form onSubmit={handleCreateProject}>
           <VStack gap={4}>
@@ -306,7 +228,7 @@ export function App() {
                 label="Project Name"
                 value={newProjectName}
                 onChange={(val) => setNewProjectName(String(val ?? ""))}
-                placeholder="e.g. US Tech & Semiconductors"
+                placeholder="e.g. SPY Credit Spreads & Momentum"
                 isRequired
                 hasAutoFocus
               />
