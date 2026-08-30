@@ -30,6 +30,7 @@ from .option_position_lifecycle import (
     earnings_exit_due,
     evaluate_open_position,
     open_position_transition,
+    transition_lifecycle,
 )
 from .option_pricing import (
     OptionGreeks,
@@ -900,7 +901,8 @@ def _simulate_path(
                 pending_exit = position.lifecycle.pending_exit
                 if pending_exit is None:
                     raise RuntimeError("Pending lifecycle exit is missing.")
-                position.lifecycle.apply(
+                position.lifecycle = transition_lifecycle(
+                    position.lifecycle,
                     PositionTransition(
                         LifecycleState.EXIT_PENDING,
                         LifecycleState.CLOSED,
@@ -986,12 +988,12 @@ def _simulate_path(
             )
             transition = decision.exit_transition
             if transition is not None and transition.to_state is LifecycleState.EXIT_PENDING:
-                position.lifecycle.apply(transition)
+                position.lifecycle = transition_lifecycle(position.lifecycle, transition)
                 if transition.reason is ExitReason.STOP_LEVEL:
                     stopped_dates.add((security_id, date_text))
                     continue
             elif transition is not None and transition.to_state is LifecycleState.CLOSED:
-                position.lifecycle.apply(transition)
+                position.lifecycle = transition_lifecycle(position.lifecycle, transition)
                 position.exit_timestamp = _minute_text(transition.timestamp)
                 position.exit_value = transition.exit_value
                 position.close_reason = transition.reason
@@ -1247,7 +1249,9 @@ def _simulate_path(
                     last_greeks=entry_greeks,
                     greeks_trajectory=[entry_greeks],
                 )
-                position.lifecycle.apply(open_position_transition(minute))
+                position.lifecycle = transition_lifecycle(
+                    position.lifecycle, open_position_transition(minute)
+                )
                 position.matched_minutes += 1
                 worst, best = _spread_values(candidate, ranges, minute)
                 position.trajectory.append(

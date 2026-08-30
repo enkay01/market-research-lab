@@ -66,20 +66,25 @@ class LifecycleDecision:
     exit_transition: PositionTransition | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class LifecyclePosition:
-    """Mutable lifecycle state that applies only valid transitions."""
+    """Immutable lifecycle snapshot."""
 
     state: LifecycleState = LifecycleState.ENTRY
     pending_exit: PositionTransition | None = None
 
-    def apply(self, transition: PositionTransition) -> None:
-        if transition.from_state is not self.state:
-            raise ValueError(f"Cannot transition from {self.state} via {transition.reason}.")
-        self.state = transition.to_state
-        self.pending_exit = (
-            transition if transition.to_state is LifecycleState.EXIT_PENDING else None
-        )
+
+
+def transition_lifecycle(
+    position: LifecyclePosition, transition: PositionTransition
+) -> LifecyclePosition:
+    """Return the next lifecycle snapshot, rejecting invalid transitions."""
+    if transition.from_state is not position.state:
+        raise ValueError(f"Cannot transition from {position.state} via {transition.reason}.")
+    return LifecyclePosition(
+        transition.to_state,
+        transition if transition.to_state is LifecycleState.EXIT_PENDING else None,
+    )
 
 
 def open_position_transition(minute: datetime) -> PositionTransition:
@@ -112,6 +117,27 @@ def _pending_exit(minute: datetime, reason: ExitReason) -> PositionTransition:
 
 def evaluate_open_position(conditions: OpenPositionConditions) -> LifecycleDecision:
     """Apply one minute of lifecycle rules in replay priority order."""
+    if (
+        conditions.minute.date() == conditions.expiration
+        and conditions.minute.timetz().replace(tzinfo=None) >= time(15, 30)
+    ):
+        exit_value = min(
+            max(conditions.short_strike - conditions.underlying_price, 0.0),
+            conditions.width,
+        )
+        expiration_reason = (
+            ExitReason.EXPIRATION if exit_value == 0.0 else ExitReason.EXPIRATION_ITM
+        )
+        return LifecycleDecision(
+            conditions.stop_level,
+            exit_transition=PositionTransition(
+                LifecycleState.OPEN,
+                LifecycleState.CLOSED,
+                expiration_reason,
+                conditions.minute,
+                exit_value=exit_value,
+            ),
+        )
     if conditions.chosen_value >= conditions.stop_level - EPS:
         return LifecycleDecision(
             conditions.stop_level,
@@ -160,25 +186,6 @@ def evaluate_open_position(conditions: OpenPositionConditions) -> LifecycleDecis
         reason = ExitReason.SEVEN_DAY_EXPIRATION_CUTOFF
 
     transition = _pending_exit(conditions.minute, reason) if reason else None
-    if (
-        transition is None
-        and conditions.minute.date() == conditions.expiration
-        and conditions.minute.timetz().replace(tzinfo=None) >= time(15, 30)
-    ):
-        exit_value = min(
-            max(conditions.short_strike - conditions.underlying_price, 0.0),
-            conditions.width,
-        )
-        expiration_reason = (
-            ExitReason.EXPIRATION if exit_value == 0.0 else ExitReason.EXPIRATION_ITM
-        )
-        transition = PositionTransition(
-            LifecycleState.OPEN,
-            LifecycleState.CLOSED,
-            expiration_reason,
-            conditions.minute,
-            exit_value=exit_value,
-        )
     return LifecycleDecision(stop_level, tuple(movements), transition)
 
 

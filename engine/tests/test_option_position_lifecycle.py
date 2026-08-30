@@ -7,11 +7,14 @@ import pytest
 from market_research_lab.market_data import EarningsEvent
 from market_research_lab.option_position_lifecycle import (
     ExitReason,
+    LifecyclePosition,
     LifecycleState,
     OpenPositionConditions,
+    PositionTransition,
     earnings_exit_day,
     evaluate_open_position,
     open_position_transition,
+    transition_lifecycle,
 )
 
 NEW_YORK = ZoneInfo("America/New_York")
@@ -105,7 +108,7 @@ def test_open_position_rules_create_pending_exit_transitions(conditions, reason)
         (90.0, ExitReason.EXPIRATION_ITM, 5.0),
     ],
 )
-def test_expiration_settlement_uses_the_full_supported_spread_width(
+def test_expiration_settlement_uses_bounded_intrinsic_value(
     underlying_price, reason, exit_value
 ):
     expiration_minute = datetime(2024, 2, 20, 15, 30, tzinfo=NEW_YORK)
@@ -114,7 +117,7 @@ def test_expiration_settlement_uses_the_full_supported_spread_width(
         minute=expiration_minute,
         expiration=expiration_minute.date(),
         underlying_price=underlying_price,
-        underlying_low=96.0,
+        underlying_low=min(96.0, underlying_price),
     )
 
     decision = evaluate_open_position(conditions)
@@ -123,6 +126,61 @@ def test_expiration_settlement_uses_the_full_supported_spread_width(
     assert decision.exit_transition.reason is reason
     assert decision.exit_transition.exit_value == exit_value
     assert decision.exit_transition.to_state is LifecycleState.CLOSED
+
+
+def test_short_strike_breach_still_precedes_expiration_day():
+    conditions = replace(
+        BASE_CONDITIONS,
+        minute=datetime(2024, 2, 19, 15, 30, tzinfo=NEW_YORK),
+        underlying_price=94.0,
+        underlying_low=94.0,
+    )
+
+    decision = evaluate_open_position(conditions)
+
+    assert decision.exit_transition is not None
+    assert decision.exit_transition.reason is ExitReason.SHORT_STRIKE_BREACH
+    assert decision.exit_transition.to_state is LifecycleState.EXIT_PENDING
+
+
+def test_lifecycle_snapshots_accept_entry_pending_and_close_transitions():
+    entry = transition_lifecycle(LifecyclePosition(), open_position_transition(MINUTE))
+    pending = transition_lifecycle(
+        entry,
+        PositionTransition(
+            LifecycleState.OPEN,
+            LifecycleState.EXIT_PENDING,
+            ExitReason.STOP_LEVEL,
+            MINUTE,
+        ),
+    )
+    closed = transition_lifecycle(
+        pending,
+        PositionTransition(
+            LifecycleState.EXIT_PENDING,
+            LifecycleState.CLOSED,
+            ExitReason.STOP_LEVEL,
+            MINUTE.replace(minute=31),
+        ),
+    )
+
+    assert entry.state is LifecycleState.OPEN
+    assert pending.pending_exit is not None
+    assert closed.state is LifecycleState.CLOSED
+    assert closed.pending_exit is None
+
+
+def test_lifecycle_snapshots_reject_invalid_transitions():
+    with pytest.raises(ValueError):
+        transition_lifecycle(
+            LifecyclePosition(),
+            PositionTransition(
+                LifecycleState.OPEN,
+                LifecycleState.CLOSED,
+                ExitReason.STOP_LEVEL,
+                MINUTE,
+            ),
+        )
 
 
 def test_before_open_earnings_uses_previous_weekday_and_known_events_only():
