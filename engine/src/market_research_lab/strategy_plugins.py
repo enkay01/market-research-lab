@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,6 +14,12 @@ if TYPE_CHECKING:
     from .strategies import MarketView, StrategyEvaluation, StrategyMetadata
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class DiscoveredStrategy:
+    metadata: StrategyMetadata
+    evaluator: Callable[..., StrategyEvaluation]
 
 CUSTOM_STRATEGY_TEMPLATE = '''"""Example custom strategy for Market Research Lab."""
 
@@ -109,15 +116,10 @@ def ensure_sample_strategy() -> None:
         sample_file.write_text(CUSTOM_STRATEGY_TEMPLATE, encoding="utf-8")
 
 
-def discover_custom_strategies() -> dict[
-    str, tuple[StrategyMetadata, Callable[[MarketView, dict[str, JsonValue], str], StrategyEvaluation]]
-]:
+def discover_custom_strategies() -> dict[str, DiscoveredStrategy]:
     """Scan custom strategy folders and load valid strategy modules."""
     ensure_sample_strategy()
-    discovered: dict[
-        str,
-        tuple[StrategyMetadata, Callable[[MarketView, dict[str, JsonValue], str], StrategyEvaluation]],
-    ] = {}
+    discovered: dict[str, DiscoveredStrategy] = {}
 
     for directory in get_custom_strategies_directories():
         if not directory.is_dir():
@@ -137,7 +139,7 @@ def discover_custom_strategies() -> dict[
                 eval_func = getattr(module, "evaluate", None)
 
                 if strategy_spec is not None and callable(eval_func):
-                    def make_runner(fn: Callable) -> Callable:
+                    def make_runner(fn: Callable[..., StrategyEvaluation]) -> Callable[..., StrategyEvaluation]:
                         def runner(
                             market_view: MarketView,
                             parameters: dict[str, JsonValue],
@@ -148,7 +150,10 @@ def discover_custom_strategies() -> dict[
 
                         return runner
 
-                    discovered[strategy_spec.name] = (strategy_spec, make_runner(eval_func))
+                    discovered[strategy_spec.name] = DiscoveredStrategy(
+                        metadata=strategy_spec,
+                        evaluator=make_runner(eval_func),
+                    )
             except Exception:
                 logger.exception("Failed to load custom strategy from %s", py_file)
 

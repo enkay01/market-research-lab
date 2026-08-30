@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -511,8 +511,8 @@ def list_strategies() -> list[StrategyMetadata]:
     """Return every registered Strategy metadata descriptor, including custom plugins."""
     all_specs = dict(BUILTIN_STRATEGIES)
     custom_discovered = discover_custom_strategies()
-    for name, (spec, _) in custom_discovered.items():
-        all_specs[name] = spec
+    for name, item in custom_discovered.items():
+        all_specs[name] = item.metadata
     return list(all_specs.values())
 
 
@@ -522,7 +522,7 @@ def get_strategy_spec(name: str) -> StrategyMetadata:
         return BUILTIN_STRATEGIES[name]
     custom_discovered = discover_custom_strategies()
     if name in custom_discovered:
-        return custom_discovered[name][0]
+        return custom_discovered[name].metadata
     raise StrategyEvaluationError(f"Unknown Strategy '{name}'.")
 
 
@@ -564,6 +564,17 @@ def evaluate_put_credit_spread_strategy(
 
 
 
+_BUILTIN_EVALUATORS: dict[
+    str,
+    Callable[..., StrategyEvaluation],
+] = {
+    "long_flat_moving_average": evaluate_long_flat_moving_average,
+    "long_short_moving_average": evaluate_long_short_moving_average,
+    "rsi_mean_reversion": evaluate_rsi_strategy,
+    "put_credit_spread_strategy": evaluate_put_credit_spread_strategy,
+}
+
+
 def evaluate_strategy(
     name: str,
     market_view: MarketView,
@@ -572,28 +583,15 @@ def evaluate_strategy(
     decision_time: str,
 ) -> StrategyEvaluation:
     """Dispatch and evaluate a named Strategy over an eligible Market View."""
-    if name == "long_flat_moving_average":
-        return evaluate_long_flat_moving_average(
-            market_view, parameters, decision_time=decision_time
-        )
-    if name == "long_short_moving_average":
-        return evaluate_long_short_moving_average(
-            market_view, parameters, decision_time=decision_time
-        )
-    if name == "rsi_mean_reversion":
-        return evaluate_rsi_strategy(
-            market_view, parameters, decision_time=decision_time
-        )
-    if name == "put_credit_spread_strategy":
-        return evaluate_put_credit_spread_strategy(
-            market_view, parameters, decision_time=decision_time
-        )
-    custom_discovered = discover_custom_strategies()
-    if name in custom_discovered:
-        _, runner = custom_discovered[name]
-        return runner(market_view, parameters, decision_time=decision_time)
+    evaluator = _BUILTIN_EVALUATORS.get(name)
+    if evaluator is not None:
+        return evaluator(market_view, parameters, decision_time=decision_time)
 
-    available = list(BUILTIN_STRATEGIES.keys()) + list(custom_discovered.keys())
+    custom = discover_custom_strategies().get(name)
+    if custom is not None:
+        return custom.evaluator(market_view, parameters, decision_time=decision_time)
+
+    available = list(BUILTIN_STRATEGIES.keys()) + list(discover_custom_strategies().keys())
     raise StrategyEvaluationError(
         f"Unknown Strategy '{name}'. Available: {available}"
     )
