@@ -5,6 +5,7 @@ from __future__ import annotations
 from .alerts import router as alerts_router
 from .backtests import router as backtests_router
 from .cleanup import router as cleanup_router
+from .deps import ErrorResponse, register_domain_exception_handlers
 from .indicators import router as indicators_router
 from .market_data import router as market_data_router
 from .options import router as options_router
@@ -14,6 +15,7 @@ from .strategies import router as strategies_router
 from .valuations import router as valuations_router
 
 __all__ = [
+    "ErrorResponse",
     "alerts_router",
     "backtests_router",
     "cleanup_router",
@@ -22,6 +24,7 @@ __all__ = [
     "options_router",
     "predictive_models_router",
     "projects_router",
+    "register_domain_exception_handlers",
     "strategies_router",
     "valuations_router",
 ]

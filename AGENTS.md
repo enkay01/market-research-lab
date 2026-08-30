@@ -8,3 +8,10 @@ Read `CONTEXT.md` before changing domain language or implementing market logic.
 - **Sequence**: Read `docs/implementation-plan.md` when selecting or scoping the next Epic or story.
 - **Modelling**: Read `docs/modelling-techniques.md` when implementing a research paper, theoretical technique, predictive model, or indicator.
 - **UI & Astryx**: Read `docs/ui-design.md` when designing, creating, or modifying user interfaces, components, styling, or Astryx design tokens.
+
+# Shell and CLI execution rules
+
+- **PowerShell strings**: Never interpolate Markdown backticks or text inside double-quoted PowerShell strings (`"..."` or `@"..."@`). PowerShell parses backticks as escape sequences and inserts non-printable ASCII control characters.
+- **Git and CLI text payloads**: Pass multi-line text, PR comments, and Markdown through UTF-8 standard input or Python scripts using JSON payloads.
+- **File encodings**: Write all files and payloads in UTF-8 without Byte Order Mark (BOM).
+
