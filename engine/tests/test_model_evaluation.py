@@ -164,6 +164,8 @@ def test_benchmark_predictions_use_the_same_labelled_keys_and_metrics(benchmark:
     assert {"training_rmse_improvement", "validation_mae_improvement", "test_rmse_ratio"}.issubset(
         result.metrics
     )
+    assert result.metrics["test_outperforms_benchmark"] == 1.0
+    assert result.metrics["test_same_eligible_periods"] == 1.0
 
 
 def test_evaluator_rejects_misaligned_benchmark_keys() -> None:

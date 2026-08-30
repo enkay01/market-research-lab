@@ -8,11 +8,11 @@ import pandas as pd
 import pytest
 
 from market_research_lab.market_data import DailyBar
+from market_research_lab.model_evaluation import evaluate_period_metrics
 from market_research_lab.predictive_models import (
     PredictiveModelCalculationError,
     PredictiveModelParameterError,
     PredictiveModelPrediction,
-    _evaluate_period_metrics,
     build_supervised_frame,
     fit_model,
     get_predictive_model_spec,
@@ -199,8 +199,7 @@ def test_run_records_chronological_periods_and_labelled_metrics() -> None:
         "future_labels_excluded_from_each_training_window": True,
         "validation_and_test_labels_excluded_from_initial_training": True,
         "fold_training_eligibility": (
-            "feature_session_before_prediction_session_and_label_available_by_"
-            "prediction_session"
+            "feature_session_before_prediction_session_and_label_available_by_prediction_session"
         ),
         "fold_feature_and_preprocessing_policy": (
             "causal_features_from_session_history_and_learned_state_fit_on_"
@@ -286,9 +285,7 @@ def test_expanding_and_rolling_modes_fit_each_fold_without_current_label() -> No
         assert len(result.fold_artifacts) > 1
         assert len(result.evaluation.folds) == len(result.fold_artifacts) - 1
         labelled_predictions = [
-            prediction
-            for prediction in result.predictions
-            if prediction.target_date is not None
+            prediction for prediction in result.predictions if prediction.target_date is not None
         ]
         assert len(labelled_predictions) == len(result.fold_artifacts) - 1
         assert all(
@@ -364,9 +361,7 @@ def test_later_walk_forward_observations_do_not_change_earlier_folds(
         baseline.evaluation.folds[:2], changed.evaluation.folds[:2], strict=True
     ):
         assert after.artifact.to_json() == before.artifact.to_json()
-        assert after.prediction.predicted_value == pytest.approx(
-            before.prediction.predicted_value
-        )
+        assert after.prediction.predicted_value == pytest.approx(before.prediction.predicted_value)
         assert after.metrics == before.metrics
 
 
@@ -414,9 +409,7 @@ def test_run_does_not_return_predictions_from_before_the_training_end() -> None:
         {"momentum_period": 2, "training_window": 3},
     )
 
-    assert all(
-        prediction.session_date > result.training_end for prediction in result.predictions
-    )
+    assert all(prediction.session_date > result.training_end for prediction in result.predictions)
 
 
 def test_run_rejects_invalid_parameters_and_insufficient_history() -> None:
@@ -536,7 +529,7 @@ def test_benchmark_comparison_rejects_misaligned_session_or_target_keys() -> Non
     )
 
     with pytest.raises(PredictiveModelCalculationError, match="do not match"):
-        _evaluate_period_metrics(
+        evaluate_period_metrics(
             "test",
             [prediction],
             [("2024-01-02", "2024-01-04", 0.0)],

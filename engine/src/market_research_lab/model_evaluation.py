@@ -445,7 +445,7 @@ def evaluate_model(request: ModelEvaluationInput) -> "PredictiveModelCalculation
             {
                 f"{m.period}_{k}": float(v)
                 for k, v in m.comparison.items()
-                if isinstance(v, (int, float)) and not isinstance(v, bool)
+                if isinstance(v, (int, float))
             }
         )
     evaluation = PredictiveModelEvaluation(

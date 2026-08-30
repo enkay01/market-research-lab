@@ -1306,7 +1306,3 @@ def run_predictive_model(
     )
 
 
-def _evaluate_period_metrics(period, predictions, benchmark_predictions):
-    from .model_evaluation import evaluate_period_metrics
-
-    return evaluate_period_metrics(period, predictions, benchmark_predictions)
