@@ -2,11 +2,12 @@ from market_research_lab.option_counterfactual import (
     CounterfactualInputs,
     analyze_post_exit,
 )
+from market_research_lab.option_position_lifecycle import ExitReason
 
 
 def _stop_inputs(values_after: tuple[float, ...]) -> CounterfactualInputs:
     return CounterfactualInputs(
-        close_rule="Stop Level",
+        close_rule=ExitReason.STOP_LEVEL,
         exit_value=3.0,
         values_after=values_after,
         entry_credit=100.0,
@@ -40,7 +41,7 @@ def test_more_expensive_spread_records_stop_saved_outcome():
 
 def test_profit_exit_has_target_achieved_outcome_without_later_values():
     inputs = CounterfactualInputs(
-        close_rule="Profit Target 75%",
+        close_rule=ExitReason.PROFIT_TARGET_75,
         exit_value=0.25,
         values_after=(),
         entry_credit=100.0,
@@ -56,7 +57,7 @@ def test_profit_exit_has_target_achieved_outcome_without_later_values():
 
 def test_open_position_has_no_counterfactual_outcome():
     inputs = CounterfactualInputs(
-        close_rule="Open Position",
+        close_rule=ExitReason.OPEN_POSITION,
         exit_value=1.0,
         values_after=(2.0,),
         entry_credit=100.0,

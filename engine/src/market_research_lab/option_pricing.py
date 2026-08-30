@@ -158,7 +158,3 @@ def black_scholes_greeks(inputs: OptionPricingInputs, volatility: float) -> Opti
         vega=round(vega, 8),
         implied_volatility=round(volatility, 8),
     )
-
-
-black_scholes_implied_volatility = black_scholes_iv
-calculate_option_greeks = black_scholes_greeks

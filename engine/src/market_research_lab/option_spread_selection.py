@@ -7,12 +7,10 @@ import statistics
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import NamedTuple, Sequence
-from zoneinfo import ZoneInfo
 
 from .market_data import DailyBar, OptionContract, OptionMarketData, UnderlyingMinuteBar
 from .option_pricing import OptionPricingInputs, black_scholes_greeks, black_scholes_iv
-
-NEW_YORK = ZoneInfo("America/New_York")
+from .option_time import NEW_YORK, option_minute, parse_option_timestamp
 
 
 @dataclass(frozen=True)
@@ -66,26 +64,18 @@ class _CandidateOrder(NamedTuple):
     expiration: str
 
 
-def _timestamp(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=NEW_YORK)
-    return parsed.astimezone(NEW_YORK)
-
-
-def _minute(value: str) -> datetime:
-    return _timestamp(value).replace(second=0, microsecond=0)
-
-
 def minute_trade_ranges(
     data: OptionMarketData, *, as_of: datetime | None = None
 ) -> dict[tuple[str, datetime], MinuteRange]:
     """Build eligible low, high, and last trade values for each contract minute."""
     ranges: dict[tuple[str, datetime], MinuteRange] = {}
     for trade in data.option_trades:
-        event_time = _timestamp(trade.timestamp)
+        event_time = parse_option_timestamp(trade.timestamp)
         eligibility_cutoff = as_of or event_time + timedelta(minutes=1)
-        if trade.available_at is None or _timestamp(trade.available_at) > eligibility_cutoff:
+        if (
+            trade.available_at is None
+            or parse_option_timestamp(trade.available_at) > eligibility_cutoff
+        ):
             continue
         key = (trade.contract_id, event_time.replace(second=0, microsecond=0))
         prior = ranges.get(key)
@@ -104,9 +94,11 @@ def underlying_bars_by_minute(
     """Return underlying bars available no later than the end of their minute."""
     result: dict[tuple[str, datetime], UnderlyingMinuteBar] = {}
     for bar in data.underlying_bars:
-        bar_minute = _minute(bar.timestamp)
-        if bar.available_at is None or _timestamp(bar.available_at) > bar_minute + timedelta(
-            minutes=1
+        bar_minute = option_minute(bar.timestamp)
+        eligibility_cutoff = bar_minute + timedelta(minutes=1)
+        if (
+            bar.available_at is None
+            or parse_option_timestamp(bar.available_at) > eligibility_cutoff
         ):
             continue
         result[(bar.security_id, bar_minute)] = bar
@@ -118,12 +110,12 @@ def previous_day_volume(data: OptionMarketData, security_id: str, when: datetime
     contract_ids = {item.contract_id for item in data.contracts if item.security_id == security_id}
     eligible_dates = sorted(
         {
-            _timestamp(trade.timestamp).date()
+            parse_option_timestamp(trade.timestamp).date()
             for trade in data.option_trades
             if trade.contract_id in contract_ids
-            and _timestamp(trade.timestamp).date() < when.date()
+            and parse_option_timestamp(trade.timestamp).date() < when.date()
             and trade.available_at is not None
-            and _timestamp(trade.available_at) <= when
+            and parse_option_timestamp(trade.available_at) <= when
         }
     )
     if not eligible_dates:
@@ -133,9 +125,9 @@ def previous_day_volume(data: OptionMarketData, security_id: str, when: datetime
         max(0.0, trade.size)
         for trade in data.option_trades
         if trade.contract_id in contract_ids
-        and _timestamp(trade.timestamp).date() == previous
+        and parse_option_timestamp(trade.timestamp).date() == previous
         and trade.available_at is not None
-        and _timestamp(trade.available_at) <= when
+        and parse_option_timestamp(trade.available_at) <= when
     )
 
 
@@ -147,7 +139,7 @@ def sma_trend_passes(daily_bars: Sequence[DailyBar], security_id: str, when: dat
         if bar.security_id == security_id
         and bar.session_date < when.date().isoformat()
         and bar.available_at is not None
-        and _timestamp(bar.available_at) <= when
+        and parse_option_timestamp(bar.available_at) <= when
     ]
     if len(closes) < 200:
         return False
@@ -176,7 +168,7 @@ def pullback_passes(data: OptionMarketData, security_id: str, when: datetime) ->
         if bar.security_id == security_id
         and bar.session_date < when.date().isoformat()
         and bar.available_at is not None
-        and _timestamp(bar.available_at) <= when
+        and parse_option_timestamp(bar.available_at) <= when
     ]
     if not closes or len(daily) < 200:
         return False
@@ -192,9 +184,9 @@ def pullback_passes(data: OptionMarketData, security_id: str, when: datetime) ->
 
 
 def _contract_is_eligible(contract: OptionContract, when: datetime) -> bool:
-    if contract.available_at is not None and _timestamp(contract.available_at) > when:
+    if contract.available_at is not None and parse_option_timestamp(contract.available_at) > when:
         return False
-    return contract.inactivated_at is None or _timestamp(contract.inactivated_at) > when
+    return contract.inactivated_at is None or parse_option_timestamp(contract.inactivated_at) > when
 
 
 def _candidate_order(candidate: SpreadCandidate, rules: SelectionRules) -> _CandidateOrder:
@@ -214,7 +206,7 @@ def select_put_credit_spread(
     at: str | datetime,
 ) -> SpreadCandidate | None:
     """Select the closest eligible short Delta and an allowed lower strike."""
-    when = _timestamp(at) if isinstance(at, str) else at.astimezone(NEW_YORK)
+    when = parse_option_timestamp(at) if isinstance(at, str) else at.astimezone(NEW_YORK)
     if rules.automatic_selection and not sma_trend_passes(
         market_data.daily_bars, security_id, when
     ):

@@ -12,7 +12,6 @@ import statistics
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from typing import Literal, Mapping, Sequence
-from zoneinfo import ZoneInfo
 
 from .json_types import JsonValue
 from .market_data import OptionContract, OptionMarketData, OptionTrade
@@ -23,8 +22,10 @@ from .option_counterfactual import (
 )
 from .option_position_lifecycle import (
     ExitReason,
+    LifecyclePosition,
     LifecycleState,
     OpenPositionConditions,
+    PositionTransition,
     earnings_exit_day,
     earnings_exit_due,
     evaluate_open_position,
@@ -47,9 +48,9 @@ from .option_spread_selection import (
 from .option_spread_selection import (
     select_put_credit_spread as _select_put_credit_spread,
 )
+from .option_time import NEW_YORK, option_minute, parse_option_timestamp
 from .portfolio_ledger import PortfolioLedger
 
-NEW_YORK = ZoneInfo("America/New_York")
 FEE_PER_LEG = 0.65
 EPS = 1e-9
 
@@ -263,7 +264,7 @@ class _OpenPosition:
     entry_fee: float
     collateral: float
     stop_level: float
-    lifecycle_state: LifecycleState
+    lifecycle: LifecyclePosition
     matched_minutes: int = 0
     missing_minutes: int = 0
     current_missing_gap: int = 0
@@ -271,13 +272,11 @@ class _OpenPosition:
     stop_movements: list[StopMovement] = field(default_factory=list)
     trajectory: list[TrajectoryPoint] = field(default_factory=list)
     greeks_trajectory: list[OptionGreeks] = field(default_factory=list)
-    pending_exit_reason: str | None = None
-    pending_exit_after: datetime | None = None
     exit_timestamp: str | None = None
     exit_value: float | None = None
     exit_fee: float = 0.0
     pnl: float = 0.0
-    close_rule: str = "Open Position"
+    close_reason: ExitReason | None = None
     last_greeks: OptionGreeks | None = None
     entry_greeks: OptionGreeks | None = None
     mid_greeks: OptionGreeks | None = None
@@ -325,17 +324,13 @@ def _json_value(value: JsonValue) -> JsonValue:
 
 def _timestamp(value: str) -> datetime:
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parse_option_timestamp(value)
     except ValueError as error:
         raise OptionBacktestError(f"Invalid timestamp: {value!r}.") from error
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=NEW_YORK)
-    return parsed.astimezone(NEW_YORK)
 
 
 def _minute(value: str) -> datetime:
-    parsed = _timestamp(value)
-    return parsed.replace(second=0, microsecond=0)
+    return option_minute(value)
 
 
 def _date(value: str) -> date:
@@ -716,9 +711,10 @@ def _path_position(
         if position.exit_timestamp
         and _timestamp(_minute_text(minute)) > _timestamp(position.exit_timestamp)
     ]
+    close_reason = position.close_reason or ExitReason.OPEN_POSITION
     counterfactual = analyze_post_exit(
         CounterfactualInputs(
-            close_rule=position.close_rule,
+            close_rule=close_reason,
             exit_value=exit_value,
             values_after=tuple(values_after),
             entry_credit=position.entry_credit,
@@ -744,15 +740,15 @@ def _path_position(
         open_timestamp=position.entry_timestamp,
         open_rule=candidate.selection_reason,
         close_timestamp=position.exit_timestamp,
-        close_rule=position.close_rule,
+        close_rule=close_reason.value,
         status=(
             "Closed Stop Level"
-            if position.close_rule.startswith("Stop")
+            if close_reason is ExitReason.STOP_LEVEL
             else "Closed Profit Target"
-            if position.close_rule.startswith("Profit")
+            if close_reason in {ExitReason.PROFIT_TARGET_90, ExitReason.PROFIT_TARGET_75}
             else "Expired Worthless"
-            if position.close_rule == "Expiration"
-            else position.close_rule
+            if close_reason is ExitReason.EXPIRATION
+            else close_reason.value
         ),
         short_delta=round(candidate.short_delta, 8),
         implied_volatility=round(candidate.implied_volatility, 8),
@@ -898,15 +894,24 @@ def _simulate_path(
                 )
             )
             if (
-                position.pending_exit_reason
-                and position.pending_exit_after is not None
-                and minute > position.pending_exit_after
+                position.lifecycle.pending_exit is not None
+                and minute > position.lifecycle.pending_exit.timestamp
             ):
-                position.lifecycle_state = LifecycleState.CLOSED
+                pending_exit = position.lifecycle.pending_exit
+                if pending_exit is None:
+                    raise RuntimeError("Pending lifecycle exit is missing.")
+                position.lifecycle.apply(
+                    PositionTransition(
+                        LifecycleState.EXIT_PENDING,
+                        LifecycleState.CLOSED,
+                        pending_exit.reason,
+                        minute,
+                    )
+                )
                 position.exit_timestamp = _minute_text(minute)
                 position.exit_value = chosen_value
                 position.exit_fee = specification.fee_per_leg * 2.0 * position.quantity
-                position.close_rule = position.pending_exit_reason
+                position.close_reason = pending_exit.reason
                 exit_cost = (
                     chosen_value * position.quantity * position.candidate.short_contract.multiplier
                 )
@@ -914,7 +919,7 @@ def _simulate_path(
                     -exit_cost,
                     flow_type="option_exit_cost",
                     description=(
-                        f"Option exit cost ({position.close_rule}) "
+                        f"Option exit cost ({pending_exit.reason.value}) "
                         f"for {position.position_id}"
                     ),
                     timestamp=_minute_text(minute),
@@ -981,17 +986,15 @@ def _simulate_path(
             )
             transition = decision.exit_transition
             if transition is not None and transition.to_state is LifecycleState.EXIT_PENDING:
-                position.lifecycle_state = transition.to_state
-                position.pending_exit_reason = transition.reason.value
-                position.pending_exit_after = transition.timestamp
+                position.lifecycle.apply(transition)
                 if transition.reason is ExitReason.STOP_LEVEL:
                     stopped_dates.add((security_id, date_text))
                     continue
             elif transition is not None and transition.to_state is LifecycleState.CLOSED:
-                position.lifecycle_state = transition.to_state
+                position.lifecycle.apply(transition)
                 position.exit_timestamp = _minute_text(transition.timestamp)
                 position.exit_value = transition.exit_value
-                position.close_rule = transition.reason.value
+                position.close_reason = transition.reason
                 position.exit_fee = (
                     0.0
                     if position.exit_value == 0.0
@@ -1239,11 +1242,12 @@ def _simulate_path(
                     entry_fee=entry_fee,
                     collateral=collateral,
                     stop_level=2.0 * credit_unit,
-                    lifecycle_state=open_position_transition(minute).to_state,
+                    lifecycle=LifecyclePosition(),
                     entry_greeks=entry_greeks,
                     last_greeks=entry_greeks,
                     greeks_trajectory=[entry_greeks],
                 )
+                position.lifecycle.apply(open_position_transition(minute))
                 position.matched_minutes += 1
                 worst, best = _spread_values(candidate, ranges, minute)
                 position.trajectory.append(

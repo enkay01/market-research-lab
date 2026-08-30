@@ -5,11 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from enum import Enum
-from zoneinfo import ZoneInfo
 
 from .market_data import EarningsEvent
+from .option_time import parse_option_timestamp
 
-NEW_YORK = ZoneInfo("America/New_York")
 EPS = 1e-9
 
 
@@ -65,6 +64,22 @@ class LifecycleDecision:
     stop_level: float
     stop_movements: tuple[PositionTransition, ...] = ()
     exit_transition: PositionTransition | None = None
+
+
+@dataclass
+class LifecyclePosition:
+    """Mutable lifecycle state that applies only valid transitions."""
+
+    state: LifecycleState = LifecycleState.ENTRY
+    pending_exit: PositionTransition | None = None
+
+    def apply(self, transition: PositionTransition) -> None:
+        if transition.from_state is not self.state:
+            raise ValueError(f"Cannot transition from {self.state} via {transition.reason}.")
+        self.state = transition.to_state
+        self.pending_exit = (
+            transition if transition.to_state is LifecycleState.EXIT_PENDING else None
+        )
 
 
 def open_position_transition(minute: datetime) -> PositionTransition:
@@ -150,8 +165,9 @@ def evaluate_open_position(conditions: OpenPositionConditions) -> LifecycleDecis
         and conditions.minute.date() == conditions.expiration
         and conditions.minute.timetz().replace(tzinfo=None) >= time(15, 30)
     ):
-        exit_value = (
-            0.0 if conditions.underlying_price > conditions.short_strike else conditions.width
+        exit_value = min(
+            max(conditions.short_strike - conditions.underlying_price, 0.0),
+            conditions.width,
         )
         expiration_reason = (
             ExitReason.EXPIRATION if exit_value == 0.0 else ExitReason.EXPIRATION_ITM
@@ -166,13 +182,6 @@ def evaluate_open_position(conditions: OpenPositionConditions) -> LifecycleDecis
     return LifecycleDecision(stop_level, tuple(movements), transition)
 
 
-def _timestamp(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=NEW_YORK)
-    return parsed.astimezone(NEW_YORK)
-
-
 def earnings_exit_day(
     events: tuple[EarningsEvent, ...], security_id: str, minute: datetime
 ) -> bool:
@@ -180,8 +189,10 @@ def earnings_exit_day(
     for event in events:
         if event.security_id != security_id:
             continue
-        if event.available_at is None or _timestamp(event.available_at) > minute + timedelta(
-            minutes=1
+        eligibility_cutoff = minute + timedelta(minutes=1)
+        if (
+            event.available_at is None
+            or parse_option_timestamp(event.available_at) > eligibility_cutoff
         ):
             continue
         event_date = date.fromisoformat(event.event_date)

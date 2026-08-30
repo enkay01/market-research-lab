@@ -99,7 +99,10 @@ def test_open_position_rules_create_pending_exit_transitions(conditions, reason)
     ("underlying_price", "reason", "exit_value"),
     [
         (96.0, ExitReason.EXPIRATION, 0.0),
-        (95.0, ExitReason.EXPIRATION_ITM, 5.0),
+        (95.0, ExitReason.EXPIRATION, 0.0),
+        (97.0, ExitReason.EXPIRATION, 0.0),
+        (92.0, ExitReason.EXPIRATION_ITM, 3.0),
+        (90.0, ExitReason.EXPIRATION_ITM, 5.0),
     ],
 )
 def test_expiration_settlement_uses_the_full_supported_spread_width(

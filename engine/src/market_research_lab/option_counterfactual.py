@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from .option_position_lifecycle import ExitReason
+
 EPS = 1e-9
 
 
@@ -17,7 +19,7 @@ class CounterfactualOutcome:
 
 @dataclass(frozen=True)
 class CounterfactualInputs:
-    close_rule: str
+    close_rule: ExitReason
     exit_value: float
     values_after: tuple[float, ...]
     entry_credit: float
@@ -27,13 +29,16 @@ class CounterfactualInputs:
 
 def analyze_post_exit(inputs: CounterfactualInputs) -> CounterfactualOutcome | None:
     """Classify the supported Spread Values observed after an exit."""
-    if inputs.close_rule.startswith("Profit"):
+    if inputs.close_rule in {
+        ExitReason.PROFIT_TARGET_90,
+        ExitReason.PROFIT_TARGET_75,
+    }:
         return CounterfactualOutcome(
             "TARGET_ACHIEVED",
             0.0,
             "The configured profit exit was reached.",
         )
-    if not inputs.close_rule.startswith("Stop") or not inputs.values_after:
+    if inputs.close_rule is not ExitReason.STOP_LEVEL or not inputs.values_after:
         return None
     if inputs.quantity <= 0 or inputs.multiplier <= 0.0:
         return None
