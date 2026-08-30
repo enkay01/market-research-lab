@@ -23,6 +23,7 @@ from .market_data import (
     OptionTrade,
     UnderlyingMinuteBar,
 )
+from .portfolio_ledger import PortfolioLedger
 
 NEW_YORK = ZoneInfo("America/New_York")
 FEE_PER_LEG = 0.65
@@ -1177,16 +1178,19 @@ def _simulate_path(
 
     planned_entries = dict(options.entry_plan or {})
     actual_entries: dict[tuple[str, str], tuple[str, str, int]] = {}
-    cash = specification.starting_cash
-    locked_collateral = 0.0
+    ledger_account = PortfolioLedger(specification.starting_cash)
     position_counter = 0
     previous_minute: datetime | None = None
 
     for minute in minutes:
         if previous_minute is not None:
-            elapsed_days = max(0.0, (minute - previous_minute).total_seconds() / 86400.0)
+            elapsed_seconds = max(0.0, (minute - previous_minute).total_seconds())
             if specification.cash_interest_rate:
-                cash += cash * specification.cash_interest_rate * elapsed_days / 365.0
+                ledger_account.apply_time_elapsed_interest(
+                    specification.cash_interest_rate,
+                    elapsed_seconds=elapsed_seconds,
+                    days_per_year=365.0,
+                )
         previous_minute = minute
         date_text = minute.date().isoformat()
 
@@ -1250,11 +1254,12 @@ def _simulate_path(
                 position.exit_value = chosen_value
                 position.exit_fee = specification.fee_per_leg * 2.0 * position.quantity
                 position.close_rule = position.pending_exit_reason
-                cash -= (
+                net_exit_cost = (
                     chosen_value * position.quantity * position.candidate.short_contract.multiplier
                     + position.exit_fee
                 )
-                locked_collateral -= position.collateral
+                ledger_account.record_cash_flow(-net_exit_cost)
+                ledger_account.release_collateral(position.collateral)
                 positions.append(
                     _path_position(
                         position,
@@ -1362,13 +1367,14 @@ def _simulate_path(
                     if position.exit_value == 0.0
                     else specification.fee_per_leg * 2.0 * position.quantity
                 )
-                cash -= (
+                net_exit_cost = (
                     position.exit_value
                     * position.quantity
                     * position.candidate.short_contract.multiplier
                     + position.exit_fee
                 )
-                locked_collateral -= position.collateral
+                ledger_account.record_cash_flow(-net_exit_cost)
+                ledger_account.release_collateral(position.collateral)
                 positions.append(
                     _path_position(
                         position,
@@ -1511,7 +1517,7 @@ def _simulate_path(
                     for open_position in open_positions.values()
                     for entry in [open_position.trajectory[-1]]
                 )
-                portfolio_value = cash - open_value
+                portfolio_value = ledger_account.calculate_option_equity(open_value)
                 open_risk = sum(
                     max(
                         0.0,
@@ -1535,7 +1541,7 @@ def _simulate_path(
                 if planned:
                     quantity = planned[2]
                 collateral = candidate.width * multiplier * quantity
-                if quantity < 1 or cash - locked_collateral < collateral:
+                if quantity < 1 or ledger_account.available_cash < collateral:
                     rejection_counts["collateral_limit"] = (
                         rejection_counts.get("collateral_limit", 0) + 1
                     )
@@ -1550,8 +1556,8 @@ def _simulate_path(
                 position_counter += 1
                 entry_credit_total = credit_unit * multiplier * quantity
                 entry_fee = specification.fee_per_leg * 2.0 * quantity
-                cash += entry_credit_total - entry_fee
-                locked_collateral += collateral
+                ledger_account.record_cash_flow(entry_credit_total - entry_fee)
+                ledger_account.lock_collateral(collateral, strict=False)
                 years = max(
                     (_date(candidate.short_contract.expiration) - minute.date()).days / 365.0,
                     1 / 365.0,
@@ -1607,8 +1613,9 @@ def _simulate_path(
             for pos in open_positions.values()
             for entry in [pos.trajectory[-1]]
         )
+        minute_equity = ledger_account.calculate_option_equity(open_value)
         equity_rows.append(
-            {"timestamp": _minute_text(minute), "equity": round(cash - open_value, 4)}
+            {"timestamp": _minute_text(minute), "equity": round(minute_equity, 4)}
         )
 
     for security_id, position in open_positions.items():

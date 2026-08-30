@@ -13,6 +13,7 @@ from typing import Literal, Sequence
 from .exchange_calendar import get_trading_days
 from .json_types import JsonValue
 from .market_data import CorporateAction, DailyBar
+from .portfolio_ledger import PortfolioLedger
 from .strategies import MarketView, StrategyTarget, evaluate_strategy, get_strategy_spec
 
 
@@ -599,7 +600,8 @@ def run_backtest(
 
     sorted_all_bars = sorted(bars, key=lambda b: (b.available_at, b.session_date))
 
-    cash = specification.starting_cash
+    ledger_account = PortfolioLedger(specification.starting_cash)
+    cash = ledger_account.cash
     positions: dict[str, float] = {sym: 0.0 for sym in universe}
     holding_target_weights: dict[str, float] = {sym: 0.0 for sym in universe}
     pending_targets: dict[str, PendingTarget] = {}
@@ -669,7 +671,8 @@ def run_backtest(
                 div_val = action.value
                 curr_s = positions.get(sym, 0.0)
                 div_cash = curr_s * div_val
-                cash += div_cash
+                ledger_account.record_dividend(div_cash)
+                cash = ledger_account.cash
                 dividends_today += div_cash
                 total_dividends_credited += div_cash
 
@@ -680,7 +683,8 @@ def run_backtest(
                     open_tr = open_trades.get(sym)
                     if curr_s > EPS:
                         proceeds = curr_s * liq_price
-                        cash += proceeds
+                        ledger_account.record_cash_flow(proceeds)
+                        cash = ledger_account.cash
                         if open_tr is not None:
                             trade_pnl = proceeds - open_tr.entry_cost
                             trade_cost_basis = open_tr.entry_cost
@@ -707,7 +711,8 @@ def run_backtest(
                             del open_trades[sym]
                     else:
                         cover_cost = abs(curr_s) * liq_price
-                        cash = cash - cover_cost
+                        ledger_account.record_cash_flow(-cover_cost)
+                        cash = ledger_account.cash
                         if open_tr is not None:
                             trade_pnl = open_tr.entry_cost - cover_cost
                             trade_cost_basis = open_tr.quantity * open_tr.entry_price
@@ -758,10 +763,12 @@ def run_backtest(
             and current_eligible_at > previous_eligible_at
         ):
             cash_interest_periods += 1
-            cash_interest_today = cash * (
-                specification.execution.cash_interest_rate / TRADING_DAYS_PER_YEAR
+            cash_interest_today = ledger_account.apply_daily_interest(
+                specification.execution.cash_interest_rate,
+                days=1.0,
+                trading_days_per_year=TRADING_DAYS_PER_YEAR,
             )
-            cash += cash_interest_today
+            cash = ledger_account.cash
         if current_eligible_at is not None:
             previous_eligible_at = max(
                 previous_eligible_at or current_eligible_at,
@@ -872,7 +879,8 @@ def run_backtest(
                 commission = abs(notional) * specification.execution.commission_rate
                 slippage_cost = sell_qty * open_p * slippage
 
-                cash += abs(notional) - commission
+                ledger_account.record_cash_flow(abs(notional) - commission)
+                cash = ledger_account.cash
                 new_shares = curr_shares - sell_qty
                 positions[sym] = new_shares
 
@@ -1046,9 +1054,10 @@ def run_backtest(
                 slippage_cost = buy_qty * open_p * slippage
 
                 if margin_req >= 1.0:
-                    cash = max(0.0, cash - notional - commission)
+                    ledger_account.cash = max(0.0, ledger_account.cash - notional - commission)
                 else:
-                    cash = cash - notional - commission
+                    ledger_account.record_cash_flow(-notional - commission)
+                cash = ledger_account.cash
                 new_shares = curr_shares + buy_qty
                 positions[sym] = new_shares
 
@@ -1302,7 +1311,9 @@ def run_backtest(
                     daily_fee = short_val * (borrow_rate / 252.0)
                     borrow_fee_today += daily_fee
 
-        cash = max(0.0, cash - borrow_fee_today)
+        if borrow_fee_today > 0.0:
+            ledger_account.cash = max(0.0, ledger_account.cash - borrow_fee_today)
+            cash = ledger_account.cash
 
         position_snapshots: dict[str, PositionSnapshot] = {}
         total_pos_val = 0.0
@@ -1329,7 +1340,7 @@ def run_backtest(
             total_pos_val += val_sym
             gross_pos_val += abs(val_sym)
 
-        portfolio_val = cash + total_pos_val
+        portfolio_val = ledger_account.calculate_equity(total_pos_val)
 
         for sym in universe:
             if sym in delisted_securities:
@@ -1380,6 +1391,16 @@ def run_backtest(
                                 ).weight,
                             )
                         )
+
+        ledger_account.record_snapshot(
+            date_str,
+            portfolio_val,
+            gross_exposure=gross_exp,
+            net_exposure=net_exp,
+            cash_interest=cash_interest_today,
+            borrow_fees=borrow_fee_today,
+            dividends=dividends_today,
+        )
 
         ledger.append(
             LedgerRow(
