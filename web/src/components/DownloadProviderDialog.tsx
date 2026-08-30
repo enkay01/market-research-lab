@@ -102,15 +102,16 @@ export function DownloadProviderDialog({ isOpen, onClose, onSuccess }: DownloadP
             <Text weight="medium">Data Provider</Text>
             <SegmentedControl
               label="Select Provider"
+              layout="fill"
               value={provider}
               onChange={(val) => {
                 // SAFETY: Value is constrained by SegmentedControlItem values
                 setProvider(val as "tiingo" | "sec_edgar" | "alpaca");
               }}
             >
-              <SegmentedControlItem value="tiingo" label="Tiingo (EOD Prices & Actions)" />
-              <SegmentedControlItem value="sec_edgar" label="SEC EDGAR (Fundamentals)" />
-              <SegmentedControlItem value="alpaca" label="Alpaca (Options Minutes)" />
+              <SegmentedControlItem value="tiingo" label="Tiingo (EOD)" />
+              <SegmentedControlItem value="sec_edgar" label="SEC EDGAR" />
+              <SegmentedControlItem value="alpaca" label="Alpaca (Options)" />
             </SegmentedControl>
           </VStack>
 

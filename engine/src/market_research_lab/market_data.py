@@ -1279,6 +1279,33 @@ class MarketDataStore:
             if path.is_file():
                 path.unlink()
 
+    def bulk_delete_dataset_versions(self, dataset_version_ids: list[str]) -> list[str]:
+        """Delete multiple Dataset Versions and all Parquet files that they own."""
+        if not dataset_version_ids:
+            return []
+        deleted_ids: list[str] = []
+        datasets_root = self.datasets_dir.resolve()
+        with duckdb.connect(str(self.db_path)) as con:
+            for version_id in dataset_version_ids:
+                row = con.execute(
+                    "SELECT files FROM dataset_versions WHERE id = ?",
+                    (version_id,),
+                ).fetchone()
+                if not row:
+                    continue
+                raw_files = row[0]
+                files = json.loads(raw_files) if isinstance(raw_files, str) else raw_files
+                file_names = [str(file_name) for file_name in files] if isinstance(files, list) else []
+                paths = [(self.datasets_dir / file_name).resolve() for file_name in file_names]
+                if any(path.parent != datasets_root for path in paths):
+                    raise ValueError("Dataset Version contains an unsafe file path.")
+                con.execute("DELETE FROM dataset_versions WHERE id = ?", (version_id,))
+                for path in paths:
+                    if path.is_file():
+                        path.unlink()
+                deleted_ids.append(version_id)
+        return deleted_ids
+
     @staticmethod
     def _coverage_from_row(row: tuple) -> CoverageReport:
         (

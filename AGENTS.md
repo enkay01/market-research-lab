@@ -1,4 +1,12 @@
 Write in ASD-STE100 but for a 20 year old.
+
+# Project context and user ergonomics
+
+- **Single user and local environment**: This is a local research tool for Enkay01. It is not multi-tenant enterprise software and is not deployed to the public.
+- **No security theatre**: Never add confirmation prompts that require typing random UUIDs, entity names, or confirmation phrases.
+- **No defensive warning walls**: Avoid obstructive modal walls or warning banners for local destructive actions like deleting datasets or runs.
+- **Fast direct controls**: Prioritize frictionless workflows, checkbox multi-selection, and single-click actions.
+
 # Agent workflow
 
 Read `CONTEXT.md` before changing domain language or implementing market logic.
@@ -8,6 +16,10 @@ Read `CONTEXT.md` before changing domain language or implementing market logic.
 - **Sequence**: Read `docs/implementation-plan.md` when selecting or scoping the next Epic or story.
 - **Modelling**: Read `docs/modelling-techniques.md` when implementing a research paper, theoretical technique, predictive model, or indicator.
 - **UI & Astryx**: Read `docs/ui-design.md` when designing, creating, or modifying user interfaces, components, styling, or Astryx design tokens.
+
+## Sol planning handoff
+
+Luna handles ordinary repository work. After relevant inspection, use the Sol planning handoff only when the next decision concerns complex architecture or a module boundary, a cross-module change, a tricky bug, or work where reasoning quality is the main risk. Before Luna selects or edits the approach, read and follow `docs/sol-planning-workflow.md`. Luna performs every command, edit, test, and verification step.
 
 # Shell and CLI execution rules
 

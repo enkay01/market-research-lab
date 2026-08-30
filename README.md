@@ -7,7 +7,7 @@ A local-first workspace for explicit, reproducible market research. It does not 
 From the repository root, run one command:
 
 ```powershell
-uv run --project engine market-research-lab-dev
+uv run dev
 ```
 
 It opens the browser interface at `http://localhost:5173`. Vite proxies API calls to the validated FastAPI application while you develop.
