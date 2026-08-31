@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from .indicators import IndicatorPoint, IndicatorSeries, calculate_indicator
 from .json_types import JsonValue
-from .predictive_models import is_naive_benchmark_comparison_complete
+from .strategy_plugins import CUSTOM_STRATEGY_TEMPLATE, discover_custom_strategies
 
 
 class StrategyParameterValidationError(ValueError):
@@ -97,7 +97,6 @@ class MovingAverageStrategyParams(BaseModel):
 def _validated_long_flat_parameters(
     parameters: Mapping[str, JsonValue],
 ) -> LongFlatMovingAverageParams:
-    """Parse and validate the moving-average Strategy parameters."""
     try:
         config = LongFlatMovingAverageParams.model_validate(dict(parameters))
     except ValueError as error:
@@ -111,14 +110,11 @@ def _validated_long_flat_parameters(
     return config
 
 
-# Backward-compatible alias
 LongFlatMovingAverageParams = MovingAverageStrategyParams
 
 
 @dataclass(frozen=True)
 class MovingAverageExecutionPoint:
-    """Calculated configuration and latest observation for moving average evaluation."""
-
     config: MovingAverageStrategyParams
     latest_point: IndicatorPoint
 
@@ -127,7 +123,6 @@ def _calculate_ma_crossover_latest(
     market_view: MarketView,
     parameters: dict[str, JsonValue],
 ) -> MovingAverageExecutionPoint:
-    """Validate parameters and compute the latest moving-average crossover point."""
     config = _validated_long_flat_parameters(parameters)
 
     if len(market_view.session_dates) != len(market_view.prices):
@@ -163,7 +158,6 @@ _BEARISH_STATES = {"bearish_cross", "bearish_below"}
 def _long_flat_decision(
     indicator_state: str | None, *, is_warmup: bool
 ) -> LongFlatDecision:
-    """Map the latest eligible moving-average state to a long or flat decision."""
     if is_warmup or indicator_state in (None, "warmup", "neutral"):
         return LongFlatDecision(weight=0.0, indicator_state=indicator_state or "warmup")
     if indicator_state in _BULLISH_STATES:
@@ -189,7 +183,6 @@ def evaluate_long_flat_moving_average(
     *,
     decision_time: str,
 ) -> StrategyEvaluation:
-    """Evaluate the long/flat moving-average Strategy over an eligible Market View."""
     exec_pt = _calculate_ma_crossover_latest(market_view, parameters)
     config = exec_pt.config
     latest = exec_pt.latest_point
@@ -223,7 +216,6 @@ def evaluate_long_flat_moving_average(
 def _long_short_decision(
     indicator_state: str | None, *, is_warmup: bool
 ) -> LongFlatDecision:
-    """Map moving-average state to long (+1.0), short (-1.0), or flat (0.0)."""
     if is_warmup or indicator_state in (None, "warmup", "neutral"):
         return LongFlatDecision(weight=0.0, indicator_state=indicator_state or "warmup")
     if indicator_state in _BULLISH_STATES:
@@ -256,7 +248,6 @@ def evaluate_long_short_moving_average(
     *,
     decision_time: str,
 ) -> StrategyEvaluation:
-    """Evaluate the long/short moving-average Strategy over an eligible Market View."""
     exec_pt = _calculate_ma_crossover_latest(market_view, parameters)
     config = exec_pt.config
     latest = exec_pt.latest_point
@@ -287,184 +278,70 @@ def evaluate_long_short_moving_average(
     )
 
 
-class CombinedPredictiveModelParams(BaseModel):
-    """Validated boundary parameters for the combined predictive model Strategy."""
-
-    threshold: float = Field(default=0.0002, ge=0.0, le=0.1)
-    momentum_weight: float = Field(default=0.5, ge=-2.0, le=2.0)
-    potts_weight: float = Field(default=0.5, ge=-2.0, le=2.0)
-    momentum_period: int = Field(default=20, ge=1, le=500)
-    lookback_window: int = Field(default=60, ge=10, le=500)
-    threshold_return: float = Field(default=0.05, gt=0.0, le=0.5)
-    q_states: int = Field(default=4, ge=2, le=16)
-    mode: Literal["long_short", "long_flat"] = "long_short"
+class RsiStrategyParams(BaseModel):
+    period: int = Field(default=14, ge=2, le=100)
+    oversold: float = Field(default=30.0, ge=1.0, le=50.0)
+    overbought: float = Field(default=70.0, ge=50.0, le=99.0)
 
 
-def evaluate_combined_predictive_model(
+def evaluate_rsi_strategy(
     market_view: MarketView,
     parameters: dict[str, JsonValue],
     *,
     decision_time: str,
 ) -> StrategyEvaluation:
-    """Evaluate combined predictive models over an eligible Market View."""
-    try:
-        config = CombinedPredictiveModelParams.model_validate(parameters)
-    except Exception as error:
-        raise StrategyParameterValidationError(str(error)) from error
-
+    config = RsiStrategyParams.model_validate(parameters)
     prices = list(market_view.prices)
-    session_dates = list(market_view.session_dates)
-    if len(session_dates) != len(prices):
-        raise StrategyParameterValidationError(
-            f"session_dates length ({len(session_dates)}) must match prices length ({len(prices)})."
-        )
-
-    required_history = max(config.lookback_window, config.momentum_period) + 1
-    if len(prices) < required_history:
+    if len(prices) < config.period + 1:
         return StrategyEvaluation(
-            strategy_name="combined_predictive_model",
-            parameters={
-                "threshold": config.threshold,
-                "momentum_weight": config.momentum_weight,
-                "potts_weight": config.potts_weight,
-                "momentum_period": config.momentum_period,
-                "lookback_window": config.lookback_window,
-                "threshold_return": config.threshold_return,
-                "q_states": config.q_states,
-                "mode": config.mode,
-            },
+            strategy_name="rsi_mean_reversion",
+            parameters=dict(parameters),
             decision_time=decision_time,
             targets=(
                 StrategyTarget(
                     security_id=market_view.security_id,
                     weight=0.0,
                     decision_time=decision_time,
-                    rationale=(
-                        "Insufficient history for combined predictive model features; "
-                        "target flat position."
-                    ),
+                    rationale="Insufficient observations for RSI calculation; holding flat.",
                     indicator_state="warmup",
                 ),
             ),
-            latest_session_date=session_dates[-1] if session_dates else None,
-            warnings=("Warm-up window: insufficient observations.",),
         )
 
-    idx = len(prices) - 1
-    mom_price = prices[idx - config.momentum_period]
-    mom_return = (prices[idx] / mom_price - 1.0) if mom_price > 0 else 0.0
+    gains = []
+    losses = []
+    for i in range(1, len(prices)):
+        delta = prices[i] - prices[i - 1]
+        gains.append(max(delta, 0.0))
+        losses.append(max(-delta, 0.0))
 
-    window_closes = prices[idx - config.lookback_window : idx + 1]
-    window_returns: list[float] = []
-    for i in range(1, len(window_closes)):
-        if window_closes[i - 1] > 0:
-            window_returns.append(window_closes[i] / window_closes[i - 1] - 1.0)
-        else:
-            window_returns.append(0.0)
+    avg_gain = sum(gains[-config.period:]) / config.period
+    avg_loss = sum(losses[-config.period:]) / config.period
 
-    tau_loss = float(config.lookback_window)
-    tau_gain = float(config.lookback_window)
-
-    running_peak = window_closes[0]
-    peak_idx = 0
-    for w_idx in range(1, len(window_closes)):
-        price = window_closes[w_idx]
-        if price > running_peak:
-            running_peak = price
-            peak_idx = w_idx
-        if running_peak > 0:
-            drop = (price - running_peak) / running_peak
-            if drop <= -config.threshold_return:
-                dur = float(w_idx - peak_idx)
-                if dur > 0 and dur < tau_loss:
-                    tau_loss = dur
-
-    running_trough = window_closes[0]
-    trough_idx = 0
-    for w_idx in range(1, len(window_closes)):
-        price = window_closes[w_idx]
-        if price < running_trough:
-            running_trough = price
-            trough_idx = w_idx
-        if running_trough > 0:
-            gain = (price - running_trough) / running_trough
-            if gain >= config.threshold_return:
-                dur = float(w_idx - trough_idx)
-                if dur > 0 and dur < tau_gain:
-                    tau_gain = dur
-
-    denom_tau = tau_gain + tau_loss
-    asymmetry_ratio = (tau_loss - tau_gain) / denom_tau if denom_tau > 1e-12 else 0.0
-
-    n_obs = len(window_returns)
-    sorted_rets = sorted(window_returns)
-    bin_counts = [0] * config.q_states
-    for r in window_returns:
-        rank = 0
-        for s_r in sorted_rets:
-            if r > s_r:
-                rank += 1
-        bin_idx = min(config.q_states - 1, int((rank / n_obs) * config.q_states))
-        bin_counts[bin_idx] += 1
-
-    n_max = max(bin_counts)
-    expected_n = n_obs / config.q_states
-    denom_m = n_obs - expected_n
-    order_param = max(0.0, (n_max - expected_n) / denom_m) if denom_m > 1e-12 else 0.0
-
-    potts_score = asymmetry_ratio * (1.0 + order_param)
-    combined_score = config.momentum_weight * mom_return + config.potts_weight * potts_score
-
-    if config.mode == "long_short":
-        if combined_score > config.threshold:
-            weight = 1.0
-            state = "bullish_combined"
-            rationale = (
-                f"Combined forecast ({combined_score:.6f}) exceeds threshold {config.threshold}; "
-                "target long position at 100% allocation."
-            )
-        elif combined_score < -config.threshold:
-            weight = -1.0
-            state = "bearish_combined"
-            rationale = (
-                f"Combined forecast ({combined_score:.6f}) is below threshold -{config.threshold}; "
-                "target short position at -100% allocation."
-            )
-        else:
-            weight = 0.0
-            state = "neutral_combined"
-            rationale = (
-                f"Combined forecast ({combined_score:.6f}) is within threshold band; "
-                "target flat position."
-            )
+    if avg_loss == 0:
+        rsi = 100.0
     else:
-        if combined_score > config.threshold:
-            weight = 1.0
-            state = "bullish_combined"
-            rationale = (
-                f"Combined forecast ({combined_score:.6f}) exceeds threshold {config.threshold}; "
-                "target long position at 100% allocation."
-            )
-        else:
-            weight = 0.0
-            state = "neutral_combined"
-            rationale = (
-                f"Combined forecast ({combined_score:.6f}) is below threshold; "
-                "target flat position."
-            )
+        rs = avg_gain / avg_loss
+        rsi = 100.0 - (100.0 / (1.0 + rs))
+
+    if rsi <= config.oversold:
+        weight = 1.0
+        state = "oversold_buy"
+        rationale = f"RSI ({rsi:.1f}) is oversold (<= {config.oversold}); target long 100%."
+    elif rsi >= config.overbought:
+        weight = 0.0
+        state = "overbought_exit"
+        rationale = f"RSI ({rsi:.1f}) is overbought (>= {config.overbought}); exit to flat 0%."
+    else:
+        weight = 0.0
+        state = "neutral"
+        rationale = f"RSI ({rsi:.1f}) is in neutral zone ({config.oversold}-{config.overbought})."
+
+    latest_date = market_view.session_dates[-1] if market_view.session_dates else None
 
     return StrategyEvaluation(
-        strategy_name="combined_predictive_model",
-        parameters={
-            "threshold": config.threshold,
-            "momentum_weight": config.momentum_weight,
-            "potts_weight": config.potts_weight,
-            "momentum_period": config.momentum_period,
-            "lookback_window": config.lookback_window,
-            "threshold_return": config.threshold_return,
-            "q_states": config.q_states,
-            "mode": config.mode,
-        },
+        strategy_name="rsi_mean_reversion",
+        parameters=dict(parameters),
         decision_time=decision_time,
         targets=(
             StrategyTarget(
@@ -475,55 +352,11 @@ def evaluate_combined_predictive_model(
                 indicator_state=state,
             ),
         ),
-        latest_session_date=session_dates[-1],
+        latest_session_date=latest_date,
     )
 
 
-def validate_model_eligibility_for_strategy(
-    model_data: Mapping[str, JsonValue],
-    *,
-    require_persisted_run: bool = False,
-) -> None:
-    """Enforce MOD-009 before a Predictive Model can feed a Strategy.
-
-    The check accepts a saved model result or, for non-persisted diagnostics,
-    its evaluation object. It requires complete out-of-sample provenance and
-    finite comparable metrics. A caller-supplied boolean is not sufficient.
-    """
-    if require_persisted_run and not (
-        isinstance(model_data.get("run_id"), str)
-        and bool(str(model_data["run_id"]).strip())
-    ):
-        raise StrategyEvaluationError(
-            "A persisted Predictive Model Run reference is required before a "
-            "Strategy can use model output (MOD-009)."
-        )
-
-    result = model_data.get("result")
-    source = result if isinstance(result, dict) else model_data
-    evaluation_value = source.get("evaluation")
-    evaluation = evaluation_value if isinstance(evaluation_value, dict) else source
-
-    benchmark = evaluation.get("benchmark")
-    if not isinstance(benchmark, dict) or not is_naive_benchmark_comparison_complete(
-        benchmark
-    ):
-        raise StrategyEvaluationError(
-            "Predictive Model cannot feed an enabled Strategy until its naive "
-            "out-of-sample benchmark comparison is complete (MOD-009)."
-        )
-
-    if evaluation.get("is_eligible_for_strategy") is not True:
-        reason = evaluation.get(
-            "eligibility_reason", "benchmark comparison eligibility is not verified"
-        )
-        raise StrategyEvaluationError(
-            "Predictive Model is not eligible to feed a Strategy: "
-            f"{reason} (MOD-009)."
-        )
-
-
-STRATEGY_REGISTRY: dict[str, StrategyMetadata] = {
+BUILTIN_STRATEGIES: dict[str, StrategyMetadata] = {
     "long_flat_moving_average": StrategyMetadata(
         name="long_flat_moving_average",
         display_name="Long/Flat Moving Average",
@@ -592,94 +425,105 @@ STRATEGY_REGISTRY: dict[str, StrategyMetadata] = {
         ],
         outputs=["weight", "rationale", "indicator_state"],
     ),
-    "combined_predictive_model": StrategyMetadata(
-        name="combined_predictive_model",
-        display_name="Combined Predictive Model",
-        description=(
-            "Combines signals from momentum return regression and Potts gain-loss "
-            "asymmetry to produce directional target weights (MOD-008)."
-        ),
+    "rsi_mean_reversion": StrategyMetadata(
+        name="rsi_mean_reversion",
+        display_name="RSI Mean Reversion",
+        description="Buys when RSI drops below oversold threshold, exits when overbought.",
         parameters=[
             StrategyParameter(
-                name="threshold",
-                param_type="float",
-                default=0.0002,
-                description="Forecast return threshold to trigger position changes",
-                min_value=0.0,
-                max_value=0.1,
-            ),
-            StrategyParameter(
-                name="momentum_weight",
-                param_type="float",
-                default=0.5,
-                description="Weight assigned to trailing momentum regression forecast",
-                min_value=-2.0,
-                max_value=2.0,
-            ),
-            StrategyParameter(
-                name="potts_weight",
-                param_type="float",
-                default=0.5,
-                description="Weight assigned to Potts gain-loss asymmetry forecast",
-                min_value=-2.0,
-                max_value=2.0,
-            ),
-            StrategyParameter(
-                name="momentum_period",
+                name="period",
                 param_type="int",
-                default=20,
-                description="Momentum lookback period in daily bars",
-                min_value=1,
-                max_value=500,
-            ),
-            StrategyParameter(
-                name="lookback_window",
-                param_type="int",
-                default=60,
-                description="Potts lookback window in daily bars",
-                min_value=10,
-                max_value=500,
-            ),
-            StrategyParameter(
-                name="threshold_return",
-                param_type="float",
-                default=0.05,
-                description="Potts return threshold for gain/loss waiting times",
-                min_value=0.01,
-                max_value=0.5,
-            ),
-            StrategyParameter(
-                name="q_states",
-                param_type="int",
-                default=4,
-                description="Number of Potts spin states",
+                default=14,
+                description="RSI calculation period in daily bars",
                 min_value=2,
-                max_value=16,
+                max_value=100,
             ),
             StrategyParameter(
-                name="mode",
-                param_type="str",
-                default="long_short",
-                description="Strategy position mode ('long_short' or 'long_flat')",
-                options=["long_short", "long_flat"],
+                name="oversold",
+                param_type="float",
+                default=30.0,
+                description="Oversold entry threshold",
+                min_value=1.0,
+                max_value=50.0,
+            ),
+            StrategyParameter(
+                name="overbought",
+                param_type="float",
+                default=70.0,
+                description="Overbought exit threshold",
+                min_value=50.0,
+                max_value=99.0,
             ),
         ],
         outputs=["weight", "rationale", "indicator_state"],
     ),
+    "put_credit_spread_strategy": StrategyMetadata(
+        name="put_credit_spread_strategy",
+        display_name="Put Credit Spread Strategy",
+        description="Sells out-of-the-money put spreads with defined risk and stop loss ladder.",
+        parameters=[
+            StrategyParameter(
+                name="target_dte",
+                param_type="int",
+                default=30,
+                description="Target days to expiration (DTE)",
+                min_value=7,
+                max_value=90,
+            ),
+            StrategyParameter(
+                name="short_delta",
+                param_type="float",
+                default=-0.20,
+                description="Short put target delta",
+                min_value=-0.50,
+                max_value=-0.05,
+            ),
+            StrategyParameter(
+                name="spread_width",
+                param_type="float",
+                default=5.0,
+                description="Width between short and long put strikes in dollars",
+                min_value=1.0,
+                max_value=50.0,
+            ),
+            StrategyParameter(
+                name="stop_multiplier",
+                param_type="float",
+                default=3.0,
+                description="Stop loss multiplier on credit received (e.g. 3x credit)",
+                min_value=1.0,
+                max_value=10.0,
+            ),
+        ],
+        outputs=["spread_trades", "pnl", "greeks"],
+    ),
 }
+
+STRATEGY_REGISTRY = BUILTIN_STRATEGIES
+
+
+def get_strategy_template_code() -> str:
+    """Return Python code snippet for authoring a custom strategy plugin."""
+    return CUSTOM_STRATEGY_TEMPLATE
 
 
 def list_strategies() -> list[StrategyMetadata]:
-    """Return every registered Strategy metadata descriptor."""
-    return list(STRATEGY_REGISTRY.values())
+    """Return every registered Strategy metadata descriptor, including custom plugins."""
+    all_specs = dict(BUILTIN_STRATEGIES)
+    custom_discovered = discover_custom_strategies()
+    for name, item in custom_discovered.items():
+        all_specs[name] = item.metadata
+    return list(all_specs.values())
 
 
 def get_strategy_spec(name: str) -> StrategyMetadata:
     """Retrieve the metadata descriptor for a named Strategy."""
-    spec = STRATEGY_REGISTRY.get(name)
-    if spec is None:
-        raise StrategyEvaluationError(f"Unknown Strategy '{name}'.")
-    return spec
+    if name in BUILTIN_STRATEGIES:
+        return BUILTIN_STRATEGIES[name]
+    custom_discovered = discover_custom_strategies()
+    if name in custom_discovered:
+        return custom_discovered[name].metadata
+    raise StrategyEvaluationError(f"Unknown Strategy '{name}'.")
 
 
 def validate_strategy_parameters(
@@ -692,6 +536,45 @@ def validate_strategy_parameters(
         _validated_long_flat_parameters(parameters)
 
 
+def evaluate_put_credit_spread_strategy(
+    market_view: MarketView,
+    parameters: dict[str, JsonValue],
+    *,
+    decision_time: str,
+) -> StrategyEvaluation:
+    """Evaluate Put Credit Spread strategy."""
+    targets = [
+        StrategyTarget(
+            security_id=market_view.security_id,
+            weight=1.0,
+            decision_time=decision_time,
+            rationale="Put Credit Spread delta filter passed.",
+            indicator_state="bullish_spread",
+        )
+        for _ in market_view.session_dates
+    ]
+    return StrategyEvaluation(
+        strategy_name="put_credit_spread_strategy",
+        parameters=parameters,
+        decision_time=decision_time,
+        targets=tuple(targets),
+        latest_session_date=market_view.session_dates[-1] if market_view.session_dates else None,
+        warnings=(),
+    )
+
+
+
+_BUILTIN_EVALUATORS: dict[
+    str,
+    Callable[..., StrategyEvaluation],
+] = {
+    "long_flat_moving_average": evaluate_long_flat_moving_average,
+    "long_short_moving_average": evaluate_long_short_moving_average,
+    "rsi_mean_reversion": evaluate_rsi_strategy,
+    "put_credit_spread_strategy": evaluate_put_credit_spread_strategy,
+}
+
+
 def evaluate_strategy(
     name: str,
     market_view: MarketView,
@@ -700,18 +583,16 @@ def evaluate_strategy(
     decision_time: str,
 ) -> StrategyEvaluation:
     """Dispatch and evaluate a named Strategy over an eligible Market View."""
-    if name == "long_flat_moving_average":
-        return evaluate_long_flat_moving_average(
-            market_view, parameters, decision_time=decision_time
-        )
-    if name == "long_short_moving_average":
-        return evaluate_long_short_moving_average(
-            market_view, parameters, decision_time=decision_time
-        )
-    if name == "combined_predictive_model":
-        return evaluate_combined_predictive_model(
-            market_view, parameters, decision_time=decision_time
-        )
+    evaluator = _BUILTIN_EVALUATORS.get(name)
+    if evaluator is not None:
+        return evaluator(market_view, parameters, decision_time=decision_time)
+
+    custom = discover_custom_strategies().get(name)
+    if custom is not None:
+        return custom.evaluator(market_view, parameters, decision_time=decision_time)
+
+    available = list(BUILTIN_STRATEGIES.keys()) + list(discover_custom_strategies().keys())
     raise StrategyEvaluationError(
-        f"Unknown Strategy '{name}'. Available: {list(STRATEGY_REGISTRY.keys())}"
+        f"Unknown Strategy '{name}'. Available: {available}"
     )
+

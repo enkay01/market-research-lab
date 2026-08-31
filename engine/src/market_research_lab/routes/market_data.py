@@ -36,12 +36,12 @@ from ..projects import ProjectNotFoundError, ProjectStore
 from ..providers import (
     AlpacaDownloadSpec,
     JsonFetcher,
+    MassiveDownloadSpec,
     ProviderCredentials,
     ProviderDownloadError,
     SecEdgarDownloadSpec,
     TiingoDownloadSpec,
 )
-from .alerts import signal_response
 from .deps import (
     SecurityNotFoundError,
     get_market_store,
@@ -236,8 +236,35 @@ class SecEdgarDownloadRequest(ProviderDownloadRequestBase):
         )
 
 
+class MassiveDownloadRequest(ProviderDownloadRequestBase):
+    provider: Literal["massive"]
+    symbol: str = Field(min_length=1, max_length=16)
+    start_date: date
+    end_date: date
+    data_type: Literal["stocks_daily", "stocks_minute", "options"] = "stocks_daily"
+
+    @field_validator("symbol")
+    @classmethod
+    def normalise_symbol(cls, value: str) -> str:
+        cleaned = value.strip().upper()
+        if not cleaned:
+            raise ValueError("A Massive symbol is required.")
+        return cleaned
+
+    def to_spec(self) -> MassiveDownloadSpec:
+        return MassiveDownloadSpec(
+            symbol=self.symbol,
+            start_date=self.start_date,
+            end_date=self.end_date,
+            data_type=self.data_type,
+        )
+
+
 ProviderDownloadRequest = Annotated[
-    TiingoDownloadRequest | SecEdgarDownloadRequest | AlpacaDownloadRequest,
+    TiingoDownloadRequest
+    | SecEdgarDownloadRequest
+    | AlpacaDownloadRequest
+    | MassiveDownloadRequest,
     Field(discriminator="provider"),
 ]
 
@@ -312,16 +339,7 @@ def get_security_details(
     alerts: list[dict[str, JsonValue]] = []
     if project_id:
         with contextlib.suppress(ProjectNotFoundError, OSError, KeyError):
-            valuations = store.list_valuations_for_security(
-                str(project_id), summary.security.security_id
-            )
             runs = store.list_runs_for_security(str(project_id), summary.security.security_id)
-            alerts = [
-                signal_response(s).model_dump(mode="json")
-                for s in store.list_signals_for_security(
-                    str(project_id), summary.security.security_id
-                )
-            ]
 
     return SecuritySummaryResponse(
         security=SecurityResponse(

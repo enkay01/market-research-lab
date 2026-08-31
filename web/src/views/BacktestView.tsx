@@ -33,6 +33,7 @@ import {
   type EquityPoint,
   type Project,
   type Security,
+  type StrategyMetadata,
 } from "../api/client";
 import { OptionsBacktestView } from "./OptionsBacktestView";
 
@@ -286,7 +287,7 @@ export function BacktestView({ project }: BacktestViewProps) {
   const [datasets, setDatasets] = useState<CoverageResponse[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
   const [, setSecurities] = useState<Security[]>([]);
-  const [universeInput, setUniverseInput] = useState<string>("AAPL, MSFT");
+  const [universeInput, setUniverseInput] = useState<string>("");
   const [benchmarkInput, setBenchmarkInput] = useState<string>("SPY");
 
   // Strategy & Execution Specification Inputs
@@ -310,6 +311,7 @@ export function BacktestView({ project }: BacktestViewProps) {
   const [leverageMode, setLeverageMode] = useState<"reject" | "constrain">("reject");
 
   // Execution & Result state
+  const [availableStrategies, setAvailableStrategies] = useState<StrategyMetadata[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [isLoadingDatasets, setIsLoadingDatasets] = useState(true);
   const [currentResult, setCurrentResult] = useState<BacktestResult | null>(null);
@@ -323,20 +325,26 @@ export function BacktestView({ project }: BacktestViewProps) {
     async function initData() {
       setIsLoadingDatasets(true);
       try {
-        const [dsList, secList] = await Promise.all([
+        const [dsList, secList, stratList] = await Promise.all([
           api.listDatasets(),
           api.listSecurities({ limit: 200 }),
+          api.listStrategies(),
         ]);
         const dailyBarDatasets = dsList.filter((d: any) => d.dataset_type !== "corporate_actions");
         setDatasets(dailyBarDatasets);
         setSecurities(secList);
+        setAvailableStrategies(stratList);
+        if (stratList.length > 0) {
+          setStrategyName(stratList[0].name);
+          setStrategyRevision(`${stratList[0].name}:v1`);
+        }
         if (dailyBarDatasets.length > 0) {
           const validDs = dailyBarDatasets.find((d: any) => (d.row_count ?? d.total_bars ?? 0) > 0) || dailyBarDatasets[0];
           setSelectedDatasetId(validDs.id);
-        }
-        if (secList.length > 0) {
-          const syms = secList.slice(0, 2).map((s) => s.symbol);
-          setUniverseInput(syms.join(", "));
+          if (validDs.coverage_start && validDs.coverage_end) {
+            setStartDate(validDs.coverage_start);
+            setEndDate(validDs.coverage_end);
+          }
         }
       } catch (err: unknown) {
         setMessage(err instanceof Error ? err.message : "Failed to load datasets.");
@@ -377,18 +385,24 @@ export function BacktestView({ project }: BacktestViewProps) {
   // When selected dataset changes, inspect dates
   const handleDatasetChange = async (dsId: string) => {
     setSelectedDatasetId(dsId);
-    try {
-      const preview = await api.getPreview(dsId);
-      if (preview && preview.length > 0) {
-        const first = preview[0];
-        const last = preview[preview.length - 1];
-        if (first?.date && last?.date) {
-          setStartDate(String(first.date));
-          setEndDate(String(last.date));
+    const match = datasets.find((d: any) => d.id === dsId);
+    if (match?.coverage_start && match?.coverage_end) {
+      setStartDate(match.coverage_start);
+      setEndDate(match.coverage_end);
+    } else {
+      try {
+        const preview = await api.getPreview(dsId);
+        if (preview && preview.length > 0) {
+          const first = preview[0];
+          const last = preview[preview.length - 1];
+          if (first?.date && last?.date) {
+            setStartDate(String(first.date));
+            setEndDate(String(last.date));
+          }
         }
+      } catch {
+        // Keep defaults
       }
-    } catch {
-      // Keep defaults
     }
   };
 
@@ -412,11 +426,6 @@ export function BacktestView({ project }: BacktestViewProps) {
       setBannerType("warning");
       return;
     }
-    if (symbolsList.length === 0) {
-      setMessage("Specify at least one ticker symbol for the Universe.");
-      setBannerType("warning");
-      return;
-    }
 
     setIsRunning(true);
     setMessage(null);
@@ -430,7 +439,7 @@ export function BacktestView({ project }: BacktestViewProps) {
         strategy_name: strategyName,
         strategy_revision: strategyRevision,
         dataset_version_id: selectedDatasetId,
-        symbols: symbolsList,
+        symbols: symbolsList.length > 0 ? symbolsList : undefined,
         benchmark_symbol: benchmarkInput.trim() ? benchmarkInput.trim().toUpperCase() : undefined,
         start_date: startDate,
         end_date: endDate,
@@ -615,9 +624,10 @@ export function BacktestView({ project }: BacktestViewProps) {
         ) : (
           <VStack gap={4}>
             {message && (
-              <Banner status={bannerType === "warning" ? "warning" : "info"}>
-                <Text>{message}</Text>
-              </Banner>
+              <Banner
+                status={bannerType === "warning" ? "warning" : "info"}
+                title={message}
+              />
             )}
 
             {/* Simulation Parameters & Execution Setup */}
@@ -639,10 +649,10 @@ export function BacktestView({ project }: BacktestViewProps) {
                         setStrategyName(val);
                         setStrategyRevision(`${val}:v1`);
                       }}
-                      options={[
-                        { value: "long_flat_moving_average", label: "Long/Flat Moving Average" },
-                        { value: "long_short_moving_average", label: "Long/Short Moving Average" },
-                      ]}
+                      options={availableStrategies.map((s) => ({
+                        value: s.name,
+                        label: s.display_name,
+                      }))}
                     />
                     <Selector
                       label="Dataset Version"
@@ -656,9 +666,11 @@ export function BacktestView({ project }: BacktestViewProps) {
                       hasSearch
                     />
                     <TextInput
-                      label="Universe (Symbols)"
+                      label="Universe / Symbol Filter (Optional)"
                       value={universeInput}
                       onChange={(v) => setUniverseInput(String(v ?? ""))}
+                      placeholder="All assets in dataset (leave empty)"
+                      description="Leave empty to run strategy across all assets in dataset."
                     />
                     <TextInput
                       label="Benchmark (Optional)"

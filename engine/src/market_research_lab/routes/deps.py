@@ -12,7 +12,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from ..alerts import InvalidStrategyDefinitionError
 from ..backtest import BacktestError, BacktestParameterError
 from ..configuration import load_provider_credentials
 from ..indicators import IndicatorCalculationError, ParameterValidationError
@@ -20,16 +19,11 @@ from ..json_types import JsonValue
 from ..logging_setup import run_log_context
 from ..market_data import (
     DatasetVersionNotFoundError,
-    InadequateTemporalProvenanceError,
+    InsufficientTimestampError,
+    InvalidSecurityIdError,
     MarketDataStore,
 )
 from ..option_backtest import OptionBacktestError
-from ..predictive_models import (
-    PredictiveModelCalculationError,
-    PredictiveModelDataError,
-    PredictiveModelNotFoundError,
-    PredictiveModelParameterError,
-)
 from ..projects import (
     ProjectNotFoundError,
     ProjectStore,
@@ -38,16 +32,20 @@ from ..projects import (
     RunNotFoundError,
 )
 from ..providers import JsonFetcher, ProviderCredentials
-from ..research import (
-    InvalidSecurityIdError,
-    SecurityNotWatchedError,
-)
 from ..strategies import (
     StrategyEvaluationError,
     StrategyParameterValidationError,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class InvalidStrategyDefinitionError(ValueError):
+    """Raised when an enabled Strategy definition cannot be validated."""
+
+
+class SecurityNotWatchedError(Exception):
+    """Raised when an operation requires a watched security that is not in the project watchlist."""
 
 
 class ErrorResponse(BaseModel):
@@ -58,79 +56,58 @@ class ErrorResponse(BaseModel):
 
 
 class SecurityNotFoundError(Exception):
-    """Raised when a security is not found in the local catalogue."""
+    """Raised when a security cannot be resolved."""
 
     def __init__(self, identifier: str) -> None:
-        super().__init__(f"Security '{identifier}' was not found in the local catalogue.")
+        super().__init__(f"Security '{identifier}' was not found.")
         self.identifier = identifier
 
 
 class DatasetVersionInUseError(Exception):
-    """Raised when a Dataset Version is still referenced by a Project Run."""
+    """Raised when a dataset version cannot be deleted because runs depend on it."""
 
-    def __init__(self, dataset_version_id: str, references: list[dict[str, JsonValue]]) -> None:
-        self.dataset_version_id = dataset_version_id
-        self.references = references
-        reference_labels = ", ".join(
-            f"{reference.get('project_name', 'Project')} / Run {reference.get('run_id', 'unknown')}"
-            for reference in references
-        )
+    def __init__(
+        self, version_id: str, referencing_runs: list[dict[str, JsonValue] | str]
+    ) -> None:
+        formatted = [
+            r
+            if isinstance(r, str)
+            else f"{r.get('project_name', 'Project')} / Run {r.get('run_id', 'unknown')}"
+            for r in referencing_runs
+        ]
         super().__init__(
-            f"Dataset Version '{dataset_version_id}' is referenced by "
-            f"{len(references)} Project Run(s): {reference_labels}. "
-            "Delete those Runs first."
+            f"Dataset Version '{version_id}' cannot be deleted because it is referenced by "
+            f"Project Runs: {', '.join(formatted)}."
         )
+        self.version_id = version_id
+        self.referencing_runs = referencing_runs
+        self.references = referencing_runs
 
 
-def _repository_root() -> Path:
-    return Path(__file__).resolve().parents[4]
+
+def get_project_store(request: Request) -> ProjectStore:
+    return request.app.state.project_store
+
+
+def get_market_store(request: Request) -> MarketDataStore:
+    return request.app.state.market_store
+
+
+def get_provider_credentials(request: Request) -> ProviderCredentials:
+    return getattr(
+        request.app.state, "provider_credentials", None
+    ) or load_provider_credentials()
+
+
+def get_provider_fetch_json(request: Request) -> JsonFetcher | None:
+    return getattr(request.app.state, "provider_fetch_json", None)
 
 
 def non_blank_name(value: str) -> str:
     cleaned = value.strip()
     if not cleaned:
-        raise ValueError("Name cannot be empty or whitespace.")
+        raise ValueError("Name cannot be blank.")
     return cleaned
-
-
-def get_project_store(request: Request) -> ProjectStore:
-    """Resolve the ProjectStore from app state or default workspace."""
-    if hasattr(request.app.state, "project_store") and request.app.state.project_store is not None:
-        return request.app.state.project_store
-    return ProjectStore(_repository_root() / "workspace")
-
-
-def get_market_store(request: Request) -> MarketDataStore:
-    """Resolve the MarketDataStore from app state or default workspace."""
-    if hasattr(request.app.state, "market_store") and request.app.state.market_store is not None:
-        return request.app.state.market_store
-    return MarketDataStore(_repository_root() / "workspace")
-
-
-def get_provider_credentials(request: Request) -> ProviderCredentials:
-    """Resolve provider credentials from app state or env files."""
-    if (
-        hasattr(request.app.state, "provider_credentials")
-        and request.app.state.provider_credentials is not None
-    ):
-        return request.app.state.provider_credentials
-    workspace_root = _repository_root() / "workspace"
-    repository_root = _repository_root()
-    env_candidates = [
-        workspace_root / ".env.local",
-        workspace_root / ".env",
-        repository_root / ".env.local",
-        repository_root / ".env",
-    ]
-    env_file = next((p for p in env_candidates if p.exists()), env_candidates[0])
-    return load_provider_credentials(env_file)
-
-
-def get_provider_fetch_json(request: Request) -> JsonFetcher | None:
-    """Resolve custom JSON fetcher from app state if configured."""
-    if hasattr(request.app.state, "provider_fetch_json"):
-        return request.app.state.provider_fetch_json
-    return None
 
 
 def log_run_event(project_id: UUID | str, run_id: str, message: str) -> None:
@@ -152,15 +129,18 @@ def log_failed_run(
         )
 
 
+
 def register_domain_exception_handlers(app: FastAPI) -> None:
-    """Register domain-specific exception handlers on a FastAPI application instance."""
+    """Register uniform RFC 7807-style JSON error handlers on a FastAPI application."""
 
     @app.exception_handler(ProjectNotFoundError)
     async def project_not_found(_: Request, error: ProjectNotFoundError) -> JSONResponse:
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
             content=ErrorResponse(
-                code="project_not_found", message="The requested Project does not exist."
+                code="project_not_found",
+                message="The requested Project does not exist.",
+                details={"error": str(error)},
             ).model_dump(),
         )
 
@@ -170,7 +150,7 @@ def register_domain_exception_handlers(app: FastAPI) -> None:
             status_code=status.HTTP_404_NOT_FOUND,
             content=ErrorResponse(
                 code="run_not_found",
-                message=f"The requested Run '{error}' does not exist.",
+                message=str(error),
                 details={},
             ).model_dump(),
         )
@@ -182,18 +162,25 @@ def register_domain_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
             content=ErrorResponse(
-                code="dataset_version_not_found", message=str(error), details={}
+                code="dataset_version_not_found",
+                message=str(error),
+                details={},
             ).model_dump(),
         )
 
     @app.exception_handler(DatasetVersionInUseError)
-    async def dataset_version_in_use(_: Request, error: DatasetVersionInUseError) -> JSONResponse:
+    async def dataset_version_in_use(
+        _: Request, error: DatasetVersionInUseError
+    ) -> JSONResponse:
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
             content=ErrorResponse(
                 code="dataset_version_in_use",
                 message=str(error),
-                details={"references": error.references},
+                details={
+                    "references": error.references,
+                    "referencing_runs": error.referencing_runs,
+                },
             ).model_dump(),
         )
 
@@ -208,9 +195,9 @@ def register_domain_exception_handlers(app: FastAPI) -> None:
             ).model_dump(),
         )
 
-    @app.exception_handler(InadequateTemporalProvenanceError)
+    @app.exception_handler(InsufficientTimestampError)
     async def inadequate_temporal_provenance(
-        _: Request, error: InadequateTemporalProvenanceError
+        _: Request, error: InsufficientTimestampError
     ) -> JSONResponse:
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -367,49 +354,5 @@ def register_domain_exception_handlers(app: FastAPI) -> None:
                 code="backtest_error",
                 message=str(error),
                 details={},
-            ).model_dump(),
-        )
-
-    @app.exception_handler(PredictiveModelNotFoundError)
-    async def predictive_model_not_found(
-        _: Request, error: PredictiveModelNotFoundError
-    ) -> JSONResponse:
-        return JSONResponse(
-            status_code=status.HTTP_404_NOT_FOUND,
-            content=ErrorResponse(
-                code="predictive_model_not_found", message=str(error), details={}
-            ).model_dump(),
-        )
-
-    @app.exception_handler(PredictiveModelParameterError)
-    async def predictive_model_parameter_error(
-        _: Request, error: PredictiveModelParameterError
-    ) -> JSONResponse:
-        return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            content=ErrorResponse(
-                code="parameter_validation_error", message=str(error), details={}
-            ).model_dump(),
-        )
-
-    @app.exception_handler(PredictiveModelDataError)
-    async def predictive_model_data_error(
-        _: Request, error: PredictiveModelDataError
-    ) -> JSONResponse:
-        return JSONResponse(
-            status_code=status.HTTP_404_NOT_FOUND,
-            content=ErrorResponse(
-                code="predictive_model_data_not_found", message=str(error), details={}
-            ).model_dump(),
-        )
-
-    @app.exception_handler(PredictiveModelCalculationError)
-    async def predictive_model_calculation_error(
-        _: Request, error: PredictiveModelCalculationError
-    ) -> JSONResponse:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content=ErrorResponse(
-                code="predictive_model_calculation_error", message=str(error), details={}
             ).model_dump(),
         )

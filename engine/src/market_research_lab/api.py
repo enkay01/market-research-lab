@@ -28,17 +28,14 @@ from .projects import ProjectStore
 from .providers import JsonFetcher
 from .routes import (
     ErrorResponse,
-    alerts_router,
     backtests_router,
     cleanup_router,
     indicators_router,
     market_data_router,
     options_router,
-    predictive_models_router,
     projects_router,
     register_domain_exception_handlers,
     strategies_router,
-    valuations_router,
 )
 from .routes.backtests import ExecutionModelAssumptionsRequest
 from .routes.deps import DatasetVersionInUseError, SecurityNotFoundError
@@ -130,13 +127,10 @@ def create_app(
     # Mount domain sub-routers
     app.include_router(projects_router)
     app.include_router(market_data_router)
-    app.include_router(valuations_router)
     app.include_router(indicators_router)
     app.include_router(strategies_router)
-    app.include_router(predictive_models_router)
     app.include_router(backtests_router)
     app.include_router(options_router)
-    app.include_router(alerts_router)
     app.include_router(cleanup_router)
 
     built_interface = static_dir or repository_root / "web" / "dist"

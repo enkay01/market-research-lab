@@ -18,7 +18,6 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field, field_validator
 
-from ..alerts import enable_strategy_revision as enable_strategy_revision_domain
 from ..json_types import JsonValue
 from ..market_data import MarketDataStore
 from ..projects import ProjectStore
@@ -31,12 +30,43 @@ from ..strategies import (
     StrategyTarget,
     evaluate_strategy,
     get_strategy_spec,
+    get_strategy_template_code,
     list_strategies,
-    validate_model_eligibility_for_strategy,
 )
 from .deps import get_market_store, get_project_store, non_blank_name
 
+
+def enable_strategy_revision_domain(
+    store: ProjectStore,
+    project_id: str,
+    *,
+    name: str,
+    revision: str,
+) -> dict[str, JsonValue]:
+    store.read_revision(
+        project_id,
+        kind="strategy",
+        name=name,
+        revision=revision,
+    )
+    return store.enable_strategy(project_id, name=name, revision=revision)
+
+
 router = APIRouter()
+
+
+class StrategyTemplateResponse(BaseModel):
+    code: str
+
+
+@router.get(
+    "/api/strategies-meta/template",
+    response_model=StrategyTemplateResponse,
+    tags=["strategies"],
+)
+def get_custom_strategy_template() -> StrategyTemplateResponse:
+    return StrategyTemplateResponse(code=get_strategy_template_code())
+
 
 
 class StrategyParameterResponse(BaseModel):

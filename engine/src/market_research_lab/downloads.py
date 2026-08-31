@@ -8,11 +8,13 @@ from .market_data import DatasetVersion, IngestionRequest, MarketDataStore
 from .providers import (
     AlpacaDownloadSpec,
     JsonFetcher,
+    MassiveDownloadSpec,
     ProviderCredentials,
     ProviderDownloadError,
     SecEdgarDownloadSpec,
     TiingoDownloadSpec,
     download_alpaca,
+    download_massive,
     download_sec_edgar,
     download_tiingo,
 )
@@ -20,7 +22,7 @@ from .providers import (
 
 def download_provider(
     store: MarketDataStore,
-    request: TiingoDownloadSpec | SecEdgarDownloadSpec | AlpacaDownloadSpec,
+    request: TiingoDownloadSpec | SecEdgarDownloadSpec | AlpacaDownloadSpec | MassiveDownloadSpec,
     *,
     credentials: ProviderCredentials,
     fetch_json: JsonFetcher | None = None,
@@ -28,7 +30,16 @@ def download_provider(
     """Fetch validated provider data before creating any Dataset Version."""
     retrieved_at = datetime.now(UTC).isoformat()
 
-    if isinstance(request, AlpacaDownloadSpec):
+    if isinstance(request, MassiveDownloadSpec):
+        downloaded = download_massive(
+            request,
+            credentials=credentials.massive,
+            retrieval_time=retrieved_at,
+            fetch_json=fetch_json,
+        )
+        record_groups = [downloaded.daily_bars, downloaded.options_records]
+        source = "massive"
+    elif isinstance(request, AlpacaDownloadSpec):
         downloaded = download_alpaca(
             request,
             credentials=credentials.alpaca,

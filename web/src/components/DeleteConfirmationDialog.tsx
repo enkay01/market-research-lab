@@ -40,9 +40,7 @@ export function DeleteConfirmationDialog({
       <DialogHeader title={title} subtitle={description} />
       <VStack gap={4}>
         {error && (
-          <Banner status="error" title="Delete failed">
-            {error}
-          </Banner>
+          <Banner status="error" title="Delete failed" description={error} />
         )}
         <HStack justify="end" gap={2}>
           <Button

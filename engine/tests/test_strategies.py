@@ -150,95 +150,47 @@ def test_evaluate_strategy_unknown_name_raises():
         )
 
 
-def test_predictive_model_cannot_feed_strategy_without_completed_benchmark_mod009():
-    from market_research_lab.strategies import validate_model_eligibility_for_strategy
+def test_rsi_mean_reversion_strategy():
+    from market_research_lab.strategies import MarketView, evaluate_strategy, get_strategy_spec
 
-    with pytest.raises(StrategyEvaluationError, match="MOD-009"):
-        validate_model_eligibility_for_strategy({"evaluation": {"mode": "holdout"}})
+    spec = get_strategy_spec("rsi_mean_reversion")
+    assert spec is not None
+    assert spec.name == "rsi_mean_reversion"
 
-    with pytest.raises(StrategyEvaluationError, match="MOD-009"):
-        validate_model_eligibility_for_strategy(
-            {
-                "evaluation": {
-                    "benchmark": {
-                        "completed": True,
-                        "out_of_sample_comparison": {
-                            "comparison_complete": False,
-                            "same_eligible_periods": True,
-                        },
-                    },
-                    "is_eligible_for_strategy": True,
-                }
-            }
-        )
+    prices = (100.0, 95.0, 90.0, 85.0, 80.0, 75.0, 70.0, 65.0, 60.0, 55.0, 50.0, 45.0, 40.0, 35.0, 30.0, 25.0)
+    dates = tuple(f"2024-01-{i:02d}" for i in range(1, len(prices) + 1))
+    market_view = MarketView(security_id="AAPL", session_dates=dates, prices=prices)
 
-    validate_model_eligibility_for_strategy(
-        {
-            "evaluation": {
-                "benchmark": {
-                    "name": "zero_return",
-                    "completed": True,
-                    "period_metrics": {
-                        "test": {"mae": 1.0, "rmse": 1.0, "r2": 0.0}
-                    },
-                    "out_of_sample_comparison": {
-                        "benchmark_name": "zero_return",
-                        "period": "test",
-                        "sample_scope": "out_of_sample",
-                        "observations": 1,
-                        "comparison_complete": True,
-                        "same_eligible_periods": True,
-                        "status": "evaluated",
-                        "model_rmse": 1.0,
-                        "benchmark_rmse": 1.0,
-                        "rmse_improvement": 0.0,
-                        "model_mae": 1.0,
-                        "benchmark_mae": 1.0,
-                        "mae_improvement": 0.0,
-                        "model_r2": 0.0,
-                        "benchmark_r2": 0.0,
-                    },
-                },
-                "is_eligible_for_strategy": True,
-            }
-        }
+    evaluation = evaluate_strategy(
+        "rsi_mean_reversion",
+        market_view=market_view,
+        parameters={"period": 14, "oversold": 30.0, "overbought": 70.0},
+        decision_time="2024-01-16T16:00:00Z",
     )
+    assert len(evaluation.targets) == 1
+    assert evaluation.targets[0].weight == 1.0
+    assert evaluation.targets[0].indicator_state == "oversold_buy"
 
 
-def test_saved_model_result_is_unwrapped_before_strategy_guard():
-    from market_research_lab.strategies import validate_model_eligibility_for_strategy
 
-    result = validate_model_eligibility_for_strategy(
-        {
-            "result": {
-                "evaluation": {
-                    "benchmark": {
-                        "name": "zero_return",
-                        "completed": True,
-                        "period_metrics": {
-                            "test": {"mae": 1.0, "rmse": 1.0, "r2": 0.0}
-                        },
-                        "out_of_sample_comparison": {
-                            "benchmark_name": "zero_return",
-                            "period": "test",
-                            "sample_scope": "out_of_sample",
-                            "observations": 1,
-                            "comparison_complete": True,
-                            "same_eligible_periods": True,
-                            "status": "evaluated",
-                            "model_rmse": 1.0,
-                            "benchmark_rmse": 1.0,
-                            "rmse_improvement": 0.0,
-                            "model_mae": 1.0,
-                            "benchmark_mae": 1.0,
-                            "mae_improvement": 0.0,
-                            "model_r2": 0.0,
-                            "benchmark_r2": 0.0,
-                        },
-                    },
-                    "is_eligible_for_strategy": True,
-                }
-            }
-        }
+def test_put_credit_spread_strategy_evaluation():
+    from market_research_lab.strategies import MarketView, evaluate_strategy, get_strategy_spec
+
+    spec = get_strategy_spec("put_credit_spread_strategy")
+    assert spec is not None
+    assert spec.name == "put_credit_spread_strategy"
+
+    prices = (100.0, 102.0, 105.0, 103.0, 107.0, 110.0, 112.0)
+    dates = tuple(f"2024-01-{i:02d}" for i in range(1, len(prices) + 1))
+    market_view = MarketView(security_id="SPY", session_dates=dates, prices=prices)
+
+    evaluation = evaluate_strategy(
+        "put_credit_spread_strategy",
+        market_view=market_view,
+        parameters={"short_delta": 0.20, "spread_width": 5.0, "target_dte": 30},
+        decision_time="2024-01-07T16:00:00Z",
     )
-    assert result is None
+    assert len(evaluation.targets) == len(prices)
+
+
+
