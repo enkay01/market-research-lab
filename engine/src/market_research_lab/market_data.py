@@ -7,6 +7,7 @@ import contextlib
 import json
 import math
 import re
+import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dc_field
@@ -52,6 +53,7 @@ TEMPORAL_PROVENANCE_ERROR_MESSAGE = (
 )
 
 DATASET_TYPE_DAILY_BARS = "daily_bars"
+DATASET_TYPE_MINUTE_BARS = "minute_bars"
 DATASET_TYPE_CORPORATE_ACTIONS = "corporate_actions"
 DATASET_TYPE_FUNDAMENTALS = "fundamentals"
 DATASET_TYPE_OPTIONS = "options"
@@ -323,15 +325,75 @@ class ValidationSummary:
 
 
 @dataclass(frozen=True)
-class DatasetVersion:
+class DatasetPart:
+    """One typed dataset part belonging to a parent Dataset Version."""
+
     id: str
+    dataset_version_id: str
     source: str
-    retrieval_time: str
+    dataset_type: str
     coverage_start: str | None
     coverage_end: str | None
     files: list[str]
     validation_summary: ValidationSummary
+
+
+@dataclass(frozen=True)
+class DatasetVersion:
+    """Parent immutable composite Dataset Version record."""
+
+    id: str
+    retrieval_time: str
+    security_list_id: str | None = None
+    security_list_as_of_date: str | None = None
+    request: dict[str, JsonValue] | str = ""
+    parts: list[DatasetPart] = dc_field(default_factory=list)
+    source: str = ""
+    coverage_start: str | None = None
+    coverage_end: str | None = None
+    files: list[str] = dc_field(default_factory=list)
+    validation_summary: ValidationSummary | None = None
     dataset_type: str = DATASET_TYPE_DAILY_BARS
+
+
+@dataclass(frozen=True)
+class ValidationSummarySpec:
+    """Parameter object specifying validation summary metadata."""
+
+    row_count: int
+    rejected_count: int
+    missing_fields: dict[str, int]
+    warnings: list[str]
+    has_temporal_provenance: bool
+    dataset_type: str
+
+
+@dataclass(frozen=True)
+class StagedDatasetPart:
+    """A staged Parquet part prepared in a temporary directory prior to atomic publication."""
+
+    part_id: str
+    source: str
+    dataset_type: str
+    df_valid: pd.DataFrame
+    summary: ValidationSummary
+    coverage_start: str | None
+    coverage_end: str | None
+    staged_path: Path
+    file_name: str
+
+
+@dataclass(frozen=True)
+class CompositePublishPlan:
+    """Execution plan for publishing parent Dataset Version and parts atomically."""
+
+    version_id: str
+    retrieval_time: str
+    security_list_id: str | None
+    security_list_as_of_date: str | None
+    request_payload: dict[str, JsonValue] | str
+    parts: list[StagedDatasetPart]
+    securities: list[Security]
 
 
 @dataclass(frozen=True)
@@ -342,7 +404,29 @@ class LoadedDataset:
 
 
 @dataclass(frozen=True)
+class DatasetPartReport:
+    """Summary report for one Dataset Part within a CoverageReport."""
+
+    id: str
+    source: str
+    dataset_type: str
+    coverage_start: str | None
+    coverage_end: str | None
+    row_count: int
+    rejected_count: int
+    missing_fields: dict[str, int]
+    warnings: list[str]
+    total_warnings: int
+    files: list[str]
+    has_temporal_provenance: bool = False
+    is_fundamentals: bool = False
+    is_corporate_actions: bool = False
+
+
+@dataclass(frozen=True)
 class CoverageReport:
+    """Complete metadata and part breakdown for one composite Dataset Version."""
+
     id: str
     source: str
     retrieval_time: str
@@ -358,6 +442,9 @@ class CoverageReport:
     is_fundamentals: bool = False
     is_corporate_actions: bool = False
     dataset_type: str = DATASET_TYPE_DAILY_BARS
+    security_list_id: str | None = None
+    security_list_as_of_date: str | None = None
+    parts: list[DatasetPartReport] = dc_field(default_factory=list)
 
 
 def _parse_incomplete_fields(raw: str | Sequence[str] | None) -> tuple[str, ...] | None:
@@ -386,7 +473,6 @@ def _parse_incomplete_fields(raw: str | Sequence[str] | None) -> tuple[str, ...]
             return (str(raw),)
 
 
-
 @dataclass(frozen=True)
 class IngestionValidationResult:
     valid_rows: list[dict[str, JsonValue]]
@@ -401,20 +487,20 @@ class DatasetCoverageRange:
 
 
 def _calculate_dataset_coverage_range(df_valid: pd.DataFrame) -> DatasetCoverageRange:
-    if "session_date" in df_valid.columns:
+    if "session_date" in df_valid.columns and df_valid["session_date"].notna().any():
         return DatasetCoverageRange(
-            coverage_start=df_valid["session_date"].min(),
-            coverage_end=df_valid["session_date"].max(),
+            coverage_start=str(df_valid["session_date"].dropna().min()),
+            coverage_end=str(df_valid["session_date"].dropna().max()),
         )
-    if "effective_date" in df_valid.columns:
+    if "effective_date" in df_valid.columns and df_valid["effective_date"].notna().any():
         return DatasetCoverageRange(
-            coverage_start=df_valid["effective_date"].min(),
-            coverage_end=df_valid["effective_date"].max(),
+            coverage_start=str(df_valid["effective_date"].dropna().min()),
+            coverage_end=str(df_valid["effective_date"].dropna().max()),
         )
-    if "timestamp" in df_valid.columns:
+    if "timestamp" in df_valid.columns and df_valid["timestamp"].notna().any():
         return DatasetCoverageRange(
-            coverage_start=df_valid["timestamp"].min(),
-            coverage_end=df_valid["timestamp"].max(),
+            coverage_start=str(df_valid["timestamp"].dropna().min()),
+            coverage_end=str(df_valid["timestamp"].dropna().max()),
         )
     if ("period_start" in df_valid.columns and df_valid["period_start"].notna().any()) or (
         "period_end" in df_valid.columns and df_valid["period_end"].notna().any()
@@ -429,13 +515,13 @@ def _calculate_dataset_coverage_range(df_valid: pd.DataFrame) -> DatasetCoverage
             if "period_end" in df_valid.columns
             else pd.Series(dtype="object")
         )
-        c_start = starts.min() if not starts.empty else ends.min()
-        c_end = ends.max() if not ends.empty else starts.max()
+        c_start = str(starts.min()) if not starts.empty else str(ends.min())
+        c_end = str(ends.max()) if not ends.empty else str(starts.max())
         return DatasetCoverageRange(coverage_start=c_start, coverage_end=c_end)
-    if "fiscal_period" in df_valid.columns:
+    if "fiscal_period" in df_valid.columns and df_valid["fiscal_period"].notna().any():
         return DatasetCoverageRange(
-            coverage_start=df_valid["fiscal_period"].min(),
-            coverage_end=df_valid["fiscal_period"].max(),
+            coverage_start=str(df_valid["fiscal_period"].dropna().min()),
+            coverage_end=str(df_valid["fiscal_period"].dropna().max()),
         )
     return DatasetCoverageRange(coverage_start=None, coverage_end=None)
 
@@ -445,10 +531,17 @@ def _detect_dataset_type(df_raw: pd.DataFrame) -> str:
     is_corporate_action = {"effective_date", "value"}.issubset(set(df_raw.columns)) and (
         "type" in df_raw.columns or "action_type" in df_raw.columns
     )
-    is_daily_bar = {"open", "high", "low", "close", "volume"}.issubset(set(df_raw.columns))
+    is_daily_bar = {"open", "high", "low", "close", "volume"}.issubset(set(df_raw.columns)) and (
+        "date" in df_raw.columns or "session_date" in df_raw.columns
+    )
     option_markers = {"contract_id", "expiration", "option_type", "right", "trade_time"}
     is_options = bool(option_markers.intersection(set(df_raw.columns))) and (
         "contract_id" in df_raw.columns or "expiration" in df_raw.columns
+    )
+    is_minute_bar = (
+        {"open", "high", "low", "close", "volume"}.issubset(set(df_raw.columns))
+        and "timestamp" in df_raw.columns
+        and not is_options
     )
 
     if is_options:
@@ -457,6 +550,8 @@ def _detect_dataset_type(df_raw: pd.DataFrame) -> str:
         return DATASET_TYPE_CORPORATE_ACTIONS
     if is_fundamental:
         return DATASET_TYPE_FUNDAMENTALS
+    if is_minute_bar:
+        return DATASET_TYPE_MINUTE_BARS
     if is_daily_bar:
         return DATASET_TYPE_DAILY_BARS
 
@@ -777,6 +872,55 @@ def _validate_daily_bars_dataset(
     )
 
 
+def _validate_minute_bars_dataset(
+    store: MarketDataStore, df_raw: pd.DataFrame, request: IngestionRequest
+) -> IngestionValidationResult:
+    warnings: list[str] = []
+    valid_rows: list[dict[str, JsonValue]] = []
+    missing_fields: dict[str, int] = {}
+
+    required = {"open", "high", "low", "close", "volume"}
+    for col in list(required) + ["symbol", "security_id", "timestamp"]:
+        if col in df_raw.columns:
+            missing_fields[col] = int(df_raw[col].map(store._is_missing).sum())
+
+    for i, row in df_raw.iterrows():
+        row_num = i + 1
+        try:
+            sec_id = store._security_id(row)
+            timestamp_str = store._required_text(row, "timestamp")
+            open_px = store._required_number(row, "open")
+            high_px = store._required_number(row, "high")
+            low_px = store._required_number(row, "low")
+            close_px = store._required_number(row, "close")
+            volume = store._required_number(row, "volume")
+            units = store._optional_text(row, "units", "unit", default="USD") or "USD"
+            available_at = store._optional_text(row, "available_at")
+
+            valid_rows.append(
+                {
+                    "security_id": sec_id,
+                    "timestamp": timestamp_str,
+                    "open": open_px,
+                    "high": high_px,
+                    "low": low_px,
+                    "close": close_px,
+                    "volume": volume,
+                    "units": units,
+                    "source": request.source,
+                    "retrieval_time": request.retrieval_time,
+                    "available_at": available_at,
+                    "eligibility_provenance": store._optional_text(row, "eligibility_provenance"),
+                }
+            )
+        except Exception as e:
+            warnings.append(f"Rejected row {row_num}: {e}")
+
+    return IngestionValidationResult(
+        valid_rows=valid_rows, warnings=warnings, missing_fields=missing_fields
+    )
+
+
 _INGESTION_VALIDATORS: dict[
     str,
     Callable[[MarketDataStore, pd.DataFrame, IngestionRequest], IngestionValidationResult],
@@ -785,6 +929,7 @@ _INGESTION_VALIDATORS: dict[
     DATASET_TYPE_FUNDAMENTALS: _validate_fundamentals_dataset,
     DATASET_TYPE_CORPORATE_ACTIONS: _validate_corporate_actions_dataset,
     DATASET_TYPE_DAILY_BARS: _validate_daily_bars_dataset,
+    DATASET_TYPE_MINUTE_BARS: _validate_minute_bars_dataset,
 }
 
 
@@ -803,8 +948,18 @@ class MarketDataStore:
             con.execute("""
                 CREATE TABLE IF NOT EXISTS dataset_versions (
                     id VARCHAR PRIMARY KEY,
-                    source VARCHAR,
                     retrieval_time VARCHAR,
+                    security_list_id VARCHAR,
+                    security_list_as_of_date VARCHAR,
+                    request JSON
+                )
+            """)
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS dataset_parts (
+                    id VARCHAR PRIMARY KEY,
+                    dataset_version_id VARCHAR,
+                    source VARCHAR,
+                    dataset_type VARCHAR,
                     coverage_start VARCHAR,
                     coverage_end VARCHAR,
                     files JSON,
@@ -960,6 +1115,22 @@ class MarketDataStore:
 
         return pd.to_datetime(self._eligibility_values(df, dataset_type), utc=True, errors="raise")
 
+    def _build_validation_summary(
+        self,
+        spec: ValidationSummarySpec,
+    ) -> ValidationSummary:
+        return ValidationSummary(
+            row_count=spec.row_count,
+            rejected_count=spec.rejected_count,
+            missing_fields=spec.missing_fields,
+            total_warnings=len(spec.warnings),
+            warnings=spec.warnings[:100],
+            has_temporal_provenance=spec.has_temporal_provenance,
+            is_fundamentals=spec.dataset_type == DATASET_TYPE_FUNDAMENTALS,
+            is_corporate_actions=spec.dataset_type == DATASET_TYPE_CORPORATE_ACTIONS,
+            dataset_type=spec.dataset_type,
+        )
+
     def ingest(self, request: IngestionRequest) -> DatasetVersion:
         if request.file_path is None:
             raise ValueError("File imports require a file path.")
@@ -984,6 +1155,7 @@ class MarketDataStore:
 
         rejected_count = len(df_raw) - len(valid_rows)
         version_id = str(uuid4())
+        part_id = str(uuid4())
         files = []
 
         df_valid = pd.DataFrame(valid_rows)
@@ -992,15 +1164,12 @@ class MarketDataStore:
         coverage_start = cov.coverage_start
         coverage_end = cov.coverage_end
 
-        # Arrow cannot store a mixed numeric/string object column. Preserve the
-        # canonical value semantics by serializing mixed fundamentals as text;
-        # query conversion restores numeric values when possible.
         if dataset_type == DATASET_TYPE_FUNDAMENTALS:
             numeric_values = pd.to_numeric(df_valid["value"], errors="coerce")
             if not numeric_values.notna().all():
                 df_valid["value"] = df_valid["value"].astype(str)
 
-        parquet_name = f"{version_id}.parquet"
+        parquet_name = f"{part_id}.parquet"
         parquet_path = self.datasets_dir / parquet_name
         try:
             df_valid.to_parquet(parquet_path, engine="pyarrow", index=False)
@@ -1010,22 +1179,38 @@ class MarketDataStore:
                 parquet_path.unlink()
             raise
 
-        summary = ValidationSummary(
-            row_count=len(valid_rows),
-            rejected_count=rejected_count,
-            missing_fields=missing_fields,
-            total_warnings=len(warnings),
-            warnings=warnings[:100],
-            has_temporal_provenance=has_temporal_provenance,
-            is_fundamentals=dataset_type == DATASET_TYPE_FUNDAMENTALS,
-            is_corporate_actions=dataset_type == DATASET_TYPE_CORPORATE_ACTIONS,
-            dataset_type=dataset_type,
+        summary = self._build_validation_summary(
+            ValidationSummarySpec(
+                row_count=len(valid_rows),
+                rejected_count=rejected_count,
+                missing_fields=missing_fields,
+                warnings=warnings,
+                has_temporal_provenance=has_temporal_provenance,
+                dataset_type=dataset_type,
+            )
         )
 
+        part = DatasetPart(
+            id=part_id,
+            dataset_version_id=version_id,
+            source=request.source,
+            dataset_type=dataset_type,
+            coverage_start=coverage_start,
+            coverage_end=coverage_end,
+            files=files,
+            validation_summary=summary,
+        )
+        req_json = json.dumps(
+            {"source": request.source, "file": str(request.file_path) if request.file_path else ""}
+        )
         version = DatasetVersion(
             id=version_id,
-            source=request.source,
             retrieval_time=request.retrieval_time,
+            security_list_id=None,
+            security_list_as_of_date=None,
+            request=req_json,
+            parts=[part],
+            source=request.source,
             coverage_start=coverage_start,
             coverage_end=coverage_end,
             files=files,
@@ -1038,20 +1223,34 @@ class MarketDataStore:
                 con.execute(
                     """
                     INSERT INTO dataset_versions
-                    (
-                        id, source, retrieval_time, coverage_start, coverage_end,
-                        files, validation_summary
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
+                    (id, retrieval_time, security_list_id, security_list_as_of_date, request)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
                     (
                         version.id,
-                        version.source,
                         version.retrieval_time,
-                        version.coverage_start,
-                        version.coverage_end,
-                        json.dumps(version.files),
-                        json.dumps(version.validation_summary.to_json()),
+                        version.security_list_id,
+                        version.security_list_as_of_date,
+                        req_json,
+                    ),
+                )
+                con.execute(
+                    """
+                    INSERT INTO dataset_parts (
+                        id, dataset_version_id, source, dataset_type,
+                        coverage_start, coverage_end, files, validation_summary
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        part.id,
+                        part.dataset_version_id,
+                        part.source,
+                        part.dataset_type,
+                        part.coverage_start,
+                        part.coverage_end,
+                        json.dumps(part.files),
+                        json.dumps(part.validation_summary.to_json()),
                     ),
                 )
 
@@ -1102,6 +1301,101 @@ class MarketDataStore:
 
         return version
 
+    def publish_composite(
+        self,
+        plan: CompositePublishPlan,
+    ) -> DatasetVersion:
+        """Publish a parent composite dataset version and all its parts atomically."""
+        req_json = (
+            json.dumps(plan.request_payload)
+            if isinstance(plan.request_payload, dict)
+            else str(plan.request_payload)
+        )
+        moved_files: list[Path] = []
+        try:
+            for part in plan.parts:
+                dest_path = self.datasets_dir / part.file_name
+                shutil.move(part.staged_path, dest_path)
+                moved_files.append(dest_path)
+
+            with duckdb.connect(str(self.db_path)) as con:
+                con.execute("BEGIN TRANSACTION")
+                con.execute(
+                    """
+                    INSERT INTO dataset_versions
+                    (id, retrieval_time, security_list_id, security_list_as_of_date, request)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        plan.version_id,
+                        plan.retrieval_time,
+                        plan.security_list_id,
+                        plan.security_list_as_of_date,
+                        req_json,
+                    ),
+                )
+                for part in plan.parts:
+                    con.execute(
+                        """
+                        INSERT INTO dataset_parts (
+                            id, dataset_version_id, source, dataset_type,
+                            coverage_start, coverage_end, files, validation_summary
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            part.part_id,
+                            plan.version_id,
+                            part.source,
+                            part.dataset_type,
+                            part.coverage_start,
+                            part.coverage_end,
+                            json.dumps([part.file_name]),
+                            json.dumps(part.summary.to_json()),
+                        ),
+                    )
+
+                if plan.securities:
+                    primary_source = plan.parts[0].source if plan.parts else "composite"
+                    self.upsert_securities(
+                        plan.securities, source=primary_source, retrieval_time=plan.retrieval_time, con=con
+                    )
+                con.execute("COMMIT")
+
+        except Exception as error:
+            for path in moved_files:
+                if path.exists():
+                    path.unlink()
+            raise ValueError(f"Failed to publish composite dataset: {error}") from error
+
+        part_objects = [
+            DatasetPart(
+                id=p.part_id,
+                dataset_version_id=plan.version_id,
+                source=p.source,
+                dataset_type=p.dataset_type,
+                coverage_start=p.coverage_start,
+                coverage_end=p.coverage_end,
+                files=[p.file_name],
+                validation_summary=p.summary,
+            )
+            for p in plan.parts
+        ]
+        return DatasetVersion(
+            id=plan.version_id,
+            retrieval_time=plan.retrieval_time,
+            security_list_id=plan.security_list_id,
+            security_list_as_of_date=plan.security_list_as_of_date,
+            request=req_json,
+            parts=part_objects,
+            source=plan.parts[0].source if plan.parts else "",
+            coverage_start=plan.parts[0].coverage_start if plan.parts else None,
+            coverage_end=plan.parts[0].coverage_end if plan.parts else None,
+            files=[p.file_name for p in plan.parts],
+            validation_summary=plan.parts[0].summary if plan.parts else None,
+            dataset_type=plan.parts[0].dataset_type if len(plan.parts) == 1 else "composite",
+        )
+
     def ingest_records(
         self,
         request: IngestionRequest,
@@ -1124,35 +1418,61 @@ class MarketDataStore:
         self, version: DatasetVersion, warnings: list[str]
     ) -> DatasetVersion:
         """Persist provider warnings alongside the Dataset Version summary."""
-        if not warnings:
+        if not warnings or not version.parts:
             return version
 
-        summary = version.validation_summary.with_warnings(warnings)
+        updated_parts: list[DatasetPart] = []
         with duckdb.connect(str(self.db_path)) as con:
-            con.execute(
-                "UPDATE dataset_versions SET validation_summary = ? WHERE id = ?",
-                (json.dumps(summary.to_json()), version.id),
-            )
+            for part in version.parts:
+                summary = part.validation_summary.with_warnings(warnings)
+                con.execute(
+                    "UPDATE dataset_parts SET validation_summary = ? WHERE id = ?",
+                    (json.dumps(summary.to_json()), part.id),
+                )
+                updated_parts.append(
+                    DatasetPart(
+                        id=part.id,
+                        dataset_version_id=part.dataset_version_id,
+                        source=part.source,
+                        dataset_type=part.dataset_type,
+                        coverage_start=part.coverage_start,
+                        coverage_end=part.coverage_end,
+                        files=part.files,
+                        validation_summary=summary,
+                    )
+                )
+
         return DatasetVersion(
             id=version.id,
-            source=version.source,
             retrieval_time=version.retrieval_time,
+            security_list_id=version.security_list_id,
+            security_list_as_of_date=version.security_list_as_of_date,
+            request=version.request,
+            parts=updated_parts,
+            source=version.source,
             coverage_start=version.coverage_start,
             coverage_end=version.coverage_end,
             files=version.files,
-            validation_summary=summary,
+            validation_summary=updated_parts[0].validation_summary if updated_parts else None,
             dataset_type=version.dataset_type,
         )
 
     def upsert_securities(
-        self, securities: list[Security], *, source: str, retrieval_time: str
+        self,
+        securities: list[Security],
+        *,
+        source: str,
+        retrieval_time: str,
+        con: duckdb.DuckDBPyConnection | None = None,
     ) -> None:
         """Persist provider-native Security identities in one transaction."""
         if not securities:
             return
-        with duckdb.connect(str(self.db_path)) as con:
+        
+        ctx = contextlib.nullcontext(con) if con else duckdb.connect(str(self.db_path))
+        with ctx as db:
             for security in securities:
-                con.execute(
+                db.execute(
                     """
                     INSERT INTO securities (
                         security_id, symbol, name, exchange, currency, source, retrieval_time
@@ -1233,8 +1553,11 @@ class MarketDataStore:
             return None
 
         with duckdb.connect(str(self.db_path)) as con:
-            versions = con.execute(
-                "SELECT id, files, validation_summary FROM dataset_versions"
+            parts = con.execute(
+                """
+                SELECT dataset_version_id, dataset_type, files, validation_summary
+                FROM dataset_parts
+                """
             ).fetchall()
 
         daily_bars_count = 0
@@ -1253,8 +1576,7 @@ class MarketDataStore:
 
         target_ids = {security.security_id, security.symbol, security.symbol.upper()}
 
-        for v_id, raw_files, raw_summary in versions:
-            summary = ValidationSummary.from_json(raw_summary)
+        for v_id, p_type, raw_files, raw_summary in parts:
             files = [str(f) for f in json.loads(raw_files)]
             dfs = []
             for file_name in files:
@@ -1279,9 +1601,7 @@ class MarketDataStore:
             if matched_df.empty:
                 continue
 
-            if summary.dataset_type == DATASET_TYPE_DAILY_BARS or (
-                not summary.is_fundamentals and not summary.is_corporate_actions
-            ):
+            if p_type == DATASET_TYPE_DAILY_BARS:
                 if v_id not in daily_bars_dataset_versions:
                     daily_bars_dataset_versions.append(v_id)
                 daily_bars_count += len(matched_df)
@@ -1305,15 +1625,12 @@ class MarketDataStore:
                                 if pd.notna(newest_row["close"]):
                                     latest_close = float(newest_row["close"])
 
-            elif (
-                summary.dataset_type == DATASET_TYPE_CORPORATE_ACTIONS
-                or summary.is_corporate_actions
-            ):
+            elif p_type == DATASET_TYPE_CORPORATE_ACTIONS:
                 if v_id not in corporate_actions_dataset_versions:
                     corporate_actions_dataset_versions.append(v_id)
                 corporate_actions_count += len(matched_df)
 
-            elif summary.dataset_type == DATASET_TYPE_FUNDAMENTALS or summary.is_fundamentals:
+            elif p_type == DATASET_TYPE_FUNDAMENTALS:
                 if v_id not in fundamentals_dataset_versions:
                     fundamentals_dataset_versions.append(v_id)
                 fundamentals_count += len(matched_df)
@@ -1348,31 +1665,38 @@ class MarketDataStore:
 
     def discard_dataset_version(self, version: DatasetVersion) -> None:
         """Remove a partially persisted provider version during rollback."""
-        with duckdb.connect(str(self.db_path)) as con:
-            con.execute("DELETE FROM dataset_versions WHERE id = ?", (version.id,))
-        for file_name in version.files:
-            path = self.datasets_dir / file_name
-            if path.exists():
-                path.unlink()
+        self.delete_dataset_version(version.id)
 
     def delete_dataset_version(self, dataset_version_id: str) -> None:
-        """Delete one Dataset Version and the Parquet files that it owns."""
+        """Delete one Dataset Version and all Parquet files that its parts own."""
         datasets_root = self.datasets_dir.resolve()
         with duckdb.connect(str(self.db_path)) as con:
-            row = con.execute(
-                "SELECT files FROM dataset_versions WHERE id = ?",
+            version_row = con.execute(
+                "SELECT id FROM dataset_versions WHERE id = ?",
                 (dataset_version_id,),
             ).fetchone()
-            if not row:
+            if not version_row:
                 raise DatasetVersionNotFoundError(
                     f"Dataset Version '{dataset_version_id}' does not exist."
                 )
-            raw_files = row[0]
-            files = json.loads(raw_files) if isinstance(raw_files, str) else raw_files
-            file_names = [str(file_name) for file_name in files] if isinstance(files, list) else []
-            paths = [(self.datasets_dir / file_name).resolve() for file_name in file_names]
+            part_rows = con.execute(
+                "SELECT files FROM dataset_parts WHERE dataset_version_id = ?",
+                (dataset_version_id,),
+            ).fetchall()
+            file_names: list[str] = []
+            for row in part_rows:
+                raw_files = row[0]
+                files = json.loads(raw_files) if isinstance(raw_files, str) else raw_files
+                if isinstance(files, list):
+                    file_names.extend([str(f) for f in files])
+
+            paths = [(self.datasets_dir / f).resolve() for f in file_names]
             if any(path.parent != datasets_root for path in paths):
                 raise ValueError("Dataset Version contains an unsafe file path.")
+
+            con.execute(
+                "DELETE FROM dataset_parts WHERE dataset_version_id = ?", (dataset_version_id,)
+            )
             con.execute("DELETE FROM dataset_versions WHERE id = ?", (dataset_version_id,))
 
         for path in paths:
@@ -1387,18 +1711,22 @@ class MarketDataStore:
         datasets_root = self.datasets_dir.resolve()
         with duckdb.connect(str(self.db_path)) as con:
             for version_id in dataset_version_ids:
-                row = con.execute(
-                    "SELECT files FROM dataset_versions WHERE id = ?",
+                part_rows = con.execute(
+                    "SELECT files FROM dataset_parts WHERE dataset_version_id = ?",
                     (version_id,),
-                ).fetchone()
-                if not row:
+                ).fetchall()
+                if not part_rows:
                     continue
-                raw_files = row[0]
-                files = json.loads(raw_files) if isinstance(raw_files, str) else raw_files
-                file_names = [str(file_name) for file_name in files] if isinstance(files, list) else []
-                paths = [(self.datasets_dir / file_name).resolve() for file_name in file_names]
+                file_names: list[str] = []
+                for row in part_rows:
+                    raw_files = row[0]
+                    files = json.loads(raw_files) if isinstance(raw_files, str) else raw_files
+                    if isinstance(files, list):
+                        file_names.extend([str(f) for f in files])
+                paths = [(self.datasets_dir / f).resolve() for f in file_names]
                 if any(path.parent != datasets_root for path in paths):
                     raise ValueError("Dataset Version contains an unsafe file path.")
+                con.execute("DELETE FROM dataset_parts WHERE dataset_version_id = ?", (version_id,))
                 con.execute("DELETE FROM dataset_versions WHERE id = ?", (version_id,))
                 for path in paths:
                     if path.is_file():
@@ -1406,96 +1734,215 @@ class MarketDataStore:
                 deleted_ids.append(version_id)
         return deleted_ids
 
-    @staticmethod
-    def _coverage_from_row(row: tuple) -> CoverageReport:
+    def _build_coverage_report(
+        self,
+        version_row: tuple,
+        part_rows: list[tuple],
+    ) -> CoverageReport:
         (
             version_id,
-            source,
             retrieval_time,
-            coverage_start,
-            coverage_end,
-            raw_files,
-            raw_summary,
-        ) = row
-        summary = ValidationSummary.from_json(raw_summary)
-        files = [str(file_name) for file_name in json.loads(raw_files)]
+            security_list_id,
+            security_list_as_of_date,
+            _req,
+        ) = version_row
+
+        part_reports: list[DatasetPartReport] = []
+        all_sources: set[str] = set()
+        all_starts: list[str] = []
+        all_ends: list[str] = []
+        total_rows = 0
+        total_rejected = 0
+        merged_missing: dict[str, int] = {}
+        all_warnings: list[str] = []
+        total_warn_count = 0
+        all_files: list[str] = []
+        has_temporal = bool(part_rows)
+        is_funds = False
+        is_corp = False
+
+        for p_row in part_rows:
+            p_id, _v_id, p_source, p_type, p_start, p_end, p_files_raw, p_summary_raw = p_row
+            p_summary = ValidationSummary.from_json(p_summary_raw)
+            p_files = [str(f) for f in json.loads(p_files_raw)]
+            part_reports.append(
+                DatasetPartReport(
+                    id=p_id,
+                    source=p_source,
+                    dataset_type=p_type,
+                    coverage_start=p_start,
+                    coverage_end=p_end,
+                    row_count=p_summary.row_count,
+                    rejected_count=p_summary.rejected_count,
+                    missing_fields=p_summary.missing_fields,
+                    warnings=p_summary.warnings,
+                    total_warnings=p_summary.total_warnings,
+                    files=p_files,
+                    has_temporal_provenance=p_summary.has_temporal_provenance,
+                    is_fundamentals=p_summary.is_fundamentals,
+                    is_corporate_actions=p_summary.is_corporate_actions,
+                )
+            )
+            all_sources.add(p_source)
+            if p_start:
+                all_starts.append(p_start)
+            if p_end:
+                all_ends.append(p_end)
+            total_rows += p_summary.row_count
+            total_rejected += p_summary.rejected_count
+            for k, count in p_summary.missing_fields.items():
+                merged_missing[k] = merged_missing.get(k, 0) + count
+            all_warnings.extend(p_summary.warnings)
+            total_warn_count += p_summary.total_warnings
+            all_files.extend(p_files)
+            if not p_summary.has_temporal_provenance:
+                has_temporal = False
+            if p_summary.is_fundamentals:
+                is_funds = True
+            if p_summary.is_corporate_actions:
+                is_corp = True
+
+        primary_source = ", ".join(sorted(all_sources)) if all_sources else "unknown"
+        cov_start = min(all_starts) if all_starts else None
+        cov_end = max(all_ends) if all_ends else None
+        primary_dataset_type = (
+            part_reports[0].dataset_type if len(part_reports) == 1 else "composite"
+        )
+
         return CoverageReport(
             id=version_id,
-            source=source,
+            source=primary_source,
             retrieval_time=retrieval_time,
-            coverage_start=coverage_start,
-            coverage_end=coverage_end,
-            row_count=summary.row_count,
-            rejected_count=summary.rejected_count,
-            missing_fields=summary.missing_fields,
-            warnings=summary.warnings,
-            total_warnings=summary.total_warnings,
-            files=files,
-            has_temporal_provenance=summary.has_temporal_provenance,
-            is_fundamentals=summary.is_fundamentals,
-            is_corporate_actions=summary.is_corporate_actions,
-            dataset_type=summary.dataset_type,
+            coverage_start=cov_start,
+            coverage_end=cov_end,
+            row_count=total_rows,
+            rejected_count=total_rejected,
+            missing_fields=merged_missing,
+            warnings=all_warnings[:100],
+            total_warnings=total_warn_count,
+            files=all_files,
+            has_temporal_provenance=has_temporal,
+            is_fundamentals=is_funds,
+            is_corporate_actions=is_corp,
+            dataset_type=primary_dataset_type,
+            security_list_id=security_list_id,
+            security_list_as_of_date=security_list_as_of_date,
+            parts=part_reports,
         )
 
     def coverage(self, dataset_version_id: str) -> CoverageReport:
         with duckdb.connect(str(self.db_path)) as con:
-            con.execute(
+            version_row = con.execute(
                 """
-                SELECT id, source, retrieval_time, coverage_start, coverage_end,
-                       files, validation_summary
+                SELECT id, retrieval_time, security_list_id, security_list_as_of_date, request
                 FROM dataset_versions WHERE id = ?
                 """,
                 (dataset_version_id,),
-            )
-            row = con.fetchone()
-            if not row:
+            ).fetchone()
+            if not version_row:
                 raise DatasetVersionNotFoundError(
                     f"Dataset Version '{dataset_version_id}' does not exist."
                 )
-            return self._coverage_from_row(row)
+            part_rows = con.execute(
+                """
+                SELECT id, dataset_version_id, source, dataset_type,
+                       coverage_start, coverage_end, files, validation_summary
+                FROM dataset_parts WHERE dataset_version_id = ?
+                ORDER BY id
+                """,
+                (dataset_version_id,),
+            ).fetchall()
+            return self._build_coverage_report(version_row, part_rows)
 
     def list_dataset_versions(self) -> list[CoverageReport]:
         """Return every Dataset Version as the same coverage summary used by ``coverage``."""
         with duckdb.connect(str(self.db_path)) as con:
-            rows = con.execute(
+            version_rows = con.execute(
                 """
-                SELECT id, source, retrieval_time, coverage_start, coverage_end,
-                       files, validation_summary
+                SELECT id, retrieval_time, security_list_id, security_list_as_of_date, request
                 FROM dataset_versions
-                ORDER BY retrieval_time DESC, source, id
+                ORDER BY retrieval_time DESC, id
                 """
             ).fetchall()
-        return [self._coverage_from_row(row) for row in rows]
+            reports: list[CoverageReport] = []
+            for v_row in version_rows:
+                v_id = v_row[0]
+                part_rows = con.execute(
+                    """
+                    SELECT id, dataset_version_id, source, dataset_type,
+                           coverage_start, coverage_end, files, validation_summary
+                    FROM dataset_parts WHERE dataset_version_id = ?
+                    ORDER BY id
+                    """,
+                    (v_id,),
+                ).fetchall()
+                reports.append(self._build_coverage_report(v_row, part_rows))
+        return reports
 
     def preview(self, dataset_version_id: str, limit: int = 50) -> list[dict[str, JsonValue]]:
         loaded = self._load_dataset_df(dataset_version_id)
         return loaded.dataframe.head(limit).to_dict(orient="records")
 
-    def _load_dataset_df(self, dataset_version_id: str) -> LoadedDataset:
+    def _load_dataset_df(
+        self, dataset_version_id: str, *, dataset_type: str | None = None
+    ) -> LoadedDataset:
         with duckdb.connect(str(self.db_path)) as con:
-            con.execute(
-                "SELECT files, validation_summary FROM dataset_versions WHERE id = ?",
+            version_row = con.execute(
+                "SELECT id FROM dataset_versions WHERE id = ?",
                 (dataset_version_id,),
-            )
-            row = con.fetchone()
-            if not row:
-                raise ValueError(f"DatasetVersion {dataset_version_id} not found")
+            ).fetchone()
+            if not version_row:
+                raise DatasetVersionNotFoundError(
+                    f"Dataset Version '{dataset_version_id}' does not exist."
+                )
 
-            raw_files, raw_summary = row
-            summary = ValidationSummary.from_json(raw_summary)
-            files = [str(file_name) for file_name in json.loads(raw_files)]
+            if dataset_type == DATASET_TYPE_OPTIONS:
+                part_rows = con.execute(
+                    """
+                    SELECT files, validation_summary, dataset_type FROM dataset_parts
+                    WHERE dataset_version_id = ? AND dataset_type IN ('options', 'minute_bars')
+                    """,
+                    (dataset_version_id,),
+                ).fetchall()
+            elif dataset_type:
+                part_rows = con.execute(
+                    """
+                    SELECT files, validation_summary, dataset_type FROM dataset_parts
+                    WHERE dataset_version_id = ? AND dataset_type = ?
+                    """,
+                    (dataset_version_id, dataset_type),
+                ).fetchall()
+            else:
+                part_rows = con.execute(
+                    """
+                    SELECT files, validation_summary, dataset_type FROM dataset_parts
+                    WHERE dataset_version_id = ?
+                    """,
+                    (dataset_version_id,),
+                ).fetchall()
 
         dfs = []
-        for file_name in files:
-            path = self.datasets_dir / file_name
-            if path.exists():
-                dfs.append(pd.read_parquet(path))
+        dtype = dataset_type or (part_rows[0][2] if part_rows else DATASET_TYPE_DAILY_BARS)
+        if not dataset_type and part_rows:
+            part_rows = [r for r in part_rows if r[2] == dtype]
+            
+        has_temporal = bool(part_rows)
+
+        for raw_files, raw_summary, _ in part_rows:
+            summary = ValidationSummary.from_json(raw_summary)
+            if not summary.has_temporal_provenance:
+                has_temporal = False
+            files = [str(f) for f in json.loads(raw_files)]
+            for file_name in files:
+                path = self.datasets_dir / file_name
+                if path.exists():
+                    dfs.append(pd.read_parquet(path))
 
         dataframe = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
         return LoadedDataset(
             dataframe=dataframe,
-            has_provenance=summary.has_temporal_provenance,
-            dataset_type=summary.dataset_type,
+            has_provenance=has_temporal,
+            dataset_type=dtype,
         )
 
     def _filter_by_as_of_and_symbol(
@@ -1539,7 +1986,7 @@ class MarketDataStore:
         as_of: str | datetime | None = None,
         as_dataframe: bool = False,
     ) -> list[DailyBar] | pd.DataFrame:
-        loaded = self._load_dataset_df(dataset_version_id)
+        loaded = self._load_dataset_df(dataset_version_id, dataset_type=DATASET_TYPE_DAILY_BARS)
         df = self._filter_by_as_of_and_symbol(loaded, symbol=symbol, as_of=as_of)
 
         if as_dataframe:
@@ -1583,7 +2030,7 @@ class MarketDataStore:
         as_of: str | datetime | None = None,
         as_dataframe: bool = False,
     ) -> list[FundamentalFact] | pd.DataFrame:
-        loaded = self._load_dataset_df(dataset_version_id)
+        loaded = self._load_dataset_df(dataset_version_id, dataset_type=DATASET_TYPE_FUNDAMENTALS)
         df = self._filter_by_as_of_and_symbol(loaded, symbol=symbol, as_of=as_of)
 
         if "field" not in df.columns or "fiscal_period" not in df.columns:
@@ -1646,7 +2093,9 @@ class MarketDataStore:
         as_of: str | datetime | None = None,
         as_dataframe: bool = False,
     ) -> list[CorporateAction] | pd.DataFrame:
-        loaded = self._load_dataset_df(dataset_version_id)
+        loaded = self._load_dataset_df(
+            dataset_version_id, dataset_type=DATASET_TYPE_CORPORATE_ACTIONS
+        )
         df = self._filter_by_as_of_and_symbol(loaded, symbol=symbol, as_of=as_of)
 
         if "type" not in df.columns or "effective_date" not in df.columns:
@@ -1684,8 +2133,8 @@ class MarketDataStore:
         self, dataset_version_id: str, *, as_of: str | datetime | None = None
     ) -> OptionMarketData:
         """Load one named options Dataset Version with point-in-time filtering."""
-        loaded = self._load_dataset_df(dataset_version_id)
-        if loaded.dataset_type != DATASET_TYPE_OPTIONS:
+        loaded = self._load_dataset_df(dataset_version_id, dataset_type=DATASET_TYPE_OPTIONS)
+        if loaded.dataset_type not in (DATASET_TYPE_OPTIONS, DATASET_TYPE_MINUTE_BARS):
             raise ValueError(
                 f"Dataset Version '{dataset_version_id}' is not an options Dataset Version."
             )

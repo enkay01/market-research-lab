@@ -358,7 +358,7 @@ export function CreateStrategyView({ project }: CreateStrategyViewProps) {
                 <Card style={{ padding: "20px" }}>
                   <VStack gap={3}>
                     <HStack justify="space-between" align="center">
-                      <Text weight="bold" size="lg">Extensibility: Add Custom Strategy</Text>
+                      <Text weight="bold" size="lg">Add a new Strategy</Text>
                       <Button
                         label={copied ? "Copied!" : "Copy Python Template"}
                         variant="secondary"

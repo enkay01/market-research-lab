@@ -5,66 +5,6 @@
     "version": "0.1.0"
   },
   "paths": {
-    "/api/datasets/download": {
-      "post": {
-        "tags": [
-          "datasets"
-        ],
-        "summary": "Download Dataset",
-        "operationId": "download_dataset_api_datasets_download_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "oneOf": [
-                  {
-                    "$ref": "#/components/schemas/TiingoDownloadRequest"
-                  },
-                  {
-                    "$ref": "#/components/schemas/SecEdgarDownloadRequest"
-                  },
-                  {
-                    "$ref": "#/components/schemas/AlpacaDownloadRequest"
-                  }
-                ],
-                "title": "Request",
-                "discriminator": {
-                  "propertyName": "provider",
-                  "mapping": {
-                    "tiingo": "#/components/schemas/TiingoDownloadRequest",
-                    "sec_edgar": "#/components/schemas/SecEdgarDownloadRequest",
-                    "alpaca": "#/components/schemas/AlpacaDownloadRequest"
-                  }
-                }
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProviderDownloadResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/health": {
       "get": {
         "tags": [
@@ -535,1070 +475,6 @@
         }
       }
     },
-    "/api/securities": {
-      "get": {
-        "tags": [
-          "securities"
-        ],
-        "summary": "List Securities",
-        "operationId": "list_securities_api_securities_get",
-        "parameters": [
-          {
-            "name": "query",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Search symbol or name",
-              "title": "Query"
-            },
-            "description": "Search symbol or name"
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 500,
-              "minimum": 1,
-              "default": 50,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/SecurityResponse"
-                  },
-                  "title": "Response List Securities Api Securities Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/valuations/comparables": {
-      "post": {
-        "tags": [
-          "valuations"
-        ],
-        "summary": "Calculate Comparable Valuation",
-        "operationId": "calculate_comparable_valuation_api_valuations_comparables_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ComparableValuationRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ComparableValuationResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/projects/{project_id}/valuations/comparables": {
-      "post": {
-        "tags": [
-          "valuations"
-        ],
-        "summary": "Save Comparable Valuation",
-        "operationId": "save_comparable_valuation_api_projects__project_id__valuations_comparables_post",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ComparableValuationRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ComparableValuationResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/projects/{project_id}/valuations/seed/{security_id}": {
-      "get": {
-        "tags": [
-          "valuations"
-        ],
-        "summary": "Seed Dcf Valuation",
-        "operationId": "seed_dcf_valuation_api_projects__project_id__valuations_seed__security_id__get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          },
-          {
-            "name": "security_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^[a-zA-Z0-9_-]{1,64}$",
-              "title": "Security Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FCFFDCFSeedResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/valuations/dcf": {
-      "post": {
-        "tags": [
-          "valuations"
-        ],
-        "summary": "Calculate Dcf Valuation",
-        "operationId": "calculate_dcf_valuation_api_valuations_dcf_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FCFFDCFRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FCFFDCFValuationResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/projects/{project_id}/valuations/dcf": {
-      "post": {
-        "tags": [
-          "valuations"
-        ],
-        "summary": "Save Dcf Valuation",
-        "operationId": "save_dcf_valuation_api_projects__project_id__valuations_dcf_post",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FCFFDCFRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FCFFDCFValuationResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/projects/{project_id}/valuations/compare": {
-      "post": {
-        "tags": [
-          "valuations"
-        ],
-        "summary": "Compare Valuations",
-        "operationId": "compare_valuations_api_projects__project_id__valuations_compare_post",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ValuationComparisonRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ValuationComparisonResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/projects/{project_id}/valuations/{run_id}/export/{format_type}": {
-      "get": {
-        "tags": [
-          "valuations"
-        ],
-        "summary": "Export Valuation",
-        "operationId": "export_valuation_api_projects__project_id__valuations__run_id__export__format_type__get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          },
-          {
-            "name": "run_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^[a-zA-Z0-9_-]{1,64}$",
-              "title": "Run Id"
-            }
-          },
-          {
-            "name": "format_type",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^(html|csv|json)$",
-              "title": "Format Type"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/projects/{project_id}/valuations": {
-      "get": {
-        "tags": [
-          "valuations"
-        ],
-        "summary": "List Saved Valuations",
-        "operationId": "list_saved_valuations_api_projects__project_id__valuations_get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/SavedValuationResponse"
-                  },
-                  "title": "Response List Saved Valuations Api Projects  Project Id  Valuations Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/projects/{project_id}/options-backtests": {
-      "post": {
-        "tags": [
-          "options-backtests"
-        ],
-        "summary": "Run Project Options Backtest",
-        "operationId": "run_project_options_backtest_api_projects__project_id__options_backtests_post",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/OptionsBacktestRunRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OptionsBacktestResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "options-backtests"
-        ],
-        "summary": "List Project Options Backtests",
-        "operationId": "list_project_options_backtests_api_projects__project_id__options_backtests_get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/OptionsBacktestResponse"
-                  },
-                  "title": "Response List Project Options Backtests Api Projects  Project Id  Options Backtests Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/projects/{project_id}/options-backtests/{run_id}": {
-      "get": {
-        "tags": [
-          "options-backtests"
-        ],
-        "summary": "Get Project Options Backtest",
-        "operationId": "get_project_options_backtest_api_projects__project_id__options_backtests__run_id__get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          },
-          {
-            "name": "run_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^[a-zA-Z0-9_-]{1,128}$",
-              "title": "Run Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OptionsBacktestResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/projects/{project_id}/runs/{run_id}/options_backtest": {
-      "get": {
-        "tags": [
-          "options-backtests"
-        ],
-        "summary": "Get Run Options Backtest",
-        "operationId": "get_run_options_backtest_api_projects__project_id__runs__run_id__options_backtest_get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          },
-          {
-            "name": "run_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^[a-zA-Z0-9_-]{1,128}$",
-              "title": "Run Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OptionsBacktestResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/projects/{project_id}/options-backtests/{run_id}/export/{format_type}": {
-      "get": {
-        "tags": [
-          "options-backtests"
-        ],
-        "summary": "Export Options Backtest",
-        "operationId": "export_options_backtest_api_projects__project_id__options_backtests__run_id__export__format_type__get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          },
-          {
-            "name": "run_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^[a-zA-Z0-9_-]{1,64}$",
-              "title": "Run Id"
-            }
-          },
-          {
-            "name": "format_type",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "enum": [
-                "json",
-                "csv",
-                "html"
-              ],
-              "type": "string",
-              "title": "Format Type"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/projects/{project_id}/backtests": {
-      "post": {
-        "tags": [
-          "backtests"
-        ],
-        "summary": "Run Project Backtest",
-        "operationId": "run_project_backtest_api_projects__project_id__backtests_post",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BacktestRunRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BacktestResultResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "backtests"
-        ],
-        "summary": "List Project Backtests",
-        "operationId": "list_project_backtests_api_projects__project_id__backtests_get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/BacktestResultResponse"
-                  },
-                  "title": "Response List Project Backtests Api Projects  Project Id  Backtests Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/projects/{project_id}/backtests/{run_id}": {
-      "get": {
-        "tags": [
-          "backtests"
-        ],
-        "summary": "Get Project Backtest",
-        "operationId": "get_project_backtest_api_projects__project_id__backtests__run_id__get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          },
-          {
-            "name": "run_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Run Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BacktestResultResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/projects/{project_id}/backtests/{run_id}/export/{format_type}": {
-      "get": {
-        "tags": [
-          "backtests"
-        ],
-        "summary": "Export Backtest",
-        "operationId": "export_backtest_api_projects__project_id__backtests__run_id__export__format_type__get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          },
-          {
-            "name": "run_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^[a-zA-Z0-9_-]{1,64}$",
-              "title": "Run Id"
-            }
-          },
-          {
-            "name": "format_type",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^(html|csv|json)$",
-              "title": "Format Type"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/projects/{project_id}/backtests/compare": {
-      "post": {
-        "tags": [
-          "backtests"
-        ],
-        "summary": "Compare Backtests",
-        "operationId": "compare_backtests_api_projects__project_id__backtests_compare_post",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BacktestComparisonRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BacktestComparisonResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/securities/{security_id}": {
-      "get": {
-        "tags": [
-          "securities"
-        ],
-        "summary": "Get Security Details",
-        "operationId": "get_security_details_api_securities__security_id__get",
-        "parameters": [
-          {
-            "name": "security_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^[a-zA-Z0-9_-]{1,64}$",
-              "title": "Security Id"
-            }
-          },
-          {
-            "name": "project_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "format": "uuid"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Optional Project ID for linked valuations/runs",
-              "title": "Project Id"
-            },
-            "description": "Optional Project ID for linked valuations/runs"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SecuritySummaryResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/projects/{project_id}/watchlist": {
       "get": {
         "tags": [
@@ -1847,120 +723,6 @@
         }
       }
     },
-    "/api/projects/{project_id}/research/{security_id}": {
-      "get": {
-        "tags": [
-          "research"
-        ],
-        "summary": "Get Security Thesis",
-        "operationId": "get_security_thesis_api_projects__project_id__research__security_id__get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          },
-          {
-            "name": "security_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^[a-zA-Z0-9_-]{1,64}$",
-              "title": "Security Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResearchThesisResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "research"
-        ],
-        "summary": "Save Security Thesis",
-        "operationId": "save_security_thesis_api_projects__project_id__research__security_id__put",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          },
-          {
-            "name": "security_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^[a-zA-Z0-9_-]{1,64}$",
-              "title": "Security Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ResearchThesisSaveRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResearchThesisResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/projects/{project_id}/runs": {
       "post": {
         "tags": [
@@ -2075,38 +837,146 @@
         }
       }
     },
-    "/api/projects/{project_id}/runs/{run_id}": {
-      "delete": {
+    "/api/security-lists": {
+      "get": {
         "tags": [
-          "runs"
+          "security_lists"
         ],
-        "summary": "Delete Project Run",
-        "operationId": "delete_project_run_api_projects__project_id__runs__run_id__delete",
+        "summary": "Get Security Lists",
+        "operationId": "get_security_lists_api_security_lists_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SecurityListSummaryResponse"
+                  },
+                  "type": "array",
+                  "title": "Response Get Security Lists Api Security Lists Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/securities": {
+      "get": {
+        "tags": [
+          "securities"
+        ],
+        "summary": "List Securities",
+        "operationId": "list_securities_api_securities_get",
         "parameters": [
           {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
+            "name": "query",
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Search symbol or name",
+              "title": "Query"
+            },
+            "description": "Search symbol or name"
           },
           {
-            "name": "run_id",
-            "in": "path",
-            "required": true,
+            "name": "limit",
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": "string",
-              "pattern": "^[a-zA-Z0-9_-]{1,128}$",
-              "title": "Run Id"
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
             }
           }
         ],
         "responses": {
-          "204": {
-            "description": "Successful Response"
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SecurityResponse"
+                  },
+                  "title": "Response List Securities Api Securities Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/securities/{security_id}": {
+      "get": {
+        "tags": [
+          "securities"
+        ],
+        "summary": "Get Security Details",
+        "operationId": "get_security_details_api_securities__security_id__get",
+        "parameters": [
+          {
+            "name": "security_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,64}$",
+              "title": "Security Id"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional Project ID for linked valuations/runs",
+              "title": "Project Id"
+            },
+            "description": "Optional Project ID for linked valuations/runs"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecuritySummaryResponse"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -2171,42 +1041,6 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/datasets/{dataset_version_id}": {
-      "delete": {
-        "tags": [
-          "datasets"
-        ],
-        "summary": "Delete Dataset",
-        "operationId": "delete_dataset_api_datasets__dataset_version_id__delete",
-        "parameters": [
-          {
-            "name": "dataset_version_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^[a-zA-Z0-9_-]{1,128}$",
-              "title": "Dataset Version Id"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -2565,6 +1399,72 @@
         }
       }
     },
+    "/api/datasets/download": {
+      "post": {
+        "tags": [
+          "datasets"
+        ],
+        "summary": "Download Dataset",
+        "operationId": "download_dataset_api_datasets_download_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/CompositeDownloadRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/TiingoDownloadRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SecEdgarDownloadRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AlpacaDownloadRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MassiveDownloadRequest"
+                  }
+                ],
+                "title": "Request"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/CompositeDownloadResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ProviderDownloadResponse"
+                    }
+                  ],
+                  "title": "Response Download Dataset Api Datasets Download Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/indicators": {
       "get": {
         "tags": [
@@ -2674,350 +1574,20 @@
         }
       }
     },
-    "/api/predictive-models": {
+    "/api/strategies-meta/template": {
       "get": {
         "tags": [
-          "predictive-models"
+          "strategies"
         ],
-        "summary": "Get Predictive Models",
-        "operationId": "get_predictive_models_api_predictive_models_get",
+        "summary": "Get Custom Strategy Template",
+        "operationId": "get_custom_strategy_template_api_strategies_meta_template_get",
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/PredictiveModelMetadataResponse"
-                  },
-                  "type": "array",
-                  "title": "Response Get Predictive Models Api Predictive Models Get"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/predictive-models/{name}": {
-      "get": {
-        "tags": [
-          "predictive-models"
-        ],
-        "summary": "Get Predictive Model By Name",
-        "operationId": "get_predictive_model_by_name_api_predictive_models__name__get",
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^[a-zA-Z0-9_]{1,64}$",
-              "title": "Name"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PredictiveModelMetadataResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/predictive-models/run": {
-      "post": {
-        "tags": [
-          "predictive-models"
-        ],
-        "summary": "Run Predictive Model Preview",
-        "operationId": "run_predictive_model_preview_api_predictive_models_run_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PredictiveModelRunRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PredictiveModelRunResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/projects/{project_id}/predictive-models/runs": {
-      "post": {
-        "tags": [
-          "predictive-models"
-        ],
-        "summary": "Save Predictive Model Run",
-        "operationId": "save_predictive_model_run_api_projects__project_id__predictive_models_runs_post",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PredictiveModelRunRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PredictiveModelRunResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "predictive-models"
-        ],
-        "summary": "List Project Predictive Model Runs",
-        "operationId": "list_project_predictive_model_runs_api_projects__project_id__predictive_models_runs_get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/PredictiveModelRunResponse"
-                  },
-                  "title": "Response List Project Predictive Model Runs Api Projects  Project Id  Predictive Models Runs Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/projects/{project_id}/predictive-models/runs/{run_id}": {
-      "get": {
-        "tags": [
-          "predictive-models"
-        ],
-        "summary": "Get Project Predictive Model Run",
-        "operationId": "get_project_predictive_model_run_api_projects__project_id__predictive_models_runs__run_id__get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          },
-          {
-            "name": "run_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^[a-zA-Z0-9_-]{1,64}$",
-              "title": "Run Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PredictiveModelRunResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/projects/{project_id}/predictive-models/runs/{run_id}/export/{format_type}": {
-      "get": {
-        "tags": [
-          "predictive-models"
-        ],
-        "summary": "Export Predictive Model",
-        "operationId": "export_predictive_model_api_projects__project_id__predictive_models_runs__run_id__export__format_type__get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          },
-          {
-            "name": "run_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^[a-zA-Z0-9_-]{1,64}$",
-              "title": "Run Id"
-            }
-          },
-          {
-            "name": "format_type",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "enum": [
-                "html",
-                "csv",
-                "json"
-              ],
-              "type": "string",
-              "title": "Format Type"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "manifest": {
-                      "type": "object",
-                      "additionalProperties": true
-                    },
-                    "predictive_model": {
-                      "type": "object",
-                      "additionalProperties": true
-                    }
-                  },
-                  "required": [
-                    "manifest",
-                    "predictive_model"
-                  ]
-                }
-              },
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "text/csv": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/StrategyTemplateResponse"
                 }
               }
             }
@@ -3380,13 +1950,64 @@
         }
       }
     },
-    "/api/projects/{project_id}/alerts": {
+    "/api/projects/{project_id}/backtests": {
+      "post": {
+        "tags": [
+          "backtests"
+        ],
+        "summary": "Run Project Backtest",
+        "operationId": "run_project_backtest_api_projects__project_id__backtests_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BacktestRunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestResultResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "get": {
         "tags": [
-          "alerts"
+          "backtests"
         ],
-        "summary": "List Project Signals",
-        "operationId": "list_project_signals_api_projects__project_id__alerts_get",
+        "summary": "List Project Backtests",
+        "operationId": "list_project_backtests_api_projects__project_id__backtests_get",
         "parameters": [
           {
             "name": "project_id",
@@ -3407,9 +2028,9 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/SignalResponse"
+                    "$ref": "#/components/schemas/BacktestResultResponse"
                   },
-                  "title": "Response List Project Signals Api Projects  Project Id  Alerts Get"
+                  "title": "Response List Project Backtests Api Projects  Project Id  Backtests Get"
                 }
               }
             }
@@ -3427,13 +2048,230 @@
         }
       }
     },
-    "/api/projects/{project_id}/alerts/refresh": {
+    "/api/projects/{project_id}/backtests/{run_id}": {
+      "get": {
+        "tags": [
+          "backtests"
+        ],
+        "summary": "Get Project Backtest",
+        "operationId": "get_project_backtest_api_projects__project_id__backtests__run_id__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestResultResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/backtests/{run_id}/export/{format_type}": {
+      "get": {
+        "tags": [
+          "backtests"
+        ],
+        "summary": "Export Backtest",
+        "operationId": "export_backtest_api_projects__project_id__backtests__run_id__export__format_type__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,64}$",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "format_type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^(html|csv|json)$",
+              "title": "Format Type"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/backtests/compare": {
       "post": {
         "tags": [
-          "alerts"
+          "backtests"
         ],
-        "summary": "Refresh Project Alerts",
-        "operationId": "refresh_project_alerts_api_projects__project_id__alerts_refresh_post",
+        "summary": "Compare Backtests",
+        "operationId": "compare_backtests_api_projects__project_id__backtests_compare_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BacktestComparisonRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestComparisonResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/options-backtests": {
+      "post": {
+        "tags": [
+          "options-backtests"
+        ],
+        "summary": "Run Project Options Backtest",
+        "operationId": "run_project_options_backtest_api_projects__project_id__options_backtests_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OptionsBacktestRunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OptionsBacktestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "options-backtests"
+        ],
+        "summary": "List Project Options Backtests",
+        "operationId": "list_project_options_backtests_api_projects__project_id__options_backtests_get",
         "parameters": [
           {
             "name": "project_id",
@@ -3452,7 +2290,368 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SignalRefreshResponse"
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OptionsBacktestResponse"
+                  },
+                  "title": "Response List Project Options Backtests Api Projects  Project Id  Options Backtests Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/options-backtests/{run_id}": {
+      "get": {
+        "tags": [
+          "options-backtests"
+        ],
+        "summary": "Get Project Options Backtest",
+        "operationId": "get_project_options_backtest_api_projects__project_id__options_backtests__run_id__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OptionsBacktestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/runs/{run_id}/options_backtest": {
+      "get": {
+        "tags": [
+          "options-backtests"
+        ],
+        "summary": "Get Run Options Backtest",
+        "operationId": "get_run_options_backtest_api_projects__project_id__runs__run_id__options_backtest_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OptionsBacktestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/options-backtests/{run_id}/export/{format_type}": {
+      "get": {
+        "tags": [
+          "options-backtests"
+        ],
+        "summary": "Export Options Backtest",
+        "operationId": "export_options_backtest_api_projects__project_id__options_backtests__run_id__export__format_type__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,64}$",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "format_type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "json",
+                "csv",
+                "html"
+              ],
+              "type": "string",
+              "title": "Format Type"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/datasets/{dataset_version_id}": {
+      "delete": {
+        "tags": [
+          "datasets"
+        ],
+        "summary": "Delete Dataset",
+        "operationId": "delete_dataset_api_datasets__dataset_version_id__delete",
+        "parameters": [
+          {
+            "name": "dataset_version_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$",
+              "title": "Dataset Version Id"
+            }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Force"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/datasets/bulk-delete": {
+      "post": {
+        "tags": [
+          "datasets"
+        ],
+        "summary": "Bulk Delete Datasets",
+        "operationId": "bulk_delete_datasets_api_datasets_bulk_delete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkDeleteDatasetsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkDeleteDatasetsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/runs/{run_id}": {
+      "delete": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Delete Project Run",
+        "operationId": "delete_project_run_api_projects__project_id__runs__run_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/runs/bulk-delete": {
+      "post": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Bulk Delete Project Runs",
+        "operationId": "bulk_delete_project_runs_api_projects__project_id__runs_bulk_delete_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkDeleteRunsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkDeleteRunsResponse"
                 }
               }
             }
@@ -4057,159 +3256,8 @@
         ],
         "title": "Body_import_dataset_api_datasets_post"
       },
-      "CashFlowForecastYearResponse": {
+      "BulkDeleteDatasetsRequest": {
         "properties": {
-          "year": {
-            "type": "integer",
-            "title": "Year"
-          },
-          "revenue": {
-            "type": "number",
-            "title": "Revenue"
-          },
-          "revenue_growth": {
-            "type": "number",
-            "title": "Revenue Growth"
-          },
-          "operating_income": {
-            "type": "number",
-            "title": "Operating Income"
-          },
-          "tax": {
-            "type": "number",
-            "title": "Tax"
-          },
-          "nopat": {
-            "type": "number",
-            "title": "Nopat"
-          },
-          "reinvestment": {
-            "type": "number",
-            "title": "Reinvestment"
-          },
-          "free_cash_flow": {
-            "type": "number",
-            "title": "Free Cash Flow"
-          },
-          "discount_factor": {
-            "type": "number",
-            "title": "Discount Factor"
-          },
-          "present_value": {
-            "type": "number",
-            "title": "Present Value"
-          }
-        },
-        "type": "object",
-        "required": [
-          "year",
-          "revenue",
-          "revenue_growth",
-          "operating_income",
-          "tax",
-          "nopat",
-          "reinvestment",
-          "free_cash_flow",
-          "discount_factor",
-          "present_value"
-        ],
-        "title": "CashFlowForecastYearResponse"
-      },
-      "ComparableCompanyInputResponse": {
-        "properties": {
-          "security_id": {
-            "type": "string",
-            "title": "Security Id"
-          },
-          "symbol": {
-            "type": "string",
-            "title": "Symbol"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "currency": {
-            "type": "string",
-            "title": "Currency"
-          },
-          "market_cap": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Market Cap"
-          },
-          "total_debt": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Total Debt"
-          },
-          "cash": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cash"
-          },
-          "revenue": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Revenue"
-          },
-          "ebitda": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ebitda"
-          },
-          "net_income": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Net Income"
-          },
-          "free_cash_flow": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Free Cash Flow"
-          },
           "dataset_version_ids": {
             "items": {
               "type": "string"
@@ -4217,210 +3265,116 @@
             "type": "array",
             "title": "Dataset Version Ids"
           },
-          "provenance": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Provenance"
-          },
-          "units": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Units"
-          },
-          "input_dataset_versions": {
-            "additionalProperties": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "type": "object",
-            "title": "Input Dataset Versions"
-          }
-        },
-        "type": "object",
-        "required": [
-          "security_id",
-          "symbol",
-          "name",
-          "currency",
-          "market_cap",
-          "total_debt",
-          "cash",
-          "revenue",
-          "ebitda",
-          "net_income",
-          "free_cash_flow",
-          "dataset_version_ids",
-          "provenance",
-          "units",
-          "input_dataset_versions"
-        ],
-        "title": "ComparableCompanyInputResponse"
-      },
-      "ComparableCompanyValuationResponse": {
-        "properties": {
-          "security_id": {
-            "type": "string",
-            "title": "Security Id"
-          },
-          "symbol": {
-            "type": "string",
-            "title": "Symbol"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "currency": {
-            "type": "string",
-            "title": "Currency"
-          },
-          "market_cap": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Market Cap"
-          },
-          "enterprise_value": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Enterprise Value"
-          },
-          "price_to_earnings": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Price To Earnings"
-          },
-          "ev_to_revenue": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ev To Revenue"
-          },
-          "ev_to_ebitda": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ev To Ebitda"
-          },
-          "free_cash_flow_yield": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Free Cash Flow Yield"
-          },
-          "inputs": {
-            "$ref": "#/components/schemas/ComparableCompanyInputResponse"
-          },
-          "status": {
-            "type": "string",
-            "title": "Status",
-            "default": "ok"
-          },
-          "has_valuation": {
+          "force": {
             "type": "boolean",
-            "title": "Has Valuation",
+            "title": "Force",
             "default": true
           }
         },
         "type": "object",
         "required": [
-          "security_id",
-          "symbol",
-          "name",
-          "currency",
-          "market_cap",
-          "enterprise_value",
-          "price_to_earnings",
-          "ev_to_revenue",
-          "ev_to_ebitda",
-          "free_cash_flow_yield",
-          "inputs"
+          "dataset_version_ids"
         ],
-        "title": "ComparableCompanyValuationResponse"
+        "title": "BulkDeleteDatasetsRequest"
       },
-      "ComparableValuationRequest": {
+      "BulkDeleteDatasetsResponse": {
         "properties": {
-          "target_security_id": {
-            "type": "string",
-            "pattern": "^[a-zA-Z0-9_-]{1,64}$",
-            "title": "Target Security Id"
-          },
-          "peer_security_ids": {
+          "deleted_ids": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "maxItems": 50,
-            "minItems": 1,
-            "title": "Peer Security Ids"
+            "title": "Deleted Ids"
           }
         },
         "type": "object",
         "required": [
-          "target_security_id",
-          "peer_security_ids"
+          "deleted_ids"
         ],
-        "title": "ComparableValuationRequest"
+        "title": "BulkDeleteDatasetsResponse"
       },
-      "ComparableValuationResponse": {
+      "BulkDeleteRunsRequest": {
         "properties": {
-          "target": {
-            "$ref": "#/components/schemas/ComparableCompanyValuationResponse"
-          },
-          "peers": {
-            "items": {
-              "$ref": "#/components/schemas/ComparableCompanyValuationResponse"
-            },
-            "type": "array",
-            "title": "Peers"
-          },
-          "peer_medians": {
-            "$ref": "#/components/schemas/ComparableCompanyValuationResponse"
-          },
-          "warnings": {
+          "run_ids": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Warnings"
+            "title": "Run Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_ids"
+        ],
+        "title": "BulkDeleteRunsRequest"
+      },
+      "BulkDeleteRunsResponse": {
+        "properties": {
+          "deleted_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Deleted Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "deleted_ids"
+        ],
+        "title": "BulkDeleteRunsResponse"
+      },
+      "CompositeDownloadRequest": {
+        "properties": {
+          "security_list_id": {
+            "type": "string",
+            "title": "Security List Id"
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Start Date"
+          },
+          "end_date": {
+            "type": "string",
+            "format": "date",
+            "title": "End Date"
+          },
+          "downloads": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderDownloadItem"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Downloads"
+          }
+        },
+        "type": "object",
+        "required": [
+          "security_list_id",
+          "start_date",
+          "end_date",
+          "downloads"
+        ],
+        "title": "CompositeDownloadRequest"
+      },
+      "CompositeDownloadResponse": {
+        "properties": {
+          "dataset_version_id": {
+            "type": "string",
+            "title": "Dataset Version Id"
+          },
+          "security_list_id": {
+            "type": "string",
+            "title": "Security List Id"
+          },
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/DatasetPartResponse"
+            },
+            "type": "array",
+            "title": "Parts"
           },
           "dataset_version_ids": {
             "items": {
@@ -4428,44 +3382,15 @@
             },
             "type": "array",
             "title": "Dataset Version Ids"
-          },
-          "calculated_at": {
-            "type": "string",
-            "title": "Calculated At"
-          },
-          "method_revision": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Method Revision"
-          },
-          "run_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Id"
           }
         },
         "type": "object",
         "required": [
-          "target",
-          "peers",
-          "peer_medians",
-          "warnings",
-          "dataset_version_ids",
-          "calculated_at"
+          "dataset_version_id",
+          "security_list_id",
+          "parts"
         ],
-        "title": "ComparableValuationResponse"
+        "title": "CompositeDownloadResponse"
       },
       "ConstraintRejectionResponse": {
         "properties": {
@@ -4609,11 +3534,13 @@
           },
           "row_count": {
             "type": "integer",
-            "title": "Row Count"
+            "title": "Row Count",
+            "default": 0
           },
           "rejected_count": {
             "type": "integer",
-            "title": "Rejected Count"
+            "title": "Rejected Count",
+            "default": 0
           },
           "missing_fields": {
             "additionalProperties": {
@@ -4631,7 +3558,8 @@
           },
           "total_warnings": {
             "type": "integer",
-            "title": "Total Warnings"
+            "title": "Total Warnings",
+            "default": 0
           },
           "files": {
             "items": {
@@ -4659,21 +3587,42 @@
             "type": "string",
             "title": "Dataset Type",
             "default": "daily_bars"
+          },
+          "security_list_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Security List Id"
+          },
+          "security_list_as_of_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Security List As Of Date"
+          },
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/DatasetPartResponse"
+            },
+            "type": "array",
+            "title": "Parts"
           }
         },
         "type": "object",
         "required": [
           "id",
           "source",
-          "retrieval_time",
-          "coverage_start",
-          "coverage_end",
-          "row_count",
-          "rejected_count",
-          "missing_fields",
-          "warnings",
-          "total_warnings",
-          "files"
+          "retrieval_time"
         ],
         "title": "CoverageResponse"
       },
@@ -4814,6 +3763,102 @@
         ],
         "title": "DatasetImportResponse"
       },
+      "DatasetPartResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "dataset_type": {
+            "type": "string",
+            "title": "Dataset Type"
+          },
+          "coverage_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage Start"
+          },
+          "coverage_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage End"
+          },
+          "row_count": {
+            "type": "integer",
+            "title": "Row Count",
+            "default": 0
+          },
+          "rejected_count": {
+            "type": "integer",
+            "title": "Rejected Count",
+            "default": 0
+          },
+          "missing_fields": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Missing Fields"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "total_warnings": {
+            "type": "integer",
+            "title": "Total Warnings",
+            "default": 0
+          },
+          "files": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Files"
+          },
+          "has_temporal_provenance": {
+            "type": "boolean",
+            "title": "Has Temporal Provenance",
+            "default": false
+          },
+          "is_fundamentals": {
+            "type": "boolean",
+            "title": "Is Fundamentals",
+            "default": false
+          },
+          "is_corporate_actions": {
+            "type": "boolean",
+            "title": "Is Corporate Actions",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "dataset_type"
+        ],
+        "title": "DatasetPartResponse"
+      },
       "DefinitionCreateRequest": {
         "properties": {
           "kind": {
@@ -4871,12 +3916,11 @@
             "title": "Revision"
           },
           "definition": {
-            "$ref": "#/components/schemas/JsonValue-Output"
-          },
-          "saved_at": {
-            "type": "string",
-            "title": "Saved At",
-            "default": ""
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object",
+            "title": "Definition"
           }
         },
         "type": "object",
@@ -5056,6 +4100,7 @@
           },
           "maintenance_margin": {
             "type": "number",
+            "maximum": 1.0,
             "minimum": 0.0,
             "title": "Maintenance Margin",
             "default": 0.25
@@ -5064,7 +4109,7 @@
             "type": "string",
             "enum": [
               "reject",
-              "constrain"
+              "clamp"
             ],
             "title": "Leverage Mode",
             "default": "reject"
@@ -5135,594 +4180,6 @@
         },
         "type": "object",
         "title": "ExecutionModelAssumptionsResponse"
-      },
-      "FCFFDCFInputResponse": {
-        "properties": {
-          "base_revenue": {
-            "type": "number",
-            "title": "Base Revenue"
-          },
-          "revenue_growth_rate": {
-            "type": "number",
-            "title": "Revenue Growth Rate"
-          },
-          "operating_margin": {
-            "type": "number",
-            "title": "Operating Margin"
-          },
-          "tax_rate": {
-            "type": "number",
-            "title": "Tax Rate"
-          },
-          "reinvestment_rate": {
-            "type": "number",
-            "title": "Reinvestment Rate"
-          },
-          "wacc": {
-            "type": "number",
-            "title": "Wacc"
-          },
-          "terminal_growth_rate": {
-            "type": "number",
-            "title": "Terminal Growth Rate"
-          },
-          "shares_outstanding": {
-            "type": "number",
-            "title": "Shares Outstanding"
-          },
-          "total_debt": {
-            "type": "number",
-            "title": "Total Debt"
-          },
-          "cash": {
-            "type": "number",
-            "title": "Cash"
-          },
-          "forecast_years": {
-            "type": "integer",
-            "title": "Forecast Years"
-          },
-          "provenance": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Provenance"
-          },
-          "units": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Units"
-          },
-          "input_warnings": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Input Warnings"
-          }
-        },
-        "type": "object",
-        "required": [
-          "base_revenue",
-          "revenue_growth_rate",
-          "operating_margin",
-          "tax_rate",
-          "reinvestment_rate",
-          "wacc",
-          "terminal_growth_rate",
-          "shares_outstanding",
-          "total_debt",
-          "cash",
-          "forecast_years"
-        ],
-        "title": "FCFFDCFInputResponse"
-      },
-      "FCFFDCFRequest": {
-        "properties": {
-          "target_security_id": {
-            "type": "string",
-            "pattern": "^[a-zA-Z0-9_-]{1,64}$",
-            "title": "Target Security Id"
-          },
-          "base_revenue": {
-            "type": "number",
-            "exclusiveMinimum": 0.0,
-            "title": "Base Revenue",
-            "description": "Base period revenue"
-          },
-          "revenue_growth_rate": {
-            "type": "number",
-            "maximum": 10.0,
-            "minimum": -0.99,
-            "title": "Revenue Growth Rate",
-            "description": "Forecast revenue growth rate"
-          },
-          "operating_margin": {
-            "type": "number",
-            "maximum": 1.0,
-            "minimum": -1.0,
-            "title": "Operating Margin",
-            "description": "Forecast operating margin"
-          },
-          "tax_rate": {
-            "type": "number",
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "title": "Tax Rate",
-            "description": "Effective tax rate"
-          },
-          "reinvestment_rate": {
-            "type": "number",
-            "maximum": 2.0,
-            "minimum": 0.0,
-            "title": "Reinvestment Rate",
-            "description": "Reinvestment rate as fraction of NOPAT"
-          },
-          "wacc": {
-            "type": "number",
-            "maximum": 1.0,
-            "exclusiveMinimum": 0.0,
-            "title": "Wacc",
-            "description": "Weighted Average Cost of Capital"
-          },
-          "terminal_growth_rate": {
-            "type": "number",
-            "maximum": 0.2,
-            "minimum": -0.1,
-            "title": "Terminal Growth Rate",
-            "description": "Perpetual terminal growth rate"
-          },
-          "shares_outstanding": {
-            "type": "number",
-            "exclusiveMinimum": 0.0,
-            "title": "Shares Outstanding",
-            "description": "Shares outstanding"
-          },
-          "total_debt": {
-            "type": "number",
-            "minimum": 0.0,
-            "title": "Total Debt",
-            "description": "Total debt",
-            "default": 0.0
-          },
-          "cash": {
-            "type": "number",
-            "minimum": 0.0,
-            "title": "Cash",
-            "description": "Cash and cash equivalents",
-            "default": 0.0
-          },
-          "forecast_years": {
-            "type": "integer",
-            "maximum": 20.0,
-            "minimum": 1.0,
-            "title": "Forecast Years",
-            "description": "Number of forecast years",
-            "default": 5
-          },
-          "revenue_growth_rates": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "number"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Revenue Growth Rates"
-          },
-          "operating_margins": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "number"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Operating Margins"
-          },
-          "reinvestment_rates": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "number"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reinvestment Rates"
-          }
-        },
-        "type": "object",
-        "required": [
-          "target_security_id",
-          "base_revenue",
-          "revenue_growth_rate",
-          "operating_margin",
-          "tax_rate",
-          "reinvestment_rate",
-          "wacc",
-          "terminal_growth_rate",
-          "shares_outstanding"
-        ],
-        "title": "FCFFDCFRequest"
-      },
-      "FCFFDCFSeedResponse": {
-        "properties": {
-          "security_id": {
-            "type": "string",
-            "title": "Security Id"
-          },
-          "symbol": {
-            "type": "string",
-            "title": "Symbol"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "currency": {
-            "type": "string",
-            "title": "Currency"
-          },
-          "base_revenue": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Base Revenue"
-          },
-          "operating_margin": {
-            "type": "number",
-            "title": "Operating Margin",
-            "default": 0.2
-          },
-          "tax_rate": {
-            "type": "number",
-            "title": "Tax Rate",
-            "default": 0.21
-          },
-          "reinvestment_rate": {
-            "type": "number",
-            "title": "Reinvestment Rate",
-            "default": 0.2
-          },
-          "wacc": {
-            "type": "number",
-            "title": "Wacc",
-            "default": 0.085
-          },
-          "terminal_growth_rate": {
-            "type": "number",
-            "title": "Terminal Growth Rate",
-            "default": 0.025
-          },
-          "revenue_growth_rate": {
-            "type": "number",
-            "title": "Revenue Growth Rate",
-            "default": 0.07
-          },
-          "shares_outstanding": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Shares Outstanding"
-          },
-          "total_debt": {
-            "type": "number",
-            "title": "Total Debt",
-            "default": 0.0
-          },
-          "cash": {
-            "type": "number",
-            "title": "Cash",
-            "default": 0.0
-          },
-          "market_cap": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Market Cap"
-          },
-          "latest_price": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Latest Price"
-          },
-          "forecast_years": {
-            "type": "integer",
-            "title": "Forecast Years",
-            "default": 5
-          },
-          "dataset_version_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Dataset Version Ids"
-          },
-          "provenance": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Provenance"
-          },
-          "units": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Units"
-          },
-          "warnings": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Warnings"
-          }
-        },
-        "type": "object",
-        "required": [
-          "security_id",
-          "symbol",
-          "name",
-          "currency"
-        ],
-        "title": "FCFFDCFSeedResponse"
-      },
-      "FCFFDCFValuationResponse": {
-        "properties": {
-          "security_id": {
-            "type": "string",
-            "title": "Security Id"
-          },
-          "symbol": {
-            "type": "string",
-            "title": "Symbol"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "currency": {
-            "type": "string",
-            "title": "Currency"
-          },
-          "forecast_years": {
-            "type": "integer",
-            "title": "Forecast Years"
-          },
-          "forecast_cash_flows": {
-            "items": {
-              "$ref": "#/components/schemas/CashFlowForecastYearResponse"
-            },
-            "type": "array",
-            "title": "Forecast Cash Flows"
-          },
-          "terminal_cash_flow": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Terminal Cash Flow"
-          },
-          "terminal_value": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Terminal Value"
-          },
-          "pv_terminal_value": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pv Terminal Value"
-          },
-          "terminal_value_contribution": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Terminal Value Contribution"
-          },
-          "enterprise_value": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Enterprise Value"
-          },
-          "cash": {
-            "type": "number",
-            "title": "Cash"
-          },
-          "total_debt": {
-            "type": "number",
-            "title": "Total Debt"
-          },
-          "equity_value": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Equity Value"
-          },
-          "shares_outstanding": {
-            "type": "number",
-            "title": "Shares Outstanding"
-          },
-          "value_per_share": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Value Per Share"
-          },
-          "scenarios": {
-            "items": {
-              "$ref": "#/components/schemas/ScenarioResponse"
-            },
-            "type": "array",
-            "title": "Scenarios"
-          },
-          "sensitivity": {
-            "$ref": "#/components/schemas/SensitivityMatrixResponse"
-          },
-          "warnings": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Warnings"
-          },
-          "dataset_version_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Dataset Version Ids"
-          },
-          "calculated_at": {
-            "type": "string",
-            "title": "Calculated At"
-          },
-          "inputs": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/FCFFDCFInputResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "provenance": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Provenance"
-          },
-          "units": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Units"
-          },
-          "method_revision": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Method Revision"
-          },
-          "run_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "security_id",
-          "symbol",
-          "name",
-          "currency",
-          "forecast_years",
-          "forecast_cash_flows",
-          "terminal_cash_flow",
-          "terminal_value",
-          "pv_terminal_value",
-          "terminal_value_contribution",
-          "enterprise_value",
-          "cash",
-          "total_debt",
-          "equity_value",
-          "shares_outstanding",
-          "value_per_share",
-          "scenarios",
-          "sensitivity",
-          "warnings",
-          "dataset_version_ids",
-          "calculated_at"
-        ],
-        "title": "FCFFDCFValuationResponse"
       },
       "FillResponse": {
         "properties": {
@@ -6361,52 +4818,48 @@
         ],
         "title": "LedgerRowResponse"
       },
-      "NaiveBenchmarkEvaluationResponse": {
+      "MassiveDownloadRequest": {
         "properties": {
-          "name": {
+          "start_date": {
             "type": "string",
-            "title": "Name"
+            "format": "date",
+            "title": "Start Date"
           },
-          "display_name": {
+          "end_date": {
             "type": "string",
-            "title": "Display Name"
+            "format": "date",
+            "title": "End Date"
           },
-          "description": {
+          "provider": {
             "type": "string",
-            "title": "Description"
+            "const": "massive",
+            "title": "Provider"
           },
-          "period_metrics": {
-            "additionalProperties": {
-              "additionalProperties": {
-                "type": "number"
-              },
-              "type": "object"
-            },
-            "type": "object",
-            "title": "Period Metrics"
+          "symbol": {
+            "type": "string",
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Symbol"
           },
-          "out_of_sample_comparison": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue-Output"
-            },
-            "type": "object",
-            "title": "Out Of Sample Comparison"
-          },
-          "completed": {
-            "type": "boolean",
-            "title": "Completed",
-            "default": false
+          "data_type": {
+            "type": "string",
+            "enum": [
+              "stocks_daily",
+              "stocks_minute",
+              "options"
+            ],
+            "title": "Data Type",
+            "default": "stocks_daily"
           }
         },
         "type": "object",
         "required": [
-          "name",
-          "display_name",
-          "description",
-          "period_metrics",
-          "out_of_sample_comparison"
+          "start_date",
+          "end_date",
+          "provider",
+          "symbol"
         ],
-        "title": "NaiveBenchmarkEvaluationResponse"
+        "title": "MassiveDownloadRequest"
       },
       "OptionsBacktestResponse": {
         "properties": {
@@ -6805,849 +5258,6 @@
         ],
         "title": "PositionSnapshotResponse"
       },
-      "PredictiveModelArtifactResponse": {
-        "properties": {
-          "model_name": {
-            "type": "string",
-            "title": "Model Name"
-          },
-          "feature_name": {
-            "type": "string",
-            "title": "Feature Name"
-          },
-          "target_name": {
-            "type": "string",
-            "title": "Target Name"
-          },
-          "horizon": {
-            "type": "integer",
-            "title": "Horizon"
-          },
-          "intercept": {
-            "type": "number",
-            "title": "Intercept"
-          },
-          "coefficient": {
-            "type": "number",
-            "title": "Coefficient"
-          },
-          "training_start": {
-            "type": "string",
-            "title": "Training Start"
-          },
-          "training_end": {
-            "type": "string",
-            "title": "Training End"
-          },
-          "training_observations": {
-            "type": "integer",
-            "title": "Training Observations"
-          },
-          "parameters": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue-Output"
-            },
-            "type": "object",
-            "title": "Parameters"
-          },
-          "seed": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Seed"
-          },
-          "training_metrics": {
-            "additionalProperties": {
-              "type": "number"
-            },
-            "type": "object",
-            "title": "Training Metrics"
-          },
-          "feature_definition": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue-Output"
-            },
-            "type": "object",
-            "title": "Feature Definition"
-          },
-          "preprocessing": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue-Output"
-            },
-            "type": "object",
-            "title": "Preprocessing"
-          }
-        },
-        "type": "object",
-        "required": [
-          "model_name",
-          "feature_name",
-          "target_name",
-          "horizon",
-          "intercept",
-          "coefficient",
-          "training_start",
-          "training_end",
-          "training_observations",
-          "parameters",
-          "seed",
-          "training_metrics"
-        ],
-        "title": "PredictiveModelArtifactResponse"
-      },
-      "PredictiveModelFoldResponse": {
-        "properties": {
-          "fold_index": {
-            "type": "integer",
-            "title": "Fold Index"
-          },
-          "period": {
-            "type": "string",
-            "enum": [
-              "validation",
-              "test"
-            ],
-            "title": "Period"
-          },
-          "prediction_session_date": {
-            "type": "string",
-            "title": "Prediction Session Date"
-          },
-          "target_date": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Target Date"
-          },
-          "training_start": {
-            "type": "string",
-            "title": "Training Start"
-          },
-          "training_end": {
-            "type": "string",
-            "title": "Training End"
-          },
-          "training_observations": {
-            "type": "integer",
-            "title": "Training Observations"
-          },
-          "fit_scope": {
-            "type": "string",
-            "title": "Fit Scope"
-          },
-          "artifact": {
-            "$ref": "#/components/schemas/PredictiveModelArtifactResponse"
-          },
-          "prediction": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PredictiveModelPredictionResponse"
-              },
-              {
-                "$ref": "#/components/schemas/PredictiveModelForecastResponse"
-              }
-            ],
-            "title": "Prediction"
-          },
-          "metrics": {
-            "additionalProperties": {
-              "type": "number"
-            },
-            "type": "object",
-            "title": "Metrics"
-          }
-        },
-        "type": "object",
-        "required": [
-          "fold_index",
-          "period",
-          "prediction_session_date",
-          "target_date",
-          "training_start",
-          "training_end",
-          "training_observations",
-          "fit_scope",
-          "artifact",
-          "prediction",
-          "metrics"
-        ],
-        "title": "PredictiveModelFoldResponse"
-      },
-      "PredictiveModelForecastResponse": {
-        "properties": {
-          "session_date": {
-            "type": "string",
-            "title": "Session Date"
-          },
-          "feature_value": {
-            "type": "number",
-            "title": "Feature Value"
-          },
-          "predicted_value": {
-            "type": "number",
-            "title": "Predicted Value"
-          },
-          "actual_target": {
-            "type": "null",
-            "title": "Actual Target"
-          },
-          "target_date": {
-            "type": "null",
-            "title": "Target Date"
-          },
-          "period": {
-            "type": "null",
-            "title": "Period"
-          }
-        },
-        "type": "object",
-        "required": [
-          "session_date",
-          "feature_value",
-          "predicted_value"
-        ],
-        "title": "PredictiveModelForecastResponse"
-      },
-      "PredictiveModelMetadataResponse": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "display_name": {
-            "type": "string",
-            "title": "Display Name"
-          },
-          "description": {
-            "type": "string",
-            "title": "Description"
-          },
-          "target": {
-            "type": "string",
-            "title": "Target"
-          },
-          "horizon": {
-            "type": "integer",
-            "title": "Horizon"
-          },
-          "features": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Features"
-          },
-          "training_window": {
-            "type": "integer",
-            "title": "Training Window"
-          },
-          "parameters": {
-            "items": {
-              "$ref": "#/components/schemas/PredictiveModelParameterResponse"
-            },
-            "type": "array",
-            "title": "Parameters"
-          },
-          "output_meaning": {
-            "type": "string",
-            "title": "Output Meaning"
-          },
-          "outputs": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Outputs"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "display_name",
-          "description",
-          "target",
-          "horizon",
-          "features",
-          "training_window",
-          "parameters",
-          "output_meaning",
-          "outputs"
-        ],
-        "title": "PredictiveModelMetadataResponse"
-      },
-      "PredictiveModelParameterResponse": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "param_type": {
-            "type": "string",
-            "title": "Param Type"
-          },
-          "default": {
-            "$ref": "#/components/schemas/JsonValue-Output"
-          },
-          "description": {
-            "type": "string",
-            "title": "Description"
-          },
-          "min_value": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Min Value"
-          },
-          "max_value": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Value"
-          },
-          "options": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Options"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "param_type",
-          "default",
-          "description"
-        ],
-        "title": "PredictiveModelParameterResponse"
-      },
-      "PredictiveModelPeriodMetricsResponse": {
-        "properties": {
-          "period": {
-            "type": "string",
-            "enum": [
-              "training",
-              "validation",
-              "test"
-            ],
-            "title": "Period"
-          },
-          "observations": {
-            "type": "integer",
-            "title": "Observations"
-          },
-          "metrics": {
-            "additionalProperties": {
-              "type": "number"
-            },
-            "type": "object",
-            "title": "Metrics"
-          },
-          "benchmark_metrics": {
-            "additionalProperties": {
-              "type": "number"
-            },
-            "type": "object",
-            "title": "Benchmark Metrics"
-          },
-          "comparison": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue-Output"
-            },
-            "type": "object",
-            "title": "Comparison"
-          },
-          "sample_scope": {
-            "type": "string",
-            "enum": [
-              "in_sample",
-              "validation",
-              "out_of_sample"
-            ],
-            "title": "Sample Scope"
-          }
-        },
-        "type": "object",
-        "required": [
-          "period",
-          "observations",
-          "metrics",
-          "sample_scope"
-        ],
-        "title": "PredictiveModelPeriodMetricsResponse"
-      },
-      "PredictiveModelPredictionResponse": {
-        "properties": {
-          "session_date": {
-            "type": "string",
-            "title": "Session Date"
-          },
-          "feature_value": {
-            "type": "number",
-            "title": "Feature Value"
-          },
-          "predicted_value": {
-            "type": "number",
-            "title": "Predicted Value"
-          },
-          "actual_target": {
-            "type": "number",
-            "title": "Actual Target"
-          },
-          "target_date": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Target Date"
-          },
-          "period": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "training",
-                  "validation",
-                  "test"
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Period"
-          }
-        },
-        "type": "object",
-        "required": [
-          "session_date",
-          "feature_value",
-          "predicted_value",
-          "actual_target"
-        ],
-        "title": "PredictiveModelPredictionResponse"
-      },
-      "PredictiveModelRunRequest": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "pattern": "^[a-zA-Z0-9_]{1,64}$",
-            "title": "Name"
-          },
-          "dataset_version_id": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Dataset Version Id"
-          },
-          "symbol": {
-            "type": "string",
-            "maxLength": 32,
-            "minLength": 1,
-            "title": "Symbol"
-          },
-          "parameters": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue-Input"
-            },
-            "type": "object",
-            "title": "Parameters"
-          },
-          "seed": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Seed"
-          },
-          "as_of": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "As Of"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "dataset_version_id",
-          "symbol"
-        ],
-        "title": "PredictiveModelRunRequest"
-      },
-      "PredictiveModelRunResponse": {
-        "properties": {
-          "run_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Id"
-          },
-          "model_revision": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Model Revision"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "preview",
-              "completed"
-            ],
-            "title": "Status",
-            "default": "preview"
-          },
-          "model_name": {
-            "type": "string",
-            "title": "Model Name"
-          },
-          "display_name": {
-            "type": "string",
-            "title": "Display Name"
-          },
-          "description": {
-            "type": "string",
-            "title": "Description"
-          },
-          "symbol": {
-            "type": "string",
-            "title": "Symbol"
-          },
-          "dataset_version_id": {
-            "type": "string",
-            "title": "Dataset Version Id"
-          },
-          "dataset_version_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Dataset Version Ids"
-          },
-          "parameters": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue-Output"
-            },
-            "type": "object",
-            "title": "Parameters"
-          },
-          "seed": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Seed"
-          },
-          "target": {
-            "type": "string",
-            "title": "Target"
-          },
-          "horizon": {
-            "type": "integer",
-            "title": "Horizon"
-          },
-          "features": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Features"
-          },
-          "training_window": {
-            "type": "integer",
-            "title": "Training Window"
-          },
-          "output_meaning": {
-            "type": "string",
-            "title": "Output Meaning"
-          },
-          "outputs": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Outputs"
-          },
-          "artifact": {
-            "$ref": "#/components/schemas/PredictiveModelArtifactResponse"
-          },
-          "predictions": {
-            "items": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/PredictiveModelPredictionResponse"
-                },
-                {
-                  "$ref": "#/components/schemas/PredictiveModelForecastResponse"
-                }
-              ]
-            },
-            "type": "array",
-            "title": "Predictions"
-          },
-          "metrics": {
-            "additionalProperties": {
-              "type": "number"
-            },
-            "type": "object",
-            "title": "Metrics"
-          },
-          "training_start": {
-            "type": "string",
-            "title": "Training Start"
-          },
-          "training_end": {
-            "type": "string",
-            "title": "Training End"
-          },
-          "completed_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Completed At"
-          },
-          "as_of": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "As Of"
-          },
-          "out_of_sample_status": {
-            "type": "string",
-            "title": "Out Of Sample Status"
-          },
-          "evaluation_mode": {
-            "type": "string",
-            "enum": [
-              "holdout",
-              "expanding",
-              "rolling"
-            ],
-            "title": "Evaluation Mode",
-            "default": "holdout"
-          },
-          "splits": {
-            "items": {
-              "$ref": "#/components/schemas/PredictiveModelSplitResponse"
-            },
-            "type": "array",
-            "title": "Splits"
-          },
-          "period_metrics": {
-            "items": {
-              "$ref": "#/components/schemas/PredictiveModelPeriodMetricsResponse"
-            },
-            "type": "array",
-            "title": "Period Metrics"
-          },
-          "fold_artifacts": {
-            "items": {
-              "$ref": "#/components/schemas/PredictiveModelArtifactResponse"
-            },
-            "type": "array",
-            "title": "Fold Artifacts"
-          },
-          "folds": {
-            "items": {
-              "$ref": "#/components/schemas/PredictiveModelFoldResponse"
-            },
-            "type": "array",
-            "title": "Folds"
-          },
-          "benchmark": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/NaiveBenchmarkEvaluationResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "assumptions": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Assumptions"
-          },
-          "warnings": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Warnings"
-          },
-          "limitations": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Limitations"
-          },
-          "unsupported_claims": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Unsupported Claims"
-          },
-          "is_eligible_for_strategy": {
-            "type": "boolean",
-            "title": "Is Eligible For Strategy",
-            "default": false
-          },
-          "eligibility_reason": {
-            "type": "string",
-            "title": "Eligibility Reason",
-            "default": "Predictive Model is not eligible for a Strategy until the naive benchmark comparison is complete."
-          }
-        },
-        "type": "object",
-        "required": [
-          "model_name",
-          "display_name",
-          "description",
-          "symbol",
-          "dataset_version_id",
-          "dataset_version_ids",
-          "parameters",
-          "seed",
-          "target",
-          "horizon",
-          "features",
-          "training_window",
-          "output_meaning",
-          "outputs",
-          "artifact",
-          "predictions",
-          "metrics",
-          "training_start",
-          "training_end",
-          "out_of_sample_status"
-        ],
-        "title": "PredictiveModelRunResponse"
-      },
-      "PredictiveModelSplitResponse": {
-        "properties": {
-          "period": {
-            "type": "string",
-            "enum": [
-              "training",
-              "validation",
-              "test"
-            ],
-            "title": "Period"
-          },
-          "start": {
-            "type": "string",
-            "title": "Start"
-          },
-          "end": {
-            "type": "string",
-            "title": "End"
-          },
-          "feature_start": {
-            "type": "string",
-            "title": "Feature Start"
-          },
-          "feature_end": {
-            "type": "string",
-            "title": "Feature End"
-          },
-          "observations": {
-            "type": "integer",
-            "title": "Observations"
-          },
-          "labelled_observations": {
-            "type": "integer",
-            "title": "Labelled Observations"
-          },
-          "fit_scope": {
-            "type": "string",
-            "title": "Fit Scope"
-          }
-        },
-        "type": "object",
-        "required": [
-          "period",
-          "start",
-          "end",
-          "feature_start",
-          "feature_end",
-          "observations",
-          "labelled_observations",
-          "fit_scope"
-        ],
-        "title": "PredictiveModelSplitResponse"
-      },
       "ProjectCreateRequest": {
         "properties": {
           "name": {
@@ -7701,6 +5311,32 @@
         ],
         "title": "ProjectResponse"
       },
+      "ProviderDownloadItem": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "tiingo",
+              "massive",
+              "sec_edgar",
+              "alpaca"
+            ],
+            "title": "Provider"
+          },
+          "data_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Data Types"
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider"
+        ],
+        "title": "ProviderDownloadItem"
+      },
       "ProviderDownloadResponse": {
         "properties": {
           "dataset_version_id": {
@@ -7721,102 +5357,6 @@
           "dataset_version_ids"
         ],
         "title": "ProviderDownloadResponse"
-      },
-      "ResearchThesisResponse": {
-        "properties": {
-          "security_id": {
-            "type": "string",
-            "title": "Security Id"
-          },
-          "content": {
-            "type": "string",
-            "title": "Content"
-          },
-          "updated_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Updated At"
-          },
-          "summary": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Summary"
-          },
-          "evidence": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Evidence"
-          },
-          "risks": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Risks"
-          },
-          "catalysts": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Catalysts"
-          },
-          "assumptions": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Assumptions"
-          },
-          "sources": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Sources"
-          },
-          "dated_updates": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Dated Updates"
-          }
-        },
-        "type": "object",
-        "required": [
-          "security_id",
-          "content"
-        ],
-        "title": "ResearchThesisResponse"
-      },
-      "ResearchThesisSaveRequest": {
-        "properties": {
-          "content": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Content"
-          }
-        },
-        "type": "object",
-        "required": [
-          "content"
-        ],
-        "title": "ResearchThesisSaveRequest"
       },
       "RunResponse": {
         "properties": {
@@ -7984,106 +5524,6 @@
         ],
         "title": "SavedStrategyRevisionResponse"
       },
-      "SavedValuationResponse": {
-        "properties": {
-          "run_id": {
-            "type": "string",
-            "title": "Run Id"
-          },
-          "method_revision": {
-            "type": "string",
-            "title": "Method Revision"
-          },
-          "calculated_at": {
-            "type": "string",
-            "title": "Calculated At"
-          },
-          "result": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue-Output"
-            },
-            "type": "object",
-            "title": "Result"
-          }
-        },
-        "type": "object",
-        "required": [
-          "run_id",
-          "method_revision",
-          "calculated_at",
-          "result"
-        ],
-        "title": "SavedValuationResponse"
-      },
-      "ScenarioResponse": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "wacc": {
-            "type": "number",
-            "title": "Wacc"
-          },
-          "terminal_growth_rate": {
-            "type": "number",
-            "title": "Terminal Growth Rate"
-          },
-          "revenue_growth_rate": {
-            "type": "number",
-            "title": "Revenue Growth Rate"
-          },
-          "operating_margin": {
-            "type": "number",
-            "title": "Operating Margin"
-          },
-          "enterprise_value": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Enterprise Value"
-          },
-          "equity_value": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Equity Value"
-          },
-          "value_per_share": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Value Per Share"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "wacc",
-          "terminal_growth_rate",
-          "revenue_growth_rate",
-          "operating_margin",
-          "enterprise_value",
-          "equity_value",
-          "value_per_share"
-        ],
-        "title": "ScenarioResponse"
-      },
       "SecEdgarDownloadRequest": {
         "properties": {
           "start_date": {
@@ -8131,6 +5571,39 @@
           "ciks"
         ],
         "title": "SecEdgarDownloadRequest"
+      },
+      "SecurityListSummaryResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "member_count": {
+            "type": "integer",
+            "title": "Member Count"
+          },
+          "as_of_date": {
+            "type": "string",
+            "title": "As Of Date"
+          },
+          "source_url": {
+            "type": "string",
+            "title": "Source Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "member_count",
+          "as_of_date",
+          "source_url"
+        ],
+        "title": "SecurityListSummaryResponse"
       },
       "SecurityResponse": {
         "properties": {
@@ -8295,169 +5768,6 @@
           "security"
         ],
         "title": "SecuritySummaryResponse"
-      },
-      "SensitivityMatrixResponse": {
-        "properties": {
-          "wacc_values": {
-            "items": {
-              "type": "number"
-            },
-            "type": "array",
-            "title": "Wacc Values"
-          },
-          "terminal_growth_values": {
-            "items": {
-              "type": "number"
-            },
-            "type": "array",
-            "title": "Terminal Growth Values"
-          },
-          "grid": {
-            "items": {
-              "items": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "type": "array"
-            },
-            "type": "array",
-            "title": "Grid"
-          }
-        },
-        "type": "object",
-        "required": [
-          "wacc_values",
-          "terminal_growth_values",
-          "grid"
-        ],
-        "title": "SensitivityMatrixResponse"
-      },
-      "SignalRefreshFailureResponse": {
-        "properties": {
-          "strategy_revision": {
-            "type": "string",
-            "title": "Strategy Revision"
-          },
-          "error": {
-            "type": "string",
-            "title": "Error"
-          }
-        },
-        "type": "object",
-        "required": [
-          "strategy_revision",
-          "error"
-        ],
-        "title": "SignalRefreshFailureResponse"
-      },
-      "SignalRefreshResponse": {
-        "properties": {
-          "signals": {
-            "items": {
-              "$ref": "#/components/schemas/SignalResponse"
-            },
-            "type": "array",
-            "title": "Signals"
-          },
-          "failures": {
-            "items": {
-              "$ref": "#/components/schemas/SignalRefreshFailureResponse"
-            },
-            "type": "array",
-            "title": "Failures"
-          }
-        },
-        "type": "object",
-        "title": "SignalRefreshResponse"
-      },
-      "SignalResponse": {
-        "properties": {
-          "signal_id": {
-            "type": "string",
-            "title": "Signal Id"
-          },
-          "strategy_name": {
-            "type": "string",
-            "title": "Strategy Name"
-          },
-          "strategy_revision": {
-            "type": "string",
-            "title": "Strategy Revision"
-          },
-          "security_id": {
-            "type": "string",
-            "title": "Security Id"
-          },
-          "action": {
-            "type": "string",
-            "title": "Action"
-          },
-          "weight": {
-            "type": "number",
-            "title": "Weight"
-          },
-          "decision_time": {
-            "type": "string",
-            "title": "Decision Time"
-          },
-          "data_time": {
-            "type": "string",
-            "title": "Data Time"
-          },
-          "dataset_version_id": {
-            "type": "string",
-            "title": "Dataset Version Id"
-          },
-          "rationale": {
-            "type": "string",
-            "title": "Rationale"
-          },
-          "indicator_state": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Indicator State"
-          },
-          "created_at": {
-            "type": "string",
-            "title": "Created At",
-            "default": ""
-          },
-          "data_state": {
-            "type": "string",
-            "enum": [
-              "fresh",
-              "stale-data"
-            ],
-            "title": "Data State",
-            "default": "stale-data"
-          }
-        },
-        "type": "object",
-        "required": [
-          "signal_id",
-          "strategy_name",
-          "strategy_revision",
-          "security_id",
-          "action",
-          "weight",
-          "decision_time",
-          "data_time",
-          "dataset_version_id",
-          "rationale"
-        ],
-        "title": "SignalResponse"
       },
       "StrategyEvaluateRequest": {
         "properties": {
@@ -8726,6 +6036,19 @@
         ],
         "title": "StrategyTargetResponse"
       },
+      "StrategyTemplateResponse": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "StrategyTemplateResponse"
+      },
       "TiingoDownloadRequest": {
         "properties": {
           "start_date": {
@@ -8876,202 +6199,6 @@
           "type"
         ],
         "title": "ValidationError"
-      },
-      "ValuationComparisonItemResponse": {
-        "properties": {
-          "run_id": {
-            "type": "string",
-            "title": "Run Id"
-          },
-          "method": {
-            "type": "string",
-            "title": "Method"
-          },
-          "method_revision": {
-            "type": "string",
-            "title": "Method Revision"
-          },
-          "security_id": {
-            "type": "string",
-            "title": "Security Id"
-          },
-          "symbol": {
-            "type": "string",
-            "title": "Symbol"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "currency": {
-            "type": "string",
-            "title": "Currency"
-          },
-          "calculated_at": {
-            "type": "string",
-            "title": "Calculated At"
-          },
-          "value_per_share": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Value Per Share"
-          },
-          "enterprise_value": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Enterprise Value"
-          },
-          "equity_value": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Equity Value"
-          },
-          "terminal_value_contribution": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Terminal Value Contribution"
-          },
-          "price_to_earnings": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Price To Earnings"
-          },
-          "ev_to_revenue": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ev To Revenue"
-          },
-          "ev_to_ebitda": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ev To Ebitda"
-          },
-          "free_cash_flow_yield": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Free Cash Flow Yield"
-          },
-          "key_assumptions": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue-Output"
-            },
-            "type": "object",
-            "title": "Key Assumptions"
-          },
-          "warnings": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Warnings"
-          },
-          "dataset_version_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Dataset Version Ids"
-          }
-        },
-        "type": "object",
-        "required": [
-          "run_id",
-          "method",
-          "method_revision",
-          "security_id",
-          "symbol",
-          "name",
-          "currency",
-          "calculated_at"
-        ],
-        "title": "ValuationComparisonItemResponse"
-      },
-      "ValuationComparisonRequest": {
-        "properties": {
-          "run_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "maxItems": 10,
-            "minItems": 1,
-            "title": "Run Ids"
-          }
-        },
-        "type": "object",
-        "required": [
-          "run_ids"
-        ],
-        "title": "ValuationComparisonRequest"
-      },
-      "ValuationComparisonResponse": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/ValuationComparisonItemResponse"
-            },
-            "type": "array",
-            "title": "Items"
-          },
-          "compared_at": {
-            "type": "string",
-            "title": "Compared At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "items",
-          "compared_at"
-        ],
-        "title": "ValuationComparisonResponse"
       },
       "WatchlistAddRequest": {
         "properties": {

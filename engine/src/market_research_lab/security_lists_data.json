@@ -1,0 +1,3058 @@
+{
+  "us-sector-index-etfs": {
+    "id": "us-sector-index-etfs",
+    "name": "US Sector & Index ETFs",
+    "as_of_date": "2024-01-02",
+    "source_url": "https://www.ssga.com/us/en/intermediary/etfs/funds/spdr-sp-500-etf-trust-spy",
+    "members": [
+      {
+        "symbol": "SPY",
+        "cik": null
+      },
+      {
+        "symbol": "QQQ",
+        "cik": null
+      },
+      {
+        "symbol": "IWM",
+        "cik": null
+      },
+      {
+        "symbol": "DIA",
+        "cik": null
+      },
+      {
+        "symbol": "XLF",
+        "cik": null
+      },
+      {
+        "symbol": "XLK",
+        "cik": null
+      },
+      {
+        "symbol": "XLE",
+        "cik": null
+      },
+      {
+        "symbol": "XLV",
+        "cik": null
+      },
+      {
+        "symbol": "XLI",
+        "cik": null
+      },
+      {
+        "symbol": "XLP",
+        "cik": null
+      },
+      {
+        "symbol": "XLY",
+        "cik": null
+      },
+      {
+        "symbol": "XLU",
+        "cik": null
+      },
+      {
+        "symbol": "XLC",
+        "cik": null
+      },
+      {
+        "symbol": "XLRE",
+        "cik": null
+      }
+    ]
+  },
+  "dow-30": {
+    "id": "dow-30",
+    "name": "Dow Jones Industrial Average",
+    "as_of_date": "2024-01-02",
+    "source_url": "https://www.spglobal.com/spdji/en/indices/equity/dow-jones-industrial-average/",
+    "members": [
+      {
+        "symbol": "AAPL",
+        "cik": "0000320193"
+      },
+      {
+        "symbol": "AMGN",
+        "cik": "0000318154"
+      },
+      {
+        "symbol": "AXP",
+        "cik": "0000004962"
+      },
+      {
+        "symbol": "BA",
+        "cik": "0000012927"
+      },
+      {
+        "symbol": "CAT",
+        "cik": "0000018230"
+      },
+      {
+        "symbol": "CRM",
+        "cik": "0001108524"
+      },
+      {
+        "symbol": "CSCO",
+        "cik": "0000858877"
+      },
+      {
+        "symbol": "CVX",
+        "cik": "0000093410"
+      },
+      {
+        "symbol": "DIS",
+        "cik": "0001744489"
+      },
+      {
+        "symbol": "DOW",
+        "cik": "0001751788"
+      },
+      {
+        "symbol": "GS",
+        "cik": "0000886982"
+      },
+      {
+        "symbol": "HD",
+        "cik": "0000354950"
+      },
+      {
+        "symbol": "HON",
+        "cik": "0000773840"
+      },
+      {
+        "symbol": "IBM",
+        "cik": "0000051143"
+      },
+      {
+        "symbol": "INTC",
+        "cik": "0000050863"
+      },
+      {
+        "symbol": "JNJ",
+        "cik": "0000200406"
+      },
+      {
+        "symbol": "JPM",
+        "cik": "0000019617"
+      },
+      {
+        "symbol": "KO",
+        "cik": "0000021344"
+      },
+      {
+        "symbol": "MCD",
+        "cik": "0000063908"
+      },
+      {
+        "symbol": "MMM",
+        "cik": "0000066740"
+      },
+      {
+        "symbol": "MRK",
+        "cik": "0000310158"
+      },
+      {
+        "symbol": "MSFT",
+        "cik": "0000789019"
+      },
+      {
+        "symbol": "NKE",
+        "cik": "0000320187"
+      },
+      {
+        "symbol": "PG",
+        "cik": "0000080424"
+      },
+      {
+        "symbol": "TRV",
+        "cik": "0000086312"
+      },
+      {
+        "symbol": "UNH",
+        "cik": "0000731766"
+      },
+      {
+        "symbol": "V",
+        "cik": "0001403161"
+      },
+      {
+        "symbol": "VZ",
+        "cik": "0000732712"
+      },
+      {
+        "symbol": "WBA",
+        "cik": "0001618921"
+      },
+      {
+        "symbol": "WMT",
+        "cik": "0000104169"
+      }
+    ]
+  },
+  "sp-100": {
+    "id": "sp-100",
+    "name": "S&P 100 / Mega-Caps",
+    "as_of_date": "2024-01-02",
+    "source_url": "https://www.spglobal.com/spdji/en/indices/equity/sp-100/",
+    "members": [
+      {
+        "symbol": "AAPL",
+        "cik": "0000320193"
+      },
+      {
+        "symbol": "ABBV",
+        "cik": "0001551152"
+      },
+      {
+        "symbol": "ABT",
+        "cik": "0000001800"
+      },
+      {
+        "symbol": "ACN",
+        "cik": "0001467373"
+      },
+      {
+        "symbol": "ADBE",
+        "cik": "0000796343"
+      },
+      {
+        "symbol": "AIG",
+        "cik": "0000005272"
+      },
+      {
+        "symbol": "AMD",
+        "cik": "0000002488"
+      },
+      {
+        "symbol": "AMGN",
+        "cik": "0000318154"
+      },
+      {
+        "symbol": "AMT",
+        "cik": "0001053507"
+      },
+      {
+        "symbol": "AMZN",
+        "cik": "0001018724"
+      },
+      {
+        "symbol": "AVGO",
+        "cik": "0001730168"
+      },
+      {
+        "symbol": "AXP",
+        "cik": "0000004962"
+      },
+      {
+        "symbol": "BA",
+        "cik": "0000012927"
+      },
+      {
+        "symbol": "BAC",
+        "cik": "0000070858"
+      },
+      {
+        "symbol": "BK",
+        "cik": "0001390777"
+      },
+      {
+        "symbol": "BKNG",
+        "cik": "0001075531"
+      },
+      {
+        "symbol": "BLK",
+        "cik": "0002012383"
+      },
+      {
+        "symbol": "BMY",
+        "cik": "0000014272"
+      },
+      {
+        "symbol": "BRK-B",
+        "cik": "0001067983"
+      },
+      {
+        "symbol": "C",
+        "cik": "0000831001"
+      },
+      {
+        "symbol": "CAT",
+        "cik": "0000018230"
+      },
+      {
+        "symbol": "CHTR",
+        "cik": "0001091667"
+      },
+      {
+        "symbol": "CL",
+        "cik": "0000021665"
+      },
+      {
+        "symbol": "CMCSA",
+        "cik": "0001166691"
+      },
+      {
+        "symbol": "COF",
+        "cik": "0000927628"
+      },
+      {
+        "symbol": "COP",
+        "cik": "0001163165"
+      },
+      {
+        "symbol": "COST",
+        "cik": "0000909832"
+      },
+      {
+        "symbol": "CRM",
+        "cik": "0001108524"
+      },
+      {
+        "symbol": "CSCO",
+        "cik": "0000858877"
+      },
+      {
+        "symbol": "CVS",
+        "cik": "0000064803"
+      },
+      {
+        "symbol": "CVX",
+        "cik": "0000093410"
+      },
+      {
+        "symbol": "DE",
+        "cik": "0000315189"
+      },
+      {
+        "symbol": "DHR",
+        "cik": "0000313616"
+      },
+      {
+        "symbol": "DIS",
+        "cik": "0001744489"
+      },
+      {
+        "symbol": "DOW",
+        "cik": "0001751788"
+      },
+      {
+        "symbol": "DUK",
+        "cik": "0001326160"
+      },
+      {
+        "symbol": "EMR",
+        "cik": "0000032604"
+      },
+      {
+        "symbol": "EXC",
+        "cik": "0001109357"
+      },
+      {
+        "symbol": "F",
+        "cik": "0000037996"
+      },
+      {
+        "symbol": "FDX",
+        "cik": "0001048911"
+      },
+      {
+        "symbol": "GD",
+        "cik": "0000040533"
+      },
+      {
+        "symbol": "GE",
+        "cik": "0000040545"
+      },
+      {
+        "symbol": "GILD",
+        "cik": "0000882095"
+      },
+      {
+        "symbol": "GM",
+        "cik": "0001467858"
+      },
+      {
+        "symbol": "GOOG",
+        "cik": "0001652044"
+      },
+      {
+        "symbol": "GOOGL",
+        "cik": "0001652044"
+      },
+      {
+        "symbol": "GS",
+        "cik": "0000886982"
+      },
+      {
+        "symbol": "HD",
+        "cik": "0000354950"
+      },
+      {
+        "symbol": "HON",
+        "cik": "0000773840"
+      },
+      {
+        "symbol": "IBM",
+        "cik": "0000051143"
+      },
+      {
+        "symbol": "INTC",
+        "cik": "0000050863"
+      },
+      {
+        "symbol": "INTU",
+        "cik": "0000896878"
+      },
+      {
+        "symbol": "ISRG",
+        "cik": "0001035267"
+      },
+      {
+        "symbol": "JNJ",
+        "cik": "0000200406"
+      },
+      {
+        "symbol": "JPM",
+        "cik": "0000019617"
+      },
+      {
+        "symbol": "KHC",
+        "cik": "0001637459"
+      },
+      {
+        "symbol": "KO",
+        "cik": "0000021344"
+      },
+      {
+        "symbol": "LIN",
+        "cik": "0001707925"
+      },
+      {
+        "symbol": "LLY",
+        "cik": "0000059478"
+      },
+      {
+        "symbol": "LMT",
+        "cik": "0000936468"
+      },
+      {
+        "symbol": "LOW",
+        "cik": "0000060667"
+      },
+      {
+        "symbol": "MA",
+        "cik": "0001141391"
+      },
+      {
+        "symbol": "MCD",
+        "cik": "0000063908"
+      },
+      {
+        "symbol": "MDLZ",
+        "cik": "0001103982"
+      },
+      {
+        "symbol": "MDT",
+        "cik": "0001613103"
+      },
+      {
+        "symbol": "MET",
+        "cik": "0001099219"
+      },
+      {
+        "symbol": "META",
+        "cik": "0001326801"
+      },
+      {
+        "symbol": "MMM",
+        "cik": "0000066740"
+      },
+      {
+        "symbol": "MO",
+        "cik": "0000764180"
+      },
+      {
+        "symbol": "MRK",
+        "cik": "0000310158"
+      },
+      {
+        "symbol": "MS",
+        "cik": "0000895421"
+      },
+      {
+        "symbol": "MSFT",
+        "cik": "0000789019"
+      },
+      {
+        "symbol": "NEE",
+        "cik": "0000753308"
+      },
+      {
+        "symbol": "NFLX",
+        "cik": "0001065280"
+      },
+      {
+        "symbol": "NKE",
+        "cik": "0000320187"
+      },
+      {
+        "symbol": "NVDA",
+        "cik": "0001045810"
+      },
+      {
+        "symbol": "ORCL",
+        "cik": "0001341439"
+      },
+      {
+        "symbol": "PEP",
+        "cik": "0000077476"
+      },
+      {
+        "symbol": "PFE",
+        "cik": "0000078003"
+      },
+      {
+        "symbol": "PG",
+        "cik": "0000080424"
+      },
+      {
+        "symbol": "PM",
+        "cik": "0001413329"
+      },
+      {
+        "symbol": "PYPL",
+        "cik": "0001633917"
+      },
+      {
+        "symbol": "QCOM",
+        "cik": "0000804328"
+      },
+      {
+        "symbol": "RTX",
+        "cik": "0000101829"
+      },
+      {
+        "symbol": "SBUX",
+        "cik": "0000829224"
+      },
+      {
+        "symbol": "SCHW",
+        "cik": "0000316709"
+      },
+      {
+        "symbol": "SO",
+        "cik": "0000092122"
+      },
+      {
+        "symbol": "SPG",
+        "cik": "0001063761"
+      },
+      {
+        "symbol": "T",
+        "cik": "0000732717"
+      },
+      {
+        "symbol": "TGT",
+        "cik": "0000027419"
+      },
+      {
+        "symbol": "TJX",
+        "cik": "0000109198"
+      },
+      {
+        "symbol": "TMO",
+        "cik": "0000097745"
+      },
+      {
+        "symbol": "TMUS",
+        "cik": "0001283699"
+      },
+      {
+        "symbol": "TSLA",
+        "cik": "0001318605"
+      },
+      {
+        "symbol": "TXN",
+        "cik": "0000097476"
+      },
+      {
+        "symbol": "UNH",
+        "cik": "0000731766"
+      },
+      {
+        "symbol": "UNP",
+        "cik": "0000100885"
+      },
+      {
+        "symbol": "UPS",
+        "cik": "0001090727"
+      },
+      {
+        "symbol": "USB",
+        "cik": "0000036104"
+      },
+      {
+        "symbol": "V",
+        "cik": "0001403161"
+      },
+      {
+        "symbol": "VZ",
+        "cik": "0000732712"
+      },
+      {
+        "symbol": "WFC",
+        "cik": "0000072971"
+      },
+      {
+        "symbol": "WMT",
+        "cik": "0000104169"
+      },
+      {
+        "symbol": "XOM",
+        "cik": "0002115436"
+      }
+    ]
+  },
+  "nasdaq-100": {
+    "id": "nasdaq-100",
+    "name": "Nasdaq 100",
+    "as_of_date": "2024-01-02",
+    "source_url": "https://www.nasdaq.com/market-activity/quotes/nasdaq-ndx-index",
+    "members": [
+      {
+        "symbol": "AAPL",
+        "cik": "0000320193"
+      },
+      {
+        "symbol": "ABNB",
+        "cik": "0001559720"
+      },
+      {
+        "symbol": "ADBE",
+        "cik": "0000796343"
+      },
+      {
+        "symbol": "ADI",
+        "cik": "0000006281"
+      },
+      {
+        "symbol": "ADP",
+        "cik": "0000008670"
+      },
+      {
+        "symbol": "ADSK",
+        "cik": "0000769397"
+      },
+      {
+        "symbol": "AEP",
+        "cik": "0000004904"
+      },
+      {
+        "symbol": "AMAT",
+        "cik": "0000006951"
+      },
+      {
+        "symbol": "AMD",
+        "cik": "0000002488"
+      },
+      {
+        "symbol": "AMGN",
+        "cik": "0000318154"
+      },
+      {
+        "symbol": "AMZN",
+        "cik": "0001018724"
+      },
+      {
+        "symbol": "ANSS",
+        "cik": "0001013462"
+      },
+      {
+        "symbol": "ARM",
+        "cik": "0001973239"
+      },
+      {
+        "symbol": "ASML",
+        "cik": "0000937966"
+      },
+      {
+        "symbol": "AVGO",
+        "cik": "0001730168"
+      },
+      {
+        "symbol": "AZN",
+        "cik": "0000901832"
+      },
+      {
+        "symbol": "BIIB",
+        "cik": "0000875045"
+      },
+      {
+        "symbol": "BKNG",
+        "cik": "0001075531"
+      },
+      {
+        "symbol": "BKR",
+        "cik": "0001701605"
+      },
+      {
+        "symbol": "CCEP",
+        "cik": "0001650107"
+      },
+      {
+        "symbol": "CDNS",
+        "cik": "0000813672"
+      },
+      {
+        "symbol": "CDW",
+        "cik": "0001402057"
+      },
+      {
+        "symbol": "CEG",
+        "cik": "0001868275"
+      },
+      {
+        "symbol": "CHTR",
+        "cik": "0001091667"
+      },
+      {
+        "symbol": "CMCSA",
+        "cik": "0001166691"
+      },
+      {
+        "symbol": "COST",
+        "cik": "0000909832"
+      },
+      {
+        "symbol": "CPRT",
+        "cik": "0000900075"
+      },
+      {
+        "symbol": "CRWD",
+        "cik": "0001535527"
+      },
+      {
+        "symbol": "CSCO",
+        "cik": "0000858877"
+      },
+      {
+        "symbol": "CSGP",
+        "cik": "0001057352"
+      },
+      {
+        "symbol": "CSX",
+        "cik": "0000277948"
+      },
+      {
+        "symbol": "CTAS",
+        "cik": "0000723254"
+      },
+      {
+        "symbol": "CTSH",
+        "cik": "0001058290"
+      },
+      {
+        "symbol": "DASH",
+        "cik": "0001792789"
+      },
+      {
+        "symbol": "DDOG",
+        "cik": "0001561550"
+      },
+      {
+        "symbol": "DLTR",
+        "cik": "0000935703"
+      },
+      {
+        "symbol": "DXCM",
+        "cik": "0001093557"
+      },
+      {
+        "symbol": "EA",
+        "cik": "0000712515"
+      },
+      {
+        "symbol": "EXC",
+        "cik": "0001109357"
+      },
+      {
+        "symbol": "FANG",
+        "cik": "0001539838"
+      },
+      {
+        "symbol": "FAST",
+        "cik": "0000815556"
+      },
+      {
+        "symbol": "FTNT",
+        "cik": "0001262039"
+      },
+      {
+        "symbol": "GEHC",
+        "cik": "0001932393"
+      },
+      {
+        "symbol": "GFS",
+        "cik": "0001709048"
+      },
+      {
+        "symbol": "GILD",
+        "cik": "0000882095"
+      },
+      {
+        "symbol": "GOOG",
+        "cik": "0001652044"
+      },
+      {
+        "symbol": "GOOGL",
+        "cik": "0001652044"
+      },
+      {
+        "symbol": "HON",
+        "cik": "0000773840"
+      },
+      {
+        "symbol": "IDXX",
+        "cik": "0000874716"
+      },
+      {
+        "symbol": "ILMN",
+        "cik": "0001110803"
+      },
+      {
+        "symbol": "INTC",
+        "cik": "0000050863"
+      },
+      {
+        "symbol": "INTU",
+        "cik": "0000896878"
+      },
+      {
+        "symbol": "ISRG",
+        "cik": "0001035267"
+      },
+      {
+        "symbol": "KDP",
+        "cik": "0001418135"
+      },
+      {
+        "symbol": "KHC",
+        "cik": "0001637459"
+      },
+      {
+        "symbol": "KLAC",
+        "cik": "0000319201"
+      },
+      {
+        "symbol": "LRCX",
+        "cik": "0000707549"
+      },
+      {
+        "symbol": "LULU",
+        "cik": "0001397187"
+      },
+      {
+        "symbol": "MAR",
+        "cik": "0001048286"
+      },
+      {
+        "symbol": "MCHP",
+        "cik": "0000827054"
+      },
+      {
+        "symbol": "MDB",
+        "cik": "0001441816"
+      },
+      {
+        "symbol": "MDLZ",
+        "cik": "0001103982"
+      },
+      {
+        "symbol": "MELI",
+        "cik": "0001099590"
+      },
+      {
+        "symbol": "META",
+        "cik": "0001326801"
+      },
+      {
+        "symbol": "MNST",
+        "cik": "0000865752"
+      },
+      {
+        "symbol": "MRNA",
+        "cik": "0001682852"
+      },
+      {
+        "symbol": "MRVL",
+        "cik": "0001835632"
+      },
+      {
+        "symbol": "MSFT",
+        "cik": "0000789019"
+      },
+      {
+        "symbol": "MSTR",
+        "cik": "0001050446"
+      },
+      {
+        "symbol": "MU",
+        "cik": "0000723125"
+      },
+      {
+        "symbol": "NFLX",
+        "cik": "0001065280"
+      },
+      {
+        "symbol": "NVDA",
+        "cik": "0001045810"
+      },
+      {
+        "symbol": "NXPI",
+        "cik": "0001413447"
+      },
+      {
+        "symbol": "ODFL",
+        "cik": "0000878927"
+      },
+      {
+        "symbol": "ON",
+        "cik": "0001097864"
+      },
+      {
+        "symbol": "ORLY",
+        "cik": "0000898173"
+      },
+      {
+        "symbol": "PANW",
+        "cik": "0001327567"
+      },
+      {
+        "symbol": "PAYX",
+        "cik": "0000723531"
+      },
+      {
+        "symbol": "PCAR",
+        "cik": "0000075362"
+      },
+      {
+        "symbol": "PDD",
+        "cik": "0001737806"
+      },
+      {
+        "symbol": "PEP",
+        "cik": "0000077476"
+      },
+      {
+        "symbol": "PYPL",
+        "cik": "0001633917"
+      },
+      {
+        "symbol": "QCOM",
+        "cik": "0000804328"
+      },
+      {
+        "symbol": "REGN",
+        "cik": "0000872589"
+      },
+      {
+        "symbol": "ROP",
+        "cik": "0000882835"
+      },
+      {
+        "symbol": "ROST",
+        "cik": "0000745732"
+      },
+      {
+        "symbol": "SBUX",
+        "cik": "0000829224"
+      },
+      {
+        "symbol": "SMCI",
+        "cik": "0001375365"
+      },
+      {
+        "symbol": "SNPS",
+        "cik": "0000883241"
+      },
+      {
+        "symbol": "SPLK",
+        "cik": "0001353283"
+      },
+      {
+        "symbol": "TEAM",
+        "cik": "0001650372"
+      },
+      {
+        "symbol": "TMUS",
+        "cik": "0001283699"
+      },
+      {
+        "symbol": "TSLA",
+        "cik": "0001318605"
+      },
+      {
+        "symbol": "TTD",
+        "cik": "0001671933"
+      },
+      {
+        "symbol": "TTWO",
+        "cik": "0000946581"
+      },
+      {
+        "symbol": "TXN",
+        "cik": "0000097476"
+      },
+      {
+        "symbol": "VRSK",
+        "cik": "0001442145"
+      },
+      {
+        "symbol": "VRTX",
+        "cik": "0000875320"
+      },
+      {
+        "symbol": "WBA",
+        "cik": "0001618921"
+      },
+      {
+        "symbol": "WBD",
+        "cik": "0001437107"
+      },
+      {
+        "symbol": "WDAY",
+        "cik": "0001327811"
+      },
+      {
+        "symbol": "XEL",
+        "cik": "0000072903"
+      },
+      {
+        "symbol": "ZS",
+        "cik": "0001713683"
+      }
+    ]
+  },
+  "sp-500": {
+    "id": "sp-500",
+    "name": "S&P 500",
+    "as_of_date": "2024-01-02",
+    "source_url": "https://www.spglobal.com/spdji/en/indices/equity/sp-500/",
+    "members": [
+      {
+        "symbol": "MMM",
+        "cik": "0000066740"
+      },
+      {
+        "symbol": "AOS",
+        "cik": "0000091142"
+      },
+      {
+        "symbol": "ABT",
+        "cik": "0000001800"
+      },
+      {
+        "symbol": "ABBV",
+        "cik": "0001551152"
+      },
+      {
+        "symbol": "ACN",
+        "cik": "0001467373"
+      },
+      {
+        "symbol": "ADBE",
+        "cik": "0000796343"
+      },
+      {
+        "symbol": "AMD",
+        "cik": "0000002488"
+      },
+      {
+        "symbol": "AES",
+        "cik": "0000874761"
+      },
+      {
+        "symbol": "AFL",
+        "cik": "0000004977"
+      },
+      {
+        "symbol": "A",
+        "cik": "0001090872"
+      },
+      {
+        "symbol": "APD",
+        "cik": "0000002969"
+      },
+      {
+        "symbol": "ABNB",
+        "cik": "0001559720"
+      },
+      {
+        "symbol": "AKAM",
+        "cik": "0001086222"
+      },
+      {
+        "symbol": "ALB",
+        "cik": "0000915913"
+      },
+      {
+        "symbol": "ARE",
+        "cik": "0001035443"
+      },
+      {
+        "symbol": "ALGN",
+        "cik": "0001097149"
+      },
+      {
+        "symbol": "ALLE",
+        "cik": "0001579241"
+      },
+      {
+        "symbol": "LNT",
+        "cik": "0000352541"
+      },
+      {
+        "symbol": "ALL",
+        "cik": "0000899051"
+      },
+      {
+        "symbol": "GOOGL",
+        "cik": "0001652044"
+      },
+      {
+        "symbol": "GOOG",
+        "cik": "0001652044"
+      },
+      {
+        "symbol": "MO",
+        "cik": "0000764180"
+      },
+      {
+        "symbol": "AMZN",
+        "cik": "0001018724"
+      },
+      {
+        "symbol": "AMCR",
+        "cik": "0001748790"
+      },
+      {
+        "symbol": "AEE",
+        "cik": "0001002910"
+      },
+      {
+        "symbol": "AEP",
+        "cik": "0000004904"
+      },
+      {
+        "symbol": "AXP",
+        "cik": "0000004962"
+      },
+      {
+        "symbol": "AIG",
+        "cik": "0000005272"
+      },
+      {
+        "symbol": "AMT",
+        "cik": "0001053507"
+      },
+      {
+        "symbol": "AWK",
+        "cik": "0001410636"
+      },
+      {
+        "symbol": "AMP",
+        "cik": "0000820027"
+      },
+      {
+        "symbol": "AME",
+        "cik": "0001037868"
+      },
+      {
+        "symbol": "AMGN",
+        "cik": "0000318154"
+      },
+      {
+        "symbol": "APH",
+        "cik": "0000820313"
+      },
+      {
+        "symbol": "ADI",
+        "cik": "0000006281"
+      },
+      {
+        "symbol": "AON",
+        "cik": "0000315293"
+      },
+      {
+        "symbol": "APA",
+        "cik": "0001841666"
+      },
+      {
+        "symbol": "APO",
+        "cik": "0001858681"
+      },
+      {
+        "symbol": "AAPL",
+        "cik": "0000320193"
+      },
+      {
+        "symbol": "AMAT",
+        "cik": "0000006951"
+      },
+      {
+        "symbol": "APP",
+        "cik": "0001751008"
+      },
+      {
+        "symbol": "APTV",
+        "cik": "0001521332"
+      },
+      {
+        "symbol": "ACGL",
+        "cik": "0000947484"
+      },
+      {
+        "symbol": "ADM",
+        "cik": "0000007084"
+      },
+      {
+        "symbol": "ARES",
+        "cik": "0001176948"
+      },
+      {
+        "symbol": "ANET",
+        "cik": "0001596532"
+      },
+      {
+        "symbol": "AJG",
+        "cik": "0000354190"
+      },
+      {
+        "symbol": "AIZ",
+        "cik": "0001267238"
+      },
+      {
+        "symbol": "T",
+        "cik": "0000732717"
+      },
+      {
+        "symbol": "ATO",
+        "cik": "0000731802"
+      },
+      {
+        "symbol": "ADSK",
+        "cik": "0000769397"
+      },
+      {
+        "symbol": "ADP",
+        "cik": "0000008670"
+      },
+      {
+        "symbol": "AZO",
+        "cik": "0000866787"
+      },
+      {
+        "symbol": "AVY",
+        "cik": "0000008818"
+      },
+      {
+        "symbol": "AXON",
+        "cik": "0001069183"
+      },
+      {
+        "symbol": "BKR",
+        "cik": "0001701605"
+      },
+      {
+        "symbol": "BALL",
+        "cik": "0000009389"
+      },
+      {
+        "symbol": "BAC",
+        "cik": "0000070858"
+      },
+      {
+        "symbol": "BAX",
+        "cik": "0000010456"
+      },
+      {
+        "symbol": "BDX",
+        "cik": "0000010795"
+      },
+      {
+        "symbol": "BRK-B",
+        "cik": "0001067983"
+      },
+      {
+        "symbol": "BBY",
+        "cik": "0000764478"
+      },
+      {
+        "symbol": "TECH",
+        "cik": "0000842023"
+      },
+      {
+        "symbol": "BIIB",
+        "cik": "0000875045"
+      },
+      {
+        "symbol": "BLK",
+        "cik": "0002012383"
+      },
+      {
+        "symbol": "BX",
+        "cik": "0001393818"
+      },
+      {
+        "symbol": "XYZ",
+        "cik": "0001512673"
+      },
+      {
+        "symbol": "BNY",
+        "cik": "0001390777"
+      },
+      {
+        "symbol": "BA",
+        "cik": "0000012927"
+      },
+      {
+        "symbol": "BKNG",
+        "cik": "0001075531"
+      },
+      {
+        "symbol": "BSX",
+        "cik": "0000885725"
+      },
+      {
+        "symbol": "BMY",
+        "cik": "0000014272"
+      },
+      {
+        "symbol": "AVGO",
+        "cik": "0001730168"
+      },
+      {
+        "symbol": "BR",
+        "cik": "0001383312"
+      },
+      {
+        "symbol": "BRO",
+        "cik": "0000079282"
+      },
+      {
+        "symbol": "BF-B",
+        "cik": "0000014693"
+      },
+      {
+        "symbol": "BLDR",
+        "cik": "0001316835"
+      },
+      {
+        "symbol": "BG",
+        "cik": "0001996862"
+      },
+      {
+        "symbol": "BXP",
+        "cik": "0001037540"
+      },
+      {
+        "symbol": "CHRW",
+        "cik": "0001043277"
+      },
+      {
+        "symbol": "CDNS",
+        "cik": "0000813672"
+      },
+      {
+        "symbol": "CPT",
+        "cik": "0000906345"
+      },
+      {
+        "symbol": "COF",
+        "cik": "0000927628"
+      },
+      {
+        "symbol": "CAH",
+        "cik": "0000721371"
+      },
+      {
+        "symbol": "CCL",
+        "cik": "0000815097"
+      },
+      {
+        "symbol": "CARR",
+        "cik": "0001783180"
+      },
+      {
+        "symbol": "CVNA",
+        "cik": "0001690820"
+      },
+      {
+        "symbol": "CASY",
+        "cik": "0000726958"
+      },
+      {
+        "symbol": "CAT",
+        "cik": "0000018230"
+      },
+      {
+        "symbol": "CBOE",
+        "cik": "0001374310"
+      },
+      {
+        "symbol": "CBRE",
+        "cik": "0001138118"
+      },
+      {
+        "symbol": "CDW",
+        "cik": "0001402057"
+      },
+      {
+        "symbol": "COR",
+        "cik": "0001140859"
+      },
+      {
+        "symbol": "CNC",
+        "cik": "0001071739"
+      },
+      {
+        "symbol": "CNP",
+        "cik": "0001130310"
+      },
+      {
+        "symbol": "CF",
+        "cik": "0001324404"
+      },
+      {
+        "symbol": "CRL",
+        "cik": "0001100682"
+      },
+      {
+        "symbol": "SCHW",
+        "cik": "0000316709"
+      },
+      {
+        "symbol": "CHTR",
+        "cik": "0001091667"
+      },
+      {
+        "symbol": "CVX",
+        "cik": "0000093410"
+      },
+      {
+        "symbol": "CMG",
+        "cik": "0001058090"
+      },
+      {
+        "symbol": "CB",
+        "cik": "0000896159"
+      },
+      {
+        "symbol": "CHD",
+        "cik": "0000313927"
+      },
+      {
+        "symbol": "CIEN",
+        "cik": "0000936395"
+      },
+      {
+        "symbol": "CI",
+        "cik": "0001739940"
+      },
+      {
+        "symbol": "CINF",
+        "cik": "0000020286"
+      },
+      {
+        "symbol": "CTAS",
+        "cik": "0000723254"
+      },
+      {
+        "symbol": "CSCO",
+        "cik": "0000858877"
+      },
+      {
+        "symbol": "C",
+        "cik": "0000831001"
+      },
+      {
+        "symbol": "CFG",
+        "cik": "0000759944"
+      },
+      {
+        "symbol": "CLX",
+        "cik": "0000021076"
+      },
+      {
+        "symbol": "CME",
+        "cik": "0001156375"
+      },
+      {
+        "symbol": "CMS",
+        "cik": "0000811156"
+      },
+      {
+        "symbol": "KO",
+        "cik": "0000021344"
+      },
+      {
+        "symbol": "CTSH",
+        "cik": "0001058290"
+      },
+      {
+        "symbol": "COHR",
+        "cik": "0000820318"
+      },
+      {
+        "symbol": "COIN",
+        "cik": "0001679788"
+      },
+      {
+        "symbol": "CL",
+        "cik": "0000021665"
+      },
+      {
+        "symbol": "CMCSA",
+        "cik": "0001166691"
+      },
+      {
+        "symbol": "FIX",
+        "cik": "0001035983"
+      },
+      {
+        "symbol": "COP",
+        "cik": "0001163165"
+      },
+      {
+        "symbol": "ED",
+        "cik": "0001047862"
+      },
+      {
+        "symbol": "STZ",
+        "cik": "0000016918"
+      },
+      {
+        "symbol": "CEG",
+        "cik": "0001868275"
+      },
+      {
+        "symbol": "COO",
+        "cik": "0000711404"
+      },
+      {
+        "symbol": "CPRT",
+        "cik": "0000900075"
+      },
+      {
+        "symbol": "GLW",
+        "cik": "0000024741"
+      },
+      {
+        "symbol": "CPAY",
+        "cik": "0001175454"
+      },
+      {
+        "symbol": "CTVA",
+        "cik": "0001755672"
+      },
+      {
+        "symbol": "CSGP",
+        "cik": "0001057352"
+      },
+      {
+        "symbol": "COST",
+        "cik": "0000909832"
+      },
+      {
+        "symbol": "CRH",
+        "cik": "0000849395"
+      },
+      {
+        "symbol": "CRWD",
+        "cik": "0001535527"
+      },
+      {
+        "symbol": "CCI",
+        "cik": "0001051470"
+      },
+      {
+        "symbol": "CSX",
+        "cik": "0000277948"
+      },
+      {
+        "symbol": "CMI",
+        "cik": "0000026172"
+      },
+      {
+        "symbol": "CVS",
+        "cik": "0000064803"
+      },
+      {
+        "symbol": "DHR",
+        "cik": "0000313616"
+      },
+      {
+        "symbol": "DRI",
+        "cik": "0000940944"
+      },
+      {
+        "symbol": "DDOG",
+        "cik": "0001561550"
+      },
+      {
+        "symbol": "DVA",
+        "cik": "0000927066"
+      },
+      {
+        "symbol": "DECK",
+        "cik": "0000910521"
+      },
+      {
+        "symbol": "DE",
+        "cik": "0000315189"
+      },
+      {
+        "symbol": "DELL",
+        "cik": "0001571996"
+      },
+      {
+        "symbol": "DAL",
+        "cik": "0000027904"
+      },
+      {
+        "symbol": "DVN",
+        "cik": "0001090012"
+      },
+      {
+        "symbol": "DXCM",
+        "cik": "0001093557"
+      },
+      {
+        "symbol": "FANG",
+        "cik": "0001539838"
+      },
+      {
+        "symbol": "DLR",
+        "cik": "0001297996"
+      },
+      {
+        "symbol": "DG",
+        "cik": "0000029534"
+      },
+      {
+        "symbol": "DLTR",
+        "cik": "0000935703"
+      },
+      {
+        "symbol": "D",
+        "cik": "0000715957"
+      },
+      {
+        "symbol": "DPZ",
+        "cik": "0001286681"
+      },
+      {
+        "symbol": "DASH",
+        "cik": "0001792789"
+      },
+      {
+        "symbol": "DOV",
+        "cik": "0000029905"
+      },
+      {
+        "symbol": "DOW",
+        "cik": "0001751788"
+      },
+      {
+        "symbol": "DHI",
+        "cik": "0000882184"
+      },
+      {
+        "symbol": "DTE",
+        "cik": "0000936340"
+      },
+      {
+        "symbol": "DUK",
+        "cik": "0001326160"
+      },
+      {
+        "symbol": "DD",
+        "cik": "0001666700"
+      },
+      {
+        "symbol": "ETN",
+        "cik": "0001551182"
+      },
+      {
+        "symbol": "EBAY",
+        "cik": "0001065088"
+      },
+      {
+        "symbol": "ECHO",
+        "cik": "0001415404"
+      },
+      {
+        "symbol": "ECL",
+        "cik": "0000031462"
+      },
+      {
+        "symbol": "EIX",
+        "cik": "0000827052"
+      },
+      {
+        "symbol": "EW",
+        "cik": "0001099800"
+      },
+      {
+        "symbol": "ELV",
+        "cik": "0001156039"
+      },
+      {
+        "symbol": "EME",
+        "cik": "0000105634"
+      },
+      {
+        "symbol": "EMR",
+        "cik": "0000032604"
+      },
+      {
+        "symbol": "ETR",
+        "cik": "0000065984"
+      },
+      {
+        "symbol": "EOG",
+        "cik": "0000821189"
+      },
+      {
+        "symbol": "EQT",
+        "cik": "0000033213"
+      },
+      {
+        "symbol": "EFX",
+        "cik": "0000033185"
+      },
+      {
+        "symbol": "EQIX",
+        "cik": "0001101239"
+      },
+      {
+        "symbol": "ERIE",
+        "cik": "0000922621"
+      },
+      {
+        "symbol": "ESS",
+        "cik": "0000920522"
+      },
+      {
+        "symbol": "EL",
+        "cik": "0001001250"
+      },
+      {
+        "symbol": "EG",
+        "cik": "0001095073"
+      },
+      {
+        "symbol": "EVRG",
+        "cik": "0001711269"
+      },
+      {
+        "symbol": "ES",
+        "cik": "0000072741"
+      },
+      {
+        "symbol": "EXC",
+        "cik": "0001109357"
+      },
+      {
+        "symbol": "EXE",
+        "cik": "0000895126"
+      },
+      {
+        "symbol": "EXPE",
+        "cik": "0001324424"
+      },
+      {
+        "symbol": "EXPD",
+        "cik": "0000746515"
+      },
+      {
+        "symbol": "EXR",
+        "cik": "0001289490"
+      },
+      {
+        "symbol": "XOM",
+        "cik": "0002115436"
+      },
+      {
+        "symbol": "FFIV",
+        "cik": "0001048695"
+      },
+      {
+        "symbol": "FDS",
+        "cik": "0001013237"
+      },
+      {
+        "symbol": "FICO",
+        "cik": "0000814547"
+      },
+      {
+        "symbol": "FAST",
+        "cik": "0000815556"
+      },
+      {
+        "symbol": "FRT",
+        "cik": "0000034903"
+      },
+      {
+        "symbol": "FDX",
+        "cik": "0001048911"
+      },
+      {
+        "symbol": "FDXF",
+        "cik": "0002082247"
+      },
+      {
+        "symbol": "FERG",
+        "cik": "0002011641"
+      },
+      {
+        "symbol": "FIS",
+        "cik": "0001136893"
+      },
+      {
+        "symbol": "FITB",
+        "cik": "0000035527"
+      },
+      {
+        "symbol": "FSLR",
+        "cik": "0001274494"
+      },
+      {
+        "symbol": "FE",
+        "cik": "0001031296"
+      },
+      {
+        "symbol": "FISV",
+        "cik": "0000798354"
+      },
+      {
+        "symbol": "FLEX",
+        "cik": "0000866374"
+      },
+      {
+        "symbol": "F",
+        "cik": "0000037996"
+      },
+      {
+        "symbol": "FTNT",
+        "cik": "0001262039"
+      },
+      {
+        "symbol": "FTV",
+        "cik": "0001659166"
+      },
+      {
+        "symbol": "FOXA",
+        "cik": "0001754301"
+      },
+      {
+        "symbol": "FOX",
+        "cik": "0001754301"
+      },
+      {
+        "symbol": "BEN",
+        "cik": "0000038777"
+      },
+      {
+        "symbol": "FCX",
+        "cik": "0000831259"
+      },
+      {
+        "symbol": "GRMN",
+        "cik": "0001121788"
+      },
+      {
+        "symbol": "IT",
+        "cik": "0000749251"
+      },
+      {
+        "symbol": "GE",
+        "cik": "0000040545"
+      },
+      {
+        "symbol": "GEHC",
+        "cik": "0001932393"
+      },
+      {
+        "symbol": "GEV",
+        "cik": "0001996810"
+      },
+      {
+        "symbol": "GEN",
+        "cik": "0000849399"
+      },
+      {
+        "symbol": "GNRC",
+        "cik": "0001474735"
+      },
+      {
+        "symbol": "GD",
+        "cik": "0000040533"
+      },
+      {
+        "symbol": "GIS",
+        "cik": "0000040704"
+      },
+      {
+        "symbol": "GM",
+        "cik": "0001467858"
+      },
+      {
+        "symbol": "GPC",
+        "cik": "0000040987"
+      },
+      {
+        "symbol": "GILD",
+        "cik": "0000882095"
+      },
+      {
+        "symbol": "GPN",
+        "cik": "0001123360"
+      },
+      {
+        "symbol": "GL",
+        "cik": "0000320335"
+      },
+      {
+        "symbol": "GDDY",
+        "cik": "0001609711"
+      },
+      {
+        "symbol": "GS",
+        "cik": "0000886982"
+      },
+      {
+        "symbol": "HAL",
+        "cik": "0000045012"
+      },
+      {
+        "symbol": "HIG",
+        "cik": "0000874766"
+      },
+      {
+        "symbol": "HAS",
+        "cik": "0000046080"
+      },
+      {
+        "symbol": "HCA",
+        "cik": "0000860730"
+      },
+      {
+        "symbol": "DOC",
+        "cik": "0000765880"
+      },
+      {
+        "symbol": "HSIC",
+        "cik": "0001000228"
+      },
+      {
+        "symbol": "HSY",
+        "cik": "0000047111"
+      },
+      {
+        "symbol": "HPE",
+        "cik": "0001645590"
+      },
+      {
+        "symbol": "HLT",
+        "cik": "0001585689"
+      },
+      {
+        "symbol": "HD",
+        "cik": "0000354950"
+      },
+      {
+        "symbol": "HONA",
+        "cik": "0002089271"
+      },
+      {
+        "symbol": "HON",
+        "cik": "0000773840"
+      },
+      {
+        "symbol": "HRL",
+        "cik": "0000048465"
+      },
+      {
+        "symbol": "HST",
+        "cik": "0001070750"
+      },
+      {
+        "symbol": "HWM",
+        "cik": "0000004281"
+      },
+      {
+        "symbol": "HPQ",
+        "cik": "0000047217"
+      },
+      {
+        "symbol": "HUBB",
+        "cik": "0000048898"
+      },
+      {
+        "symbol": "HUM",
+        "cik": "0000049071"
+      },
+      {
+        "symbol": "HBAN",
+        "cik": "0000049196"
+      },
+      {
+        "symbol": "HII",
+        "cik": "0001501585"
+      },
+      {
+        "symbol": "IBM",
+        "cik": "0000051143"
+      },
+      {
+        "symbol": "IEX",
+        "cik": "0000832101"
+      },
+      {
+        "symbol": "IDXX",
+        "cik": "0000874716"
+      },
+      {
+        "symbol": "ITW",
+        "cik": "0000049826"
+      },
+      {
+        "symbol": "INCY",
+        "cik": "0000879169"
+      },
+      {
+        "symbol": "IR",
+        "cik": "0001699150"
+      },
+      {
+        "symbol": "PODD",
+        "cik": "0001145197"
+      },
+      {
+        "symbol": "INTC",
+        "cik": "0000050863"
+      },
+      {
+        "symbol": "IBKR",
+        "cik": "0001381197"
+      },
+      {
+        "symbol": "ICE",
+        "cik": "0001571949"
+      },
+      {
+        "symbol": "IFF",
+        "cik": "0000051253"
+      },
+      {
+        "symbol": "IP",
+        "cik": "0000051434"
+      },
+      {
+        "symbol": "INTU",
+        "cik": "0000896878"
+      },
+      {
+        "symbol": "ISRG",
+        "cik": "0001035267"
+      },
+      {
+        "symbol": "IVZ",
+        "cik": "0000914208"
+      },
+      {
+        "symbol": "INVH",
+        "cik": "0001687229"
+      },
+      {
+        "symbol": "IQV",
+        "cik": "0001478242"
+      },
+      {
+        "symbol": "IRM",
+        "cik": "0001020569"
+      },
+      {
+        "symbol": "JBHT",
+        "cik": "0000728535"
+      },
+      {
+        "symbol": "JBL",
+        "cik": "0000898293"
+      },
+      {
+        "symbol": "JKHY",
+        "cik": "0000779152"
+      },
+      {
+        "symbol": "J",
+        "cik": "0000052988"
+      },
+      {
+        "symbol": "JNJ",
+        "cik": "0000200406"
+      },
+      {
+        "symbol": "JCI",
+        "cik": "0000833444"
+      },
+      {
+        "symbol": "JPM",
+        "cik": "0000019617"
+      },
+      {
+        "symbol": "KVUE",
+        "cik": "0001944048"
+      },
+      {
+        "symbol": "KDP",
+        "cik": "0001418135"
+      },
+      {
+        "symbol": "KEY",
+        "cik": "0000091576"
+      },
+      {
+        "symbol": "KEYS",
+        "cik": "0001601046"
+      },
+      {
+        "symbol": "KMB",
+        "cik": "0000055785"
+      },
+      {
+        "symbol": "KIM",
+        "cik": "0000879101"
+      },
+      {
+        "symbol": "KMI",
+        "cik": "0001506307"
+      },
+      {
+        "symbol": "KKR",
+        "cik": "0001404912"
+      },
+      {
+        "symbol": "KLAC",
+        "cik": "0000319201"
+      },
+      {
+        "symbol": "KHC",
+        "cik": "0001637459"
+      },
+      {
+        "symbol": "KR",
+        "cik": "0000056873"
+      },
+      {
+        "symbol": "LHX",
+        "cik": "0000202058"
+      },
+      {
+        "symbol": "LH",
+        "cik": "0000920148"
+      },
+      {
+        "symbol": "LRCX",
+        "cik": "0000707549"
+      },
+      {
+        "symbol": "LVS",
+        "cik": "0001300514"
+      },
+      {
+        "symbol": "LDOS",
+        "cik": "0001336920"
+      },
+      {
+        "symbol": "LEN",
+        "cik": "0000920760"
+      },
+      {
+        "symbol": "LII",
+        "cik": "0001069202"
+      },
+      {
+        "symbol": "LLY",
+        "cik": "0000059478"
+      },
+      {
+        "symbol": "LIN",
+        "cik": "0001707925"
+      },
+      {
+        "symbol": "LYV",
+        "cik": "0001335258"
+      },
+      {
+        "symbol": "LMT",
+        "cik": "0000936468"
+      },
+      {
+        "symbol": "L",
+        "cik": "0000060086"
+      },
+      {
+        "symbol": "LOW",
+        "cik": "0000060667"
+      },
+      {
+        "symbol": "LULU",
+        "cik": "0001397187"
+      },
+      {
+        "symbol": "LITE",
+        "cik": "0001633978"
+      },
+      {
+        "symbol": "LYB",
+        "cik": "0001489393"
+      },
+      {
+        "symbol": "MTB",
+        "cik": "0000036270"
+      },
+      {
+        "symbol": "MPC",
+        "cik": "0001510295"
+      },
+      {
+        "symbol": "MAR",
+        "cik": "0001048286"
+      },
+      {
+        "symbol": "MRSH",
+        "cik": "0000062709"
+      },
+      {
+        "symbol": "MLM",
+        "cik": "0000916076"
+      },
+      {
+        "symbol": "MRVL",
+        "cik": "0001835632"
+      },
+      {
+        "symbol": "MAS",
+        "cik": "0000062996"
+      },
+      {
+        "symbol": "MA",
+        "cik": "0001141391"
+      },
+      {
+        "symbol": "MKC",
+        "cik": "0000063754"
+      },
+      {
+        "symbol": "MCD",
+        "cik": "0000063908"
+      },
+      {
+        "symbol": "MCK",
+        "cik": "0000927653"
+      },
+      {
+        "symbol": "MDT",
+        "cik": "0001613103"
+      },
+      {
+        "symbol": "MRK",
+        "cik": "0000310158"
+      },
+      {
+        "symbol": "META",
+        "cik": "0001326801"
+      },
+      {
+        "symbol": "MET",
+        "cik": "0001099219"
+      },
+      {
+        "symbol": "MTD",
+        "cik": "0001037646"
+      },
+      {
+        "symbol": "MGM",
+        "cik": "0000789570"
+      },
+      {
+        "symbol": "MCHP",
+        "cik": "0000827054"
+      },
+      {
+        "symbol": "MU",
+        "cik": "0000723125"
+      },
+      {
+        "symbol": "MSFT",
+        "cik": "0000789019"
+      },
+      {
+        "symbol": "MAA",
+        "cik": "0000912595"
+      },
+      {
+        "symbol": "MRNA",
+        "cik": "0001682852"
+      },
+      {
+        "symbol": "TAP",
+        "cik": "0000024545"
+      },
+      {
+        "symbol": "MDLZ",
+        "cik": "0001103982"
+      },
+      {
+        "symbol": "MPWR",
+        "cik": "0001280452"
+      },
+      {
+        "symbol": "MNST",
+        "cik": "0000865752"
+      },
+      {
+        "symbol": "MCO",
+        "cik": "0001059556"
+      },
+      {
+        "symbol": "MS",
+        "cik": "0000895421"
+      },
+      {
+        "symbol": "MOS",
+        "cik": "0001285785"
+      },
+      {
+        "symbol": "MSI",
+        "cik": "0000068505"
+      },
+      {
+        "symbol": "MSCI",
+        "cik": "0001408198"
+      },
+      {
+        "symbol": "NDAQ",
+        "cik": "0001120193"
+      },
+      {
+        "symbol": "NTAP",
+        "cik": "0001002047"
+      },
+      {
+        "symbol": "NFLX",
+        "cik": "0001065280"
+      },
+      {
+        "symbol": "NEM",
+        "cik": "0001164727"
+      },
+      {
+        "symbol": "NWSA",
+        "cik": "0001564708"
+      },
+      {
+        "symbol": "NWS",
+        "cik": "0001564708"
+      },
+      {
+        "symbol": "NEE",
+        "cik": "0000753308"
+      },
+      {
+        "symbol": "NKE",
+        "cik": "0000320187"
+      },
+      {
+        "symbol": "NI",
+        "cik": "0001111711"
+      },
+      {
+        "symbol": "NDSN",
+        "cik": "0000072331"
+      },
+      {
+        "symbol": "NSC",
+        "cik": "0000702165"
+      },
+      {
+        "symbol": "NTRS",
+        "cik": "0000073124"
+      },
+      {
+        "symbol": "NOC",
+        "cik": "0001133421"
+      },
+      {
+        "symbol": "NCLH",
+        "cik": "0001513761"
+      },
+      {
+        "symbol": "NRG",
+        "cik": "0001013871"
+      },
+      {
+        "symbol": "NUE",
+        "cik": "0000073309"
+      },
+      {
+        "symbol": "NVDA",
+        "cik": "0001045810"
+      },
+      {
+        "symbol": "NVR",
+        "cik": "0000906163"
+      },
+      {
+        "symbol": "NXPI",
+        "cik": "0001413447"
+      },
+      {
+        "symbol": "ORLY",
+        "cik": "0000898173"
+      },
+      {
+        "symbol": "OXY",
+        "cik": "0000797468"
+      },
+      {
+        "symbol": "ODFL",
+        "cik": "0000878927"
+      },
+      {
+        "symbol": "OMC",
+        "cik": "0000029989"
+      },
+      {
+        "symbol": "ON",
+        "cik": "0001097864"
+      },
+      {
+        "symbol": "OKE",
+        "cik": "0001039684"
+      },
+      {
+        "symbol": "ORCL",
+        "cik": "0001341439"
+      },
+      {
+        "symbol": "OTIS",
+        "cik": "0001781335"
+      },
+      {
+        "symbol": "PCAR",
+        "cik": "0000075362"
+      },
+      {
+        "symbol": "PKG",
+        "cik": "0000075677"
+      },
+      {
+        "symbol": "PLTR",
+        "cik": "0001321655"
+      },
+      {
+        "symbol": "PANW",
+        "cik": "0001327567"
+      },
+      {
+        "symbol": "PSKY",
+        "cik": "0002041610"
+      },
+      {
+        "symbol": "PH",
+        "cik": "0000076334"
+      },
+      {
+        "symbol": "PAYX",
+        "cik": "0000723531"
+      },
+      {
+        "symbol": "PYPL",
+        "cik": "0001633917"
+      },
+      {
+        "symbol": "PNR",
+        "cik": "0000077360"
+      },
+      {
+        "symbol": "PEP",
+        "cik": "0000077476"
+      },
+      {
+        "symbol": "PFE",
+        "cik": "0000078003"
+      },
+      {
+        "symbol": "PCG",
+        "cik": "0001004980"
+      },
+      {
+        "symbol": "PM",
+        "cik": "0001413329"
+      },
+      {
+        "symbol": "PSX",
+        "cik": "0001534701"
+      },
+      {
+        "symbol": "PNW",
+        "cik": "0000764622"
+      },
+      {
+        "symbol": "PNC",
+        "cik": "0000713676"
+      },
+      {
+        "symbol": "PPG",
+        "cik": "0000079879"
+      },
+      {
+        "symbol": "PPL",
+        "cik": "0000922224"
+      },
+      {
+        "symbol": "PFG",
+        "cik": "0001126328"
+      },
+      {
+        "symbol": "PG",
+        "cik": "0000080424"
+      },
+      {
+        "symbol": "PGR",
+        "cik": "0000080661"
+      },
+      {
+        "symbol": "PLD",
+        "cik": "0001045609"
+      },
+      {
+        "symbol": "PRU",
+        "cik": "0001137774"
+      },
+      {
+        "symbol": "PEG",
+        "cik": "0000788784"
+      },
+      {
+        "symbol": "PTC",
+        "cik": "0000857005"
+      },
+      {
+        "symbol": "PSA",
+        "cik": "0001393311"
+      },
+      {
+        "symbol": "PHM",
+        "cik": "0000822416"
+      },
+      {
+        "symbol": "PWR",
+        "cik": "0001050915"
+      },
+      {
+        "symbol": "QCOM",
+        "cik": "0000804328"
+      },
+      {
+        "symbol": "DGX",
+        "cik": "0001022079"
+      },
+      {
+        "symbol": "Q",
+        "cik": "0002058873"
+      },
+      {
+        "symbol": "RL",
+        "cik": "0001037038"
+      },
+      {
+        "symbol": "RJF",
+        "cik": "0000720005"
+      },
+      {
+        "symbol": "RDDT",
+        "cik": "0001713445"
+      },
+      {
+        "symbol": "RTX",
+        "cik": "0000101829"
+      },
+      {
+        "symbol": "O",
+        "cik": "0000726728"
+      },
+      {
+        "symbol": "REG",
+        "cik": "0000910606"
+      },
+      {
+        "symbol": "REGN",
+        "cik": "0000872589"
+      },
+      {
+        "symbol": "RF",
+        "cik": "0001281761"
+      },
+      {
+        "symbol": "RSG",
+        "cik": "0001060391"
+      },
+      {
+        "symbol": "RMD",
+        "cik": "0000943819"
+      },
+      {
+        "symbol": "RVTY",
+        "cik": "0000031791"
+      },
+      {
+        "symbol": "HOOD",
+        "cik": "0001783879"
+      },
+      {
+        "symbol": "ROK",
+        "cik": "0001024478"
+      },
+      {
+        "symbol": "ROL",
+        "cik": "0000084839"
+      },
+      {
+        "symbol": "ROP",
+        "cik": "0000882835"
+      },
+      {
+        "symbol": "ROST",
+        "cik": "0000745732"
+      },
+      {
+        "symbol": "RCL",
+        "cik": "0000884887"
+      },
+      {
+        "symbol": "SPGI",
+        "cik": "0000064040"
+      },
+      {
+        "symbol": "CRM",
+        "cik": "0001108524"
+      },
+      {
+        "symbol": "SNDK",
+        "cik": "0002023554"
+      },
+      {
+        "symbol": "SBAC",
+        "cik": "0001034054"
+      },
+      {
+        "symbol": "SLB",
+        "cik": "0000087347"
+      },
+      {
+        "symbol": "STX",
+        "cik": "0001137789"
+      },
+      {
+        "symbol": "SRE",
+        "cik": "0001032208"
+      },
+      {
+        "symbol": "NOW",
+        "cik": "0001373715"
+      },
+      {
+        "symbol": "SHW",
+        "cik": "0000089800"
+      },
+      {
+        "symbol": "SPG",
+        "cik": "0001063761"
+      },
+      {
+        "symbol": "SWKS",
+        "cik": "0000004127"
+      },
+      {
+        "symbol": "SJM",
+        "cik": "0000091419"
+      },
+      {
+        "symbol": "SW",
+        "cik": "0002005951"
+      },
+      {
+        "symbol": "SNA",
+        "cik": "0000091440"
+      },
+      {
+        "symbol": "SOLV",
+        "cik": "0001964738"
+      },
+      {
+        "symbol": "SO",
+        "cik": "0000092122"
+      },
+      {
+        "symbol": "LUV",
+        "cik": "0000092380"
+      },
+      {
+        "symbol": "SWK",
+        "cik": "0000093556"
+      },
+      {
+        "symbol": "SBUX",
+        "cik": "0000829224"
+      },
+      {
+        "symbol": "STT",
+        "cik": "0000093751"
+      },
+      {
+        "symbol": "STLD",
+        "cik": "0001022671"
+      },
+      {
+        "symbol": "STE",
+        "cik": "0001757898"
+      },
+      {
+        "symbol": "SYK",
+        "cik": "0000310764"
+      },
+      {
+        "symbol": "SMCI",
+        "cik": "0001375365"
+      },
+      {
+        "symbol": "SYF",
+        "cik": "0001601712"
+      },
+      {
+        "symbol": "SNPS",
+        "cik": "0000883241"
+      },
+      {
+        "symbol": "SYY",
+        "cik": "0000096021"
+      },
+      {
+        "symbol": "TMUS",
+        "cik": "0001283699"
+      },
+      {
+        "symbol": "TROW",
+        "cik": "0001113169"
+      },
+      {
+        "symbol": "TTWO",
+        "cik": "0000946581"
+      },
+      {
+        "symbol": "TPR",
+        "cik": "0001116132"
+      },
+      {
+        "symbol": "TRGP",
+        "cik": "0001389170"
+      },
+      {
+        "symbol": "TGT",
+        "cik": "0000027419"
+      },
+      {
+        "symbol": "TEL",
+        "cik": "0001385157"
+      },
+      {
+        "symbol": "TDY",
+        "cik": "0001094285"
+      },
+      {
+        "symbol": "TER",
+        "cik": "0000097210"
+      },
+      {
+        "symbol": "TSLA",
+        "cik": "0001318605"
+      },
+      {
+        "symbol": "TXN",
+        "cik": "0000097476"
+      },
+      {
+        "symbol": "TPL",
+        "cik": "0001811074"
+      },
+      {
+        "symbol": "TXT",
+        "cik": "0000217346"
+      },
+      {
+        "symbol": "TMO",
+        "cik": "0000097745"
+      },
+      {
+        "symbol": "TJX",
+        "cik": "0000109198"
+      },
+      {
+        "symbol": "TKO",
+        "cik": "0001973266"
+      },
+      {
+        "symbol": "TTD",
+        "cik": "0001671933"
+      },
+      {
+        "symbol": "TSCO",
+        "cik": "0000916365"
+      },
+      {
+        "symbol": "TT",
+        "cik": "0001466258"
+      },
+      {
+        "symbol": "TDG",
+        "cik": "0001260221"
+      },
+      {
+        "symbol": "TRV",
+        "cik": "0000086312"
+      },
+      {
+        "symbol": "TRMB",
+        "cik": "0000864749"
+      },
+      {
+        "symbol": "TFC",
+        "cik": "0000092230"
+      },
+      {
+        "symbol": "TYL",
+        "cik": "0000860731"
+      },
+      {
+        "symbol": "TSN",
+        "cik": "0000100493"
+      },
+      {
+        "symbol": "USB",
+        "cik": "0000036104"
+      },
+      {
+        "symbol": "UBER",
+        "cik": "0001543151"
+      },
+      {
+        "symbol": "UDR",
+        "cik": "0000074208"
+      },
+      {
+        "symbol": "ULTA",
+        "cik": "0001403568"
+      },
+      {
+        "symbol": "UNP",
+        "cik": "0000100885"
+      },
+      {
+        "symbol": "UAL",
+        "cik": "0000100517"
+      },
+      {
+        "symbol": "UPS",
+        "cik": "0001090727"
+      },
+      {
+        "symbol": "URI",
+        "cik": "0001067701"
+      },
+      {
+        "symbol": "UNH",
+        "cik": "0000731766"
+      },
+      {
+        "symbol": "UHS",
+        "cik": "0000352915"
+      },
+      {
+        "symbol": "VLO",
+        "cik": "0001035002"
+      },
+      {
+        "symbol": "VEEV",
+        "cik": "0001393052"
+      },
+      {
+        "symbol": "VTR",
+        "cik": "0000740260"
+      },
+      {
+        "symbol": "VLTO",
+        "cik": "0001967680"
+      },
+      {
+        "symbol": "VRSN",
+        "cik": "0001014473"
+      },
+      {
+        "symbol": "VRSK",
+        "cik": "0001442145"
+      },
+      {
+        "symbol": "VZ",
+        "cik": "0000732712"
+      },
+      {
+        "symbol": "VRTX",
+        "cik": "0000875320"
+      },
+      {
+        "symbol": "VRT",
+        "cik": "0001674101"
+      },
+      {
+        "symbol": "VTRS",
+        "cik": "0001792044"
+      },
+      {
+        "symbol": "VICI",
+        "cik": "0001705696"
+      },
+      {
+        "symbol": "V",
+        "cik": "0001403161"
+      },
+      {
+        "symbol": "VST",
+        "cik": "0001692819"
+      },
+      {
+        "symbol": "VMRK",
+        "cik": "0000906107"
+      },
+      {
+        "symbol": "VMC",
+        "cik": "0001396009"
+      },
+      {
+        "symbol": "WRB",
+        "cik": "0000011544"
+      },
+      {
+        "symbol": "GWW",
+        "cik": "0000277135"
+      },
+      {
+        "symbol": "WAB",
+        "cik": "0000943452"
+      },
+      {
+        "symbol": "WMT",
+        "cik": "0000104169"
+      },
+      {
+        "symbol": "DIS",
+        "cik": "0001744489"
+      },
+      {
+        "symbol": "WBD",
+        "cik": "0001437107"
+      },
+      {
+        "symbol": "WM",
+        "cik": "0000823768"
+      },
+      {
+        "symbol": "WAT",
+        "cik": "0001000697"
+      },
+      {
+        "symbol": "WEC",
+        "cik": "0000783325"
+      },
+      {
+        "symbol": "WFC",
+        "cik": "0000072971"
+      },
+      {
+        "symbol": "WELL",
+        "cik": "0000766704"
+      },
+      {
+        "symbol": "WST",
+        "cik": "0000105770"
+      },
+      {
+        "symbol": "WDC",
+        "cik": "0000106040"
+      },
+      {
+        "symbol": "WY",
+        "cik": "0000106535"
+      },
+      {
+        "symbol": "WSM",
+        "cik": "0000719955"
+      },
+      {
+        "symbol": "WMB",
+        "cik": "0000107263"
+      },
+      {
+        "symbol": "WTW",
+        "cik": "0001140536"
+      },
+      {
+        "symbol": "WDAY",
+        "cik": "0001327811"
+      },
+      {
+        "symbol": "WYNN",
+        "cik": "0001174922"
+      },
+      {
+        "symbol": "XEL",
+        "cik": "0000072903"
+      },
+      {
+        "symbol": "XYL",
+        "cik": "0001524472"
+      },
+      {
+        "symbol": "YUM",
+        "cik": "0001041061"
+      },
+      {
+        "symbol": "ZBRA",
+        "cik": "0000877212"
+      },
+      {
+        "symbol": "ZBH",
+        "cik": "0001136869"
+      },
+      {
+        "symbol": "ZTS",
+        "cik": "0001555280"
+      }
+    ]
+  }
+}

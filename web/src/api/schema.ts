@@ -163,6 +163,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/security-lists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Security Lists */
+        get: operations["get_security_lists_api_security_lists_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/securities": {
         parameters: {
             query?: never;
@@ -761,8 +778,8 @@ export interface components {
              */
             end_date: string;
             /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
+             * Provider
+             * @constant
              */
             provider: "alpaca";
             /** Symbol */
@@ -993,6 +1010,34 @@ export interface components {
             /** Deleted Ids */
             deleted_ids: string[];
         };
+        /** CompositeDownloadRequest */
+        CompositeDownloadRequest: {
+            /** Security List Id */
+            security_list_id: string;
+            /**
+             * Start Date
+             * Format: date
+             */
+            start_date: string;
+            /**
+             * End Date
+             * Format: date
+             */
+            end_date: string;
+            /** Downloads */
+            downloads: components["schemas"]["ProviderDownloadItem"][];
+        };
+        /** CompositeDownloadResponse */
+        CompositeDownloadResponse: {
+            /** Dataset Version Id */
+            dataset_version_id: string;
+            /** Security List Id */
+            security_list_id: string;
+            /** Parts */
+            parts: components["schemas"]["DatasetPartResponse"][];
+            /** Dataset Version Ids */
+            dataset_version_ids?: string[];
+        };
         /** ConstraintRejectionResponse */
         ConstraintRejectionResponse: {
             /** Session Date */
@@ -1039,23 +1084,32 @@ export interface components {
             /** Retrieval Time */
             retrieval_time: string;
             /** Coverage Start */
-            coverage_start: string | null;
+            coverage_start?: string | null;
             /** Coverage End */
-            coverage_end: string | null;
-            /** Row Count */
+            coverage_end?: string | null;
+            /**
+             * Row Count
+             * @default 0
+             */
             row_count: number;
-            /** Rejected Count */
+            /**
+             * Rejected Count
+             * @default 0
+             */
             rejected_count: number;
             /** Missing Fields */
-            missing_fields: {
+            missing_fields?: {
                 [key: string]: number;
             };
             /** Warnings */
-            warnings: string[];
-            /** Total Warnings */
+            warnings?: string[];
+            /**
+             * Total Warnings
+             * @default 0
+             */
             total_warnings: number;
             /** Files */
-            files: string[];
+            files?: string[];
             /**
              * Has Temporal Provenance
              * @default false
@@ -1076,6 +1130,12 @@ export interface components {
              * @default daily_bars
              */
             dataset_type: string;
+            /** Security List Id */
+            security_list_id?: string | null;
+            /** Security List As Of Date */
+            security_list_as_of_date?: string | null;
+            /** Parts */
+            parts?: components["schemas"]["DatasetPartResponse"][];
         };
         /** DailyBarResponse */
         DailyBarResponse: {
@@ -1119,6 +1179,57 @@ export interface components {
         DatasetImportResponse: {
             /** Dataset Version Id */
             dataset_version_id: string;
+        };
+        /** DatasetPartResponse */
+        DatasetPartResponse: {
+            /** Id */
+            id: string;
+            /** Source */
+            source: string;
+            /** Dataset Type */
+            dataset_type: string;
+            /** Coverage Start */
+            coverage_start?: string | null;
+            /** Coverage End */
+            coverage_end?: string | null;
+            /**
+             * Row Count
+             * @default 0
+             */
+            row_count: number;
+            /**
+             * Rejected Count
+             * @default 0
+             */
+            rejected_count: number;
+            /** Missing Fields */
+            missing_fields?: {
+                [key: string]: number;
+            };
+            /** Warnings */
+            warnings?: string[];
+            /**
+             * Total Warnings
+             * @default 0
+             */
+            total_warnings: number;
+            /** Files */
+            files?: string[];
+            /**
+             * Has Temporal Provenance
+             * @default false
+             */
+            has_temporal_provenance: boolean;
+            /**
+             * Is Fundamentals
+             * @default false
+             */
+            is_fundamentals: boolean;
+            /**
+             * Is Corporate Actions
+             * @default false
+             */
+            is_corporate_actions: boolean;
         };
         /** DefinitionCreateRequest */
         DefinitionCreateRequest: {
@@ -1551,8 +1662,8 @@ export interface components {
              */
             end_date: string;
             /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
+             * Provider
+             * @constant
              */
             provider: "massive";
             /** Symbol */
@@ -1790,6 +1901,16 @@ export interface components {
             /** Created At */
             created_at: string;
         };
+        /** ProviderDownloadItem */
+        ProviderDownloadItem: {
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "tiingo" | "massive" | "sec_edgar" | "alpaca";
+            /** Data Types */
+            data_types?: string[];
+        };
         /** ProviderDownloadResponse */
         ProviderDownloadResponse: {
             /** Dataset Version Id */
@@ -1862,12 +1983,25 @@ export interface components {
             /** End Date */
             end_date?: string | null;
             /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
+             * Provider
+             * @constant
              */
             provider: "sec_edgar";
             /** Ciks */
             ciks: string[];
+        };
+        /** SecurityListSummaryResponse */
+        SecurityListSummaryResponse: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Member Count */
+            member_count: number;
+            /** As Of Date */
+            as_of_date: string;
+            /** Source Url */
+            source_url: string;
         };
         /** SecurityResponse */
         SecurityResponse: {
@@ -2097,8 +2231,8 @@ export interface components {
             /** End Date */
             end_date?: string | null;
             /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
+             * Provider
+             * @constant
              */
             provider: "tiingo";
             /** Symbols */
@@ -2679,6 +2813,26 @@ export interface operations {
             };
         };
     };
+    get_security_lists_api_security_lists_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecurityListSummaryResponse"][];
+                };
+            };
+        };
+    };
     list_securities_api_securities_get: {
         parameters: {
             query?: {
@@ -2979,7 +3133,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TiingoDownloadRequest"] | components["schemas"]["SecEdgarDownloadRequest"] | components["schemas"]["AlpacaDownloadRequest"] | components["schemas"]["MassiveDownloadRequest"];
+                "application/json": components["schemas"]["CompositeDownloadRequest"] | components["schemas"]["TiingoDownloadRequest"] | components["schemas"]["SecEdgarDownloadRequest"] | components["schemas"]["AlpacaDownloadRequest"] | components["schemas"]["MassiveDownloadRequest"];
             };
         };
         responses: {
@@ -2989,7 +3143,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ProviderDownloadResponse"];
+                    "application/json": components["schemas"]["CompositeDownloadResponse"] | components["schemas"]["ProviderDownloadResponse"];
                 };
             };
             /** @description Validation Error */

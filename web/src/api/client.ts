@@ -9,12 +9,19 @@ export type CoverageResponse = components["schemas"]["CoverageResponse"];
 export type CorporateActionResponse = components["schemas"]["CorporateActionResponse"];
 export type DailyBarResponse = components["schemas"]["DailyBarResponse"];
 export type FundamentalFactResponse = components["schemas"]["FundamentalFactResponse"];
+export type SecurityListSummary = components["schemas"]["SecurityListSummaryResponse"];
+export type CompositeDownloadRequest = components["schemas"]["CompositeDownloadRequest"];
+export type CompositeDownloadResponse = components["schemas"]["CompositeDownloadResponse"];
+export type ProviderDownloadItem = components["schemas"]["ProviderDownloadItem"];
 export type ProviderDownloadRequest =
+  | components["schemas"]["CompositeDownloadRequest"]
   | components["schemas"]["TiingoDownloadRequest"]
   | components["schemas"]["SecEdgarDownloadRequest"]
   | components["schemas"]["AlpacaDownloadRequest"]
   | components["schemas"]["MassiveDownloadRequest"];
-export type ProviderDownloadResponse = components["schemas"]["ProviderDownloadResponse"];
+export type ProviderDownloadResponse =
+  | components["schemas"]["ProviderDownloadResponse"]
+  | components["schemas"]["CompositeDownloadResponse"];
 
 export type Security = components["schemas"]["SecurityResponse"];
 export type SecuritySummary = components["schemas"]["SecuritySummaryResponse"];
@@ -354,6 +361,7 @@ export const api = {
       }),
     );
   },
+  getSecurityLists: () => dataOrThrow(client.GET("/api/security-lists")),
   downloadDataset: (request: ProviderDownloadRequest) =>
     dataOrThrow(
       client.POST("/api/datasets/download", {

@@ -1,4 +1,5 @@
-Write in ASD-STE100 but for a 20 year old.
+# Communication
+Always follow responding-to-prompts.md
 
 # Project context and user ergonomics
 

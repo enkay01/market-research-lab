@@ -6,7 +6,7 @@ import contextlib
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from typing import Callable, Mapping
+from typing import Callable, Literal, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -211,6 +211,7 @@ class MassiveCredentials:
     """Massive / Polygon credentials held by the local process."""
 
     api_key: str | None = None
+    request_interval_seconds: float = 12.0
 
 
 @dataclass(frozen=True)
@@ -1037,8 +1038,9 @@ def download_massive(
                 }
             )
             # Minute bars for option contract
+            safe_ticker = quote(contract_ticker, safe="")
             trade_url = (
-                f"https://api.polygon.io/v2/aggs/ticker/O:{quote(contract_ticker, safe='')}/range/1/minute/"
+                f"https://api.polygon.io/v2/aggs/ticker/O:{safe_ticker}/range/1/minute/"
                 f"{start_str}/{end_str}?sort=asc&limit=50000"
             )
             try:

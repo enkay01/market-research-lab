@@ -5,9 +5,10 @@ from __future__ import annotations
 import contextlib
 import shutil
 import tempfile
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Literal
 from uuid import UUID
 
 from fastapi import (
@@ -25,10 +26,17 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from ..downloads import download_provider
+from ..downloads import (
+    CompositeDownloadContext,
+    DatasetDownloadSpec,
+    ProviderDownloadChoice,
+    download_composite,
+    download_provider,
+)
 from ..json_types import JsonValue
 from ..market_data import (
     CoverageReport,
+    DatasetPartReport,
     IngestionRequest,
     MarketDataStore,
 )
@@ -42,12 +50,14 @@ from ..providers import (
     SecEdgarDownloadSpec,
     TiingoDownloadSpec,
 )
+from ..security_lists import SecurityListNotFoundError, list_security_lists
 from .deps import (
     SecurityNotFoundError,
     get_market_store,
     get_project_store,
     get_provider_credentials,
     get_provider_fetch_json,
+    get_provider_wait,
 )
 
 router = APIRouter()
@@ -86,26 +96,54 @@ class SecuritySummaryResponse(BaseModel):
     alerts: list[dict[str, JsonValue]] = Field(default_factory=list)
 
 
+class SecurityListSummaryResponse(BaseModel):
+    id: str
+    name: str
+    member_count: int
+    as_of_date: str
+    source_url: str
+
+
 class DatasetImportResponse(BaseModel):
     dataset_version_id: str
+
+
+class DatasetPartResponse(BaseModel):
+    id: str
+    source: str
+    dataset_type: str
+    coverage_start: str | None = None
+    coverage_end: str | None = None
+    row_count: int = 0
+    rejected_count: int = 0
+    missing_fields: dict[str, int] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    total_warnings: int = 0
+    files: list[str] = Field(default_factory=list)
+    has_temporal_provenance: bool = False
+    is_fundamentals: bool = False
+    is_corporate_actions: bool = False
 
 
 class CoverageResponse(BaseModel):
     id: str
     source: str
     retrieval_time: str
-    coverage_start: str | None
-    coverage_end: str | None
-    row_count: int
-    rejected_count: int
-    missing_fields: dict[str, int]
-    warnings: list[str]
-    total_warnings: int
-    files: list[str]
+    coverage_start: str | None = None
+    coverage_end: str | None = None
+    row_count: int = 0
+    rejected_count: int = 0
+    missing_fields: dict[str, int] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    total_warnings: int = 0
+    files: list[str] = Field(default_factory=list)
     has_temporal_provenance: bool = False
     is_fundamentals: bool = False
     is_corporate_actions: bool = False
     dataset_type: str = "daily_bars"
+    security_list_id: str | None = None
+    security_list_as_of_date: str | None = None
+    parts: list[DatasetPartResponse] = Field(default_factory=list)
 
 
 class DailyBarResponse(BaseModel):
@@ -260,18 +298,76 @@ class MassiveDownloadRequest(ProviderDownloadRequestBase):
         )
 
 
-ProviderDownloadRequest = Annotated[
-    TiingoDownloadRequest
+class ProviderDownloadItem(BaseModel):
+    provider: Literal["tiingo", "massive", "sec_edgar", "alpaca"]
+    data_types: list[str] = Field(default_factory=list)
+
+
+class CompositeDownloadRequest(BaseModel):
+    security_list_id: str
+    start_date: date
+    end_date: date
+    downloads: list[ProviderDownloadItem] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_dates(self) -> CompositeDownloadRequest:
+        if self.start_date > self.end_date:
+            raise ValueError("Start date must be on or before end date")
+        return self
+
+    def to_spec(self) -> DatasetDownloadSpec:
+        return DatasetDownloadSpec(
+            security_list_id=self.security_list_id,
+            start_date=self.start_date,
+            end_date=self.end_date,
+            downloads=tuple(
+                ProviderDownloadChoice(
+                    provider=item.provider,
+                    data_types=tuple(item.data_types),
+                )
+                for item in self.downloads
+            ),
+        )
+
+
+ProviderDownloadRequest = (
+    CompositeDownloadRequest
+    | TiingoDownloadRequest
     | SecEdgarDownloadRequest
     | AlpacaDownloadRequest
-    | MassiveDownloadRequest,
-    Field(discriminator="provider"),
-]
+    | MassiveDownloadRequest
+)
+
+
+class CompositeDownloadResponse(BaseModel):
+    dataset_version_id: str
+    security_list_id: str
+    parts: list[DatasetPartResponse]
+    dataset_version_ids: list[str] = Field(default_factory=list)
 
 
 class ProviderDownloadResponse(BaseModel):
     dataset_version_id: str
     dataset_version_ids: list[str]
+
+
+def _part_response(part: DatasetPartReport) -> DatasetPartResponse:
+    return DatasetPartResponse(
+        id=part.id,
+        source=part.source,
+        dataset_type=part.dataset_type,
+        coverage_start=part.coverage_start,
+        coverage_end=part.coverage_end,
+        row_count=part.row_count,
+        rejected_count=part.rejected_count,
+        missing_fields=part.missing_fields,
+        warnings=part.warnings,
+        total_warnings=part.total_warnings,
+        files=part.files,
+        has_temporal_provenance=part.has_temporal_provenance,
+        is_fundamentals=part.is_fundamentals,
+        is_corporate_actions=part.is_corporate_actions,
+    )
 
 
 def _coverage_response(coverage: CoverageReport) -> CoverageResponse:
@@ -291,7 +387,28 @@ def _coverage_response(coverage: CoverageReport) -> CoverageResponse:
         is_fundamentals=coverage.is_fundamentals,
         is_corporate_actions=coverage.is_corporate_actions,
         dataset_type=coverage.dataset_type,
+        security_list_id=coverage.security_list_id,
+        security_list_as_of_date=coverage.security_list_as_of_date,
+        parts=[_part_response(p) for p in coverage.parts],
     )
+
+
+@router.get(
+    "/api/security-lists",
+    response_model=list[SecurityListSummaryResponse],
+    tags=["security_lists"],
+)
+def get_security_lists() -> list[SecurityListSummaryResponse]:
+    return [
+        SecurityListSummaryResponse(
+            id=s.id,
+            name=s.name,
+            member_count=s.member_count,
+            as_of_date=s.as_of_date,
+            source_url=s.source_url,
+        )
+        for s in list_security_lists()
+    ]
 
 
 @router.get(
@@ -507,24 +624,68 @@ def get_dataset_corporate_actions(
     ]
 
 
+class DownloadDependencies:
+    """Consolidated FastAPI dependencies for provider downloads."""
+
+    def __init__(
+        self,
+        market_store: MarketDataStore = Depends(get_market_store),
+        credentials: ProviderCredentials = Depends(get_provider_credentials),
+        provider_fetch_json: JsonFetcher | None = Depends(get_provider_fetch_json),
+        provider_wait: Callable[[float], None] = Depends(get_provider_wait),
+    ) -> None:
+        self.market_store = market_store
+        self.credentials = credentials
+        self.provider_fetch_json = provider_fetch_json
+        self.provider_wait = provider_wait
+
+
 @router.post(
     "/api/datasets/download",
-    response_model=ProviderDownloadResponse,
+    response_model=CompositeDownloadResponse | ProviderDownloadResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["datasets"],
 )
 def download_dataset(
     request: ProviderDownloadRequest,
-    market_store: MarketDataStore = Depends(get_market_store),
-    credentials: ProviderCredentials = Depends(get_provider_credentials),
-    provider_fetch_json: JsonFetcher | None = Depends(get_provider_fetch_json),
-) -> ProviderDownloadResponse | JSONResponse:
+    deps: DownloadDependencies = Depends(),
+) -> CompositeDownloadResponse | ProviderDownloadResponse | JSONResponse:
+    if isinstance(request, CompositeDownloadRequest):
+        try:
+            report = download_composite(
+                deps.market_store,
+                request.to_spec(),
+                CompositeDownloadContext(
+                    credentials=deps.credentials,
+                    fetch_json=deps.provider_fetch_json,
+                    wait=deps.provider_wait,
+                ),
+            )
+            return CompositeDownloadResponse(
+                dataset_version_id=report.id,
+                security_list_id=report.security_list_id or request.security_list_id,
+                parts=[_part_response(p) for p in report.parts],
+                dataset_version_ids=[report.id],
+            )
+        except SecurityListNotFoundError:
+            raise
+        except ProviderDownloadError as error:
+            return JSONResponse(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                content={"code": "provider_error", "message": str(error), "details": {}},
+            )
+        except ValueError as error:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"code": "import_error", "message": str(error), "details": {}},
+            )
+
     try:
         versions = download_provider(
-            market_store,
+            deps.market_store,
             request.to_spec(),
-            credentials=credentials,
-            fetch_json=provider_fetch_json,
+            credentials=deps.credentials,
+            fetch_json=deps.provider_fetch_json,
         )
     except ProviderDownloadError as error:
         return JSONResponse(
@@ -540,3 +701,4 @@ def download_dataset(
         dataset_version_id=versions[0].id,
         dataset_version_ids=[version.id for version in versions],
     )
+

@@ -1,4 +1,4 @@
-import { test } from '@playwright/test';
+import { test } from 'playwright/test';
 
 test.use({ channel: 'msedge', viewport: { width: 1440, height: 900 } });
 
