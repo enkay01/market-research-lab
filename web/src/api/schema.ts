@@ -334,6 +334,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/downloads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Download */
+        post: operations["start_download_api_downloads_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/downloads/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Latest Download */
+        get: operations["get_latest_download_api_downloads_latest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/downloads/{download_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Download Status */
+        get: operations["get_download_status_api_downloads__download_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/downloads/{download_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Download */
+        post: operations["cancel_download_api_downloads__download_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/indicators": {
         parameters: {
             query?: never;
@@ -1259,6 +1327,77 @@ export interface components {
             definition: {
                 [key: string]: components["schemas"]["JsonValue-Output"];
             };
+        };
+        /** DownloadEventResponse */
+        DownloadEventResponse: {
+            /** Timestamp */
+            timestamp: string;
+            /** Phase */
+            phase: string;
+            /** Message */
+            message: string;
+            /** Details */
+            details?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+        };
+        /** DownloadSnapshotResponse */
+        DownloadSnapshotResponse: {
+            /** Download Id */
+            download_id: string;
+            /** State */
+            state: string;
+            /** Phase */
+            phase: string;
+            /** Started At */
+            started_at: string;
+            /** Updated At */
+            updated_at: string;
+            /** Dataset Version Id */
+            dataset_version_id?: string | null;
+            /** Security List Id */
+            security_list_id?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /**
+             * Total Logical Units
+             * @default 0
+             */
+            total_logical_units: number;
+            /**
+             * Completed Logical Units
+             * @default 0
+             */
+            completed_logical_units: number;
+            /**
+             * Total Requests
+             * @default 0
+             */
+            total_requests: number;
+            /**
+             * Completed Requests
+             * @default 0
+             */
+            completed_requests: number;
+            /** Active Provider */
+            active_provider?: string | null;
+            /** Active Operation */
+            active_operation?: string | null;
+            /**
+             * Rate Limit Wait Seconds
+             * @default 0
+             */
+            rate_limit_wait_seconds: number;
+            /** Recent Events */
+            recent_events?: components["schemas"]["DownloadEventResponse"][];
+        };
+        /** DownloadStartResponse */
+        DownloadStartResponse: {
+            /** Download Id */
+            download_id: string;
+            /** Status Url */
+            status_url: string;
+            snapshot: components["schemas"]["DownloadSnapshotResponse"];
         };
         /** DraftRequest */
         DraftRequest: {
@@ -3144,6 +3283,121 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CompositeDownloadResponse"] | components["schemas"]["ProviderDownloadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_download_api_downloads_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompositeDownloadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadStartResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_latest_download_api_downloads_latest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadSnapshotResponse"];
+                };
+            };
+        };
+    };
+    get_download_status_api_downloads__download_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                download_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadSnapshotResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_download_api_downloads__download_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                download_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadSnapshotResponse"];
                 };
             };
             /** @description Validation Error */

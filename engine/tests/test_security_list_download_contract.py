@@ -179,6 +179,23 @@ def test_security_list_catalogue_returns_named_dated_lists(tmp_path):
         assert lists[list_id]["source_url"].startswith("https://")
 
 
+def _wait_for_download(
+    client: TestClient,
+    download_id: str,
+    timeout_seconds: float = 5.0,
+) -> dict[str, JsonValue]:
+    import time
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        res = client.get(f"/api/downloads/{download_id}")
+        assert res.status_code == 200
+        snap = res.json()
+        if snap["state"] in ("succeeded", "failed", "cancelled"):
+            return snap
+        time.sleep(0.01)
+    raise TimeoutError(f"Download {download_id} did not finish within {timeout_seconds}s")
+
+
 def test_sector_and_index_etf_list_resolves_to_the_agreed_symbols():
     security_lists = _security_lists_module()
 
@@ -201,34 +218,45 @@ def test_each_security_list_has_unique_members_and_a_dated_source():
         assert security_list.source_url.startswith("https://")
 
 
-def test_unknown_security_list_returns_a_not_found_error(tmp_path):
+def test_unknown_security_list_results_in_failed_download(tmp_path):
     client = TestClient(create_app(workspace_root=tmp_path))
 
     response = client.post(
-        "/api/datasets/download",
+        "/api/downloads",
         json=_composite_request(security_list_id="missing-list"),
     )
 
-    assert response.status_code == 404
-    assert response.json()["code"] == "security_list_not_found"
+    assert response.status_code == 202
+    download_id = response.json()["download_id"]
+    snap = _wait_for_download(client, download_id)
+    assert snap["state"] == "failed"
+    assert "missing-list" in str(snap["error_message"])
 
 
 def test_multi_provider_download_creates_one_composite_dataset_version(tmp_path):
     _write_provider_credentials(tmp_path)
     provider = ProviderStub()
-    client = TestClient(create_app(workspace_root=tmp_path, provider_fetch_json=provider))
+    app = create_app(workspace_root=tmp_path, provider_fetch_json=provider)
+    app.state.provider_wait = lambda _: None
+    client = TestClient(app)
 
-    response = client.post("/api/datasets/download", json=_composite_request())
+    response = client.post("/api/downloads", json=_composite_request())
 
-    assert response.status_code == 201
-    created = response.json()
-    dataset_version_id = created["dataset_version_id"]
-    assert created["security_list_id"] == "dow-30"
-    assert {part["source"] for part in created["parts"]} == {
-        "tiingo",
-        "massive",
-        "sec_edgar",
-    }
+    assert response.status_code == 202
+    download_id = response.json()["download_id"]
+    assert response.json()["status_url"] == f"/api/downloads/{download_id}"
+
+    snap = _wait_for_download(client, download_id)
+    assert snap["state"] == "succeeded"
+    dataset_version_id = snap["dataset_version_id"]
+    assert dataset_version_id is not None
+    assert snap["security_list_id"] == "dow-30"
+
+    # Test /api/downloads/latest routing
+    latest = client.get("/api/downloads/latest")
+    assert latest.status_code == 200
+    assert latest.json()["download_id"] == download_id
+    assert latest.json()["dataset_version_id"] == dataset_version_id
 
     catalogue = client.get("/api/datasets")
     assert catalogue.status_code == 200
@@ -247,12 +275,17 @@ def test_multi_provider_download_creates_one_composite_dataset_version(tmp_path)
 def test_failed_composite_download_does_not_create_a_dataset_version(tmp_path):
     _write_provider_credentials(tmp_path)
     provider = ProviderStub(failing_provider="sec_edgar")
-    client = TestClient(create_app(workspace_root=tmp_path, provider_fetch_json=provider))
+    app = create_app(workspace_root=tmp_path, provider_fetch_json=provider)
+    app.state.provider_wait = lambda _: None
+    client = TestClient(app)
 
-    response = client.post("/api/datasets/download", json=_composite_request())
+    response = client.post("/api/downloads", json=_composite_request())
 
-    assert response.status_code == 502
-    assert response.json()["code"] == "provider_error"
+    assert response.status_code == 202
+    download_id = response.json()["download_id"]
+    snap = _wait_for_download(client, download_id)
+    assert snap["state"] == "failed"
+    assert "sec edgar" in str(snap["error_message"]).lower()
     assert client.get("/api/datasets").json() == []
 
 
@@ -265,13 +298,17 @@ def test_free_massive_download_waits_between_each_security_request(tmp_path):
     client = TestClient(app)
 
     response = client.post(
-        "/api/datasets/download",
+        "/api/downloads",
         json=_composite_request(
             security_list_id=ETF_SECURITY_LIST_ID,
             downloads=[{"provider": "massive", "data_types": ["minute_bars"]}],
         ),
     )
 
-    assert response.status_code == 201
+    assert response.status_code == 202
+    download_id = response.json()["download_id"]
+    snap = _wait_for_download(client, download_id, timeout_seconds=10.0)
+    assert snap["state"] == "succeeded"
     assert len(provider.calls) == len(ETF_SYMBOLS)
-    assert waits == [12.0] * (len(ETF_SYMBOLS) - 1)
+    assert len(waits) == len(ETF_SYMBOLS) - 1
+    assert all(w >= 11.5 for w in waits)

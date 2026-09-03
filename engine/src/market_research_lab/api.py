@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from time import perf_counter
 from typing import Awaitable, Callable
@@ -17,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .configuration import load_provider_credentials
+from .download_jobs import MarketDataDownloadService
 from .logging_setup import (
     DIAGNOSTIC_ID_HEADER,
     configure_logging,
@@ -62,6 +64,14 @@ def _repository_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    download_service = getattr(app.state, "download_service", None)
+    if download_service:
+        download_service.shutdown(wait=True)
+
+
 def create_app(
     workspace_root: Path | None = None,
     static_dir: Path | None = None,
@@ -72,7 +82,7 @@ def create_app(
     store = ProjectStore(workspace_root)
     market_store = MarketDataStore(workspace_root)
     configure_logging(workspace_root / "logs", write_run_log=store.append_run_log)
-    app = FastAPI(title="Market Research Lab", version="0.1.0")
+    app = FastAPI(title="Market Research Lab", version="0.1.0", lifespan=lifespan)
 
     env_candidates = [
         workspace_root / ".env.local",
@@ -82,10 +92,18 @@ def create_app(
     ]
     env_file = next((p for p in env_candidates if p.exists()), env_candidates[0])
 
+    creds = load_provider_credentials(env_file)
     app.state.project_store = store
     app.state.market_store = market_store
-    app.state.provider_credentials = load_provider_credentials(env_file)
+    app.state.provider_credentials = creds
     app.state.provider_fetch_json = provider_fetch_json
+    app.state.download_service = MarketDataDownloadService(
+        workspace_root=workspace_root,
+        market_store=market_store,
+        credentials=creds,
+        fetch_json=provider_fetch_json,
+        app_state=app.state,
+    )
 
     @app.middleware("http")
     async def log_request(

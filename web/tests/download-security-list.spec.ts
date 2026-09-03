@@ -1,6 +1,6 @@
 import { expect, test } from "playwright/test";
 
-test("downloads a Security List through the composite dataset request", async ({ page }) => {
+test("downloads a Security List through the asynchronous download workflow", async ({ page }) => {
   let submittedRequest: unknown;
 
   await page.route("**/api/health", (route) =>
@@ -8,6 +8,9 @@ test("downloads a Security List through the composite dataset request", async ({
   );
   await page.route("**/api/projects", (route) => route.fulfill({ json: [] }));
   await page.route("**/api/datasets", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/downloads/latest", (route) =>
+    route.fulfill({ status: 404, json: { code: "download_not_found", message: "Not found" } }),
+  );
   await page.route("**/api/security-lists", (route) =>
     route.fulfill({
       json: [
@@ -21,14 +24,68 @@ test("downloads a Security List through the composite dataset request", async ({
       ],
     }),
   );
-  await page.route("**/api/datasets/download", async (route) => {
+
+  let pollCount = 0;
+  await page.route("**/api/downloads", async (route) => {
     submittedRequest = route.request().postDataJSON();
     await route.fulfill({
-      status: 201,
+      status: 202,
       json: {
-        dataset_version_id: "dataset-1",
+        download_id: "dl-test-1",
+        status_url: "/api/downloads/dl-test-1",
+        snapshot: {
+          download_id: "dl-test-1",
+          state: "running",
+          phase: "FETCHING",
+          started_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          security_list_id: "us-sector-index-etfs",
+          total_logical_units: 3,
+          completed_logical_units: 1,
+          total_requests: 3,
+          completed_requests: 1,
+          active_provider: "tiingo",
+          active_operation: "Downloading daily bars",
+          rate_limit_wait_seconds: 0,
+          recent_events: [
+            {
+              timestamp: new Date().toISOString(),
+              phase: "FETCHING",
+              message: "Fetching tiingo daily bars",
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  await page.route("**/api/downloads/dl-test-1", async (route) => {
+    pollCount += 1;
+    const isDone = pollCount >= 2;
+    await route.fulfill({
+      status: 200,
+      json: {
+        download_id: "dl-test-1",
+        state: isDone ? "succeeded" : "running",
+        phase: isDone ? "COMPLETE" : "FETCHING",
+        started_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        dataset_version_id: isDone ? "dataset-version-123" : null,
         security_list_id: "us-sector-index-etfs",
-        parts: [],
+        total_logical_units: 3,
+        completed_logical_units: isDone ? 3 : 2,
+        total_requests: 3,
+        completed_requests: isDone ? 3 : 2,
+        active_provider: "tiingo",
+        active_operation: isDone ? "Complete" : "Downloading daily bars",
+        rate_limit_wait_seconds: 0,
+        recent_events: [
+          {
+            timestamp: new Date().toISOString(),
+            phase: isDone ? "COMPLETE" : "FETCHING",
+            message: isDone ? "Download complete" : "Fetching tiingo daily bars",
+          },
+        ],
       },
     });
   });
@@ -51,4 +108,7 @@ test("downloads a Security List through the composite dataset request", async ({
       { provider: "sec_edgar", data_types: ["fundamentals"] },
     ],
   });
+
+  // Verify that the dialog shows the running task
+  await expect(page.getByText("Download in Progress")).toBeVisible();
 });

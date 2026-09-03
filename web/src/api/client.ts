@@ -23,6 +23,10 @@ export type ProviderDownloadResponse =
   | components["schemas"]["ProviderDownloadResponse"]
   | components["schemas"]["CompositeDownloadResponse"];
 
+export type DownloadEventResponse = components["schemas"]["DownloadEventResponse"];
+export type DownloadSnapshotResponse = components["schemas"]["DownloadSnapshotResponse"];
+export type DownloadStartResponse = components["schemas"]["DownloadStartResponse"];
+
 export type Security = components["schemas"]["SecurityResponse"];
 export type SecuritySummary = components["schemas"]["SecuritySummaryResponse"];
 export type Watchlist = components["schemas"]["WatchlistResponse"];
@@ -366,6 +370,25 @@ export const api = {
     dataOrThrow(
       client.POST("/api/datasets/download", {
         body: request,
+      }),
+    ),
+  startDownload: (request: CompositeDownloadRequest) =>
+    dataOrThrow(
+      client.POST("/api/downloads", {
+        body: request,
+      }),
+    ),
+  getLatestDownload: () => dataOrThrow(client.GET("/api/downloads/latest")),
+  getDownloadStatus: (downloadId: string) =>
+    dataOrThrow(
+      client.GET("/api/downloads/{download_id}", {
+        params: { path: { download_id: downloadId } },
+      }),
+    ),
+  cancelDownload: (downloadId: string) =>
+    dataOrThrow(
+      client.POST("/api/downloads/{download_id}/cancel", {
+        params: { path: { download_id: downloadId } },
       }),
     ),
   getCoverage: (datasetVersionId: string) =>

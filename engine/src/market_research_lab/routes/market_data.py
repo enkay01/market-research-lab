@@ -26,6 +26,11 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from ..download_jobs import (
+    DownloadNotFoundError,
+    DownloadSnapshot,
+    MarketDataDownloadService,
+)
 from ..downloads import (
     CompositeDownloadContext,
     DatasetDownloadSpec,
@@ -53,6 +58,7 @@ from ..providers import (
 from ..security_lists import SecurityListNotFoundError, list_security_lists
 from .deps import (
     SecurityNotFoundError,
+    get_download_service,
     get_market_store,
     get_project_store,
     get_provider_credentials,
@@ -701,4 +707,126 @@ def download_dataset(
         dataset_version_id=versions[0].id,
         dataset_version_ids=[version.id for version in versions],
     )
+
+
+class DownloadEventResponse(BaseModel):
+    timestamp: str
+    phase: str
+    message: str
+    details: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class DownloadSnapshotResponse(BaseModel):
+    download_id: str
+    state: str
+    phase: str
+    started_at: str
+    updated_at: str
+    dataset_version_id: str | None = None
+    security_list_id: str | None = None
+    error_message: str | None = None
+    total_logical_units: int = 0
+    completed_logical_units: int = 0
+    total_requests: int = 0
+    completed_requests: int = 0
+    active_provider: str | None = None
+    active_operation: str | None = None
+    rate_limit_wait_seconds: float = 0.0
+    recent_events: list[DownloadEventResponse] = Field(default_factory=list)
+
+
+class DownloadStartResponse(BaseModel):
+    download_id: str
+    status_url: str
+    snapshot: DownloadSnapshotResponse
+
+
+def _snapshot_response(snap: DownloadSnapshot) -> DownloadSnapshotResponse:
+    return DownloadSnapshotResponse(
+        download_id=snap.download_id,
+        state=snap.state.value,
+        phase=snap.phase.value,
+        started_at=snap.started_at,
+        updated_at=snap.updated_at,
+        dataset_version_id=snap.dataset_version_id,
+        security_list_id=snap.security_list_id,
+        error_message=snap.error_message,
+        total_logical_units=snap.total_logical_units,
+        completed_logical_units=snap.completed_logical_units,
+        total_requests=snap.total_requests,
+        completed_requests=snap.completed_requests,
+        active_provider=snap.active_provider,
+        active_operation=snap.active_operation,
+        rate_limit_wait_seconds=snap.rate_limit_wait_seconds,
+        recent_events=[
+            DownloadEventResponse(
+                timestamp=e.timestamp,
+                phase=e.phase,
+                message=e.message,
+                details=e.details,
+            )
+            for e in snap.recent_events
+        ],
+    )
+
+
+@router.post(
+    "/api/downloads",
+    response_model=DownloadStartResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["downloads"],
+)
+def start_download(
+    request: CompositeDownloadRequest,
+    service: MarketDataDownloadService = Depends(get_download_service),
+) -> DownloadStartResponse:
+    spec = request.to_spec()
+    download_id = service.start(spec)
+    snap = service.get(download_id)
+    return DownloadStartResponse(
+        download_id=download_id,
+        status_url=f"/api/downloads/{download_id}",
+        snapshot=_snapshot_response(snap),
+    )
+
+
+@router.get(
+    "/api/downloads/latest",
+    response_model=DownloadSnapshotResponse,
+    tags=["downloads"],
+)
+def get_latest_download(
+    service: MarketDataDownloadService = Depends(get_download_service),
+) -> DownloadSnapshotResponse:
+    snap = service.latest()
+    if snap is None:
+        raise DownloadNotFoundError("latest")
+    return _snapshot_response(snap)
+
+
+@router.get(
+    "/api/downloads/{download_id}",
+    response_model=DownloadSnapshotResponse,
+    tags=["downloads"],
+)
+def get_download_status(
+    download_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
+    service: MarketDataDownloadService = Depends(get_download_service),
+) -> DownloadSnapshotResponse:
+    snap = service.get(download_id)
+    return _snapshot_response(snap)
+
+
+@router.post(
+    "/api/downloads/{download_id}/cancel",
+    response_model=DownloadSnapshotResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["downloads"],
+)
+def cancel_download(
+    download_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
+    service: MarketDataDownloadService = Depends(get_download_service),
+) -> DownloadSnapshotResponse:
+    snap = service.cancel(download_id)
+    return _snapshot_response(snap)
 

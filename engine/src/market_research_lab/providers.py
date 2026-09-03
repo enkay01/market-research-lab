@@ -21,6 +21,7 @@ from pydantic import (
 
 from .json_types import JsonValue
 from .market_data import Security
+from .transport import ProviderHttpError
 
 
 class ProviderDownloadError(ValueError):
@@ -212,6 +213,8 @@ class MassiveCredentials:
 
     api_key: str | None = None
     request_interval_seconds: float = 12.0
+    stocks_plan_profile: Literal["basic", "paid"] = "basic"
+    options_plan_profile: Literal["basic", "paid"] = "basic"
 
 
 @dataclass(frozen=True)
@@ -288,6 +291,25 @@ class MassiveOptionContractsResponse(BaseModel):
     next_url: str | None = None
 
 
+class MassiveGroupedDailyBar(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    ticker: str = Field(alias="T")
+    open: float = Field(alias="o")
+    high: float = Field(alias="h")
+    low: float = Field(alias="l")
+    close: float = Field(alias="c")
+    volume: float = Field(alias="v")
+    timestamp: int = Field(alias="t")
+
+
+class MassiveGroupedDailyResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    results: list[MassiveGroupedDailyBar] = Field(default_factory=list)
+    status: str | None = None
+
+
 @dataclass
 class ProviderDownload:
     securities: list[Security] = field(default_factory=list)
@@ -304,7 +326,10 @@ def _fetch_json(url: str, headers: Mapping[str, str]) -> JsonValue:
         with urlopen(request, timeout=30) as response:
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as error:
-        raise ProviderDownloadError(f"Provider request failed with HTTP {error.code}.") from error
+        raw_headers = dict(error.headers.items()) if error.headers else {}
+        raise ProviderHttpError(
+            error.code, headers=raw_headers, message=f"HTTP {error.code}"
+        ) from error
     except (URLError, TimeoutError, OSError, json.JSONDecodeError) as error:
         raise ProviderDownloadError(f"Provider request failed ({type(error).__name__}).") from error
 
@@ -314,12 +339,35 @@ def _call(
 ) -> JsonValue:
     try:
         return fetch_json(url, headers)
+    except ProviderHttpError:
+        raise
     except ProviderDownloadError as error:
         raise ProviderDownloadError(f"{provider} request failed.") from error
     except Exception as error:
         raise ProviderDownloadError(
             f"{provider} request failed ({type(error).__name__})."
         ) from error
+
+
+def _fetch_massive_pages(
+    fetch: JsonFetcher,
+    initial_url: str,
+    headers: Mapping[str, str],
+    provider: str = "Massive",
+) -> list[JsonValue]:
+    """Fetch all pages while passing every next_url through the fetch boundary."""
+    pages: list[JsonValue] = []
+    current_url: str | None = initial_url
+    while current_url:
+        payload = _call(fetch, current_url, headers, provider)
+        pages.append(payload)
+        next_url = payload.get("next_url") if isinstance(payload, dict) else None
+        if not isinstance(next_url, str) or not next_url:
+            break
+        if next_url == current_url:
+            raise ProviderDownloadError("Massive returned a repeated pagination URL.")
+        current_url = next_url
+    return pages
 
 
 def _alpaca_url(path: str, query: Mapping[str, str]) -> str:
@@ -561,6 +609,123 @@ def _tiingo_available_at(raw_date: str, retrieval_time: str) -> str:
     return retrieval_time
 
 
+def fetch_tiingo_symbol(
+    symbol: str,
+    *,
+    start_date: date | None,
+    end_date: date | None,
+    token: str | None,
+    retrieval_time: str,
+    fetch_json: JsonFetcher | None = None,
+) -> ProviderDownload:
+    """Fetch metadata, prices, and corporate actions for a single Tiingo symbol."""
+    fetch = fetch_json or _fetch_json
+
+    if not token:
+        raise ProviderDownloadError("Tiingo credentials are missing: set TIINGO_API_TOKEN.")
+
+    result = ProviderDownload()
+    headers = {"Accept": "application/json", "Authorization": f"Token {token}"}
+    clean_symbol = symbol.strip().upper()
+
+    metadata_url = f"https://api.tiingo.com/tiingo/daily/{clean_symbol}"
+    metadata_payload = _call(fetch, metadata_url, headers, "Tiingo")
+    try:
+        metadata = TiingoMetadataResponse.model_validate(metadata_payload)
+    except ValidationError as error:
+        raise ProviderDownloadError(
+            f"Tiingo returned invalid metadata for {clean_symbol}."
+        ) from error
+
+    result.securities.append(
+        Security(
+            security_id=clean_symbol,
+            symbol=metadata.ticker.upper(),
+            name=metadata.name,
+            exchange=metadata.exchange_code,
+            currency="USD",
+        )
+    )
+
+    query: dict[str, str] = {}
+    if start_date:
+        query["startDate"] = start_date.isoformat()
+    if end_date:
+        query["endDate"] = end_date.isoformat()
+    query_string = f"?{urlencode(query)}" if query else ""
+    url = f"https://api.tiingo.com/tiingo/daily/{clean_symbol}/prices{query_string}"
+    payload = _call(fetch, url, headers, "Tiingo")
+    try:
+        price_payload = TypeAdapter(
+            list[dict[str, str | int | float | bool | None]]
+        ).validate_python(payload)
+    except ValidationError as error:
+        raise ProviderDownloadError(
+            f"Tiingo returned an invalid price payload for {clean_symbol}."
+        ) from error
+
+    for row_number, raw_row in enumerate(price_payload, start=1):
+        try:
+            row = TiingoPriceResponse.model_validate(raw_row)
+        except ValidationError:
+            result.warnings.append(f"Tiingo {clean_symbol} row {row_number} failed validation.")
+            continue
+
+        available_at = _tiingo_available_at(row.date, retrieval_time)
+        result.daily_bars.append(
+            {
+                "security_id": clean_symbol,
+                "date": row.date,
+                "open": row.open,
+                "high": row.high,
+                "low": row.low,
+                "close": row.close,
+                "volume": row.volume,
+                "adjusted_open": row.adjusted_open,
+                "adjusted_high": row.adjusted_high,
+                "adjusted_low": row.adjusted_low,
+                "adjusted_close": row.adjusted_close,
+                "units": "USD",
+                "available_at": available_at,
+                "eligibility_provenance": "retrieval_time_snapshot",
+                "source": "tiingo",
+                "retrieval_time": retrieval_time,
+            }
+        )
+
+        if row.dividend_cash != 0:
+            result.corporate_actions.append(
+                {
+                    "security_id": clean_symbol,
+                    "type": "dividend",
+                    "effective_date": row.date,
+                    "value": row.dividend_cash,
+                    "units": "USD/share",
+                    "available_at": available_at,
+                    "eligibility_provenance": "retrieval_time_snapshot",
+                    "source": "tiingo",
+                    "retrieval_time": retrieval_time,
+                }
+            )
+
+        if row.split_factor != 1:
+            result.corporate_actions.append(
+                {
+                    "security_id": clean_symbol,
+                    "type": "split",
+                    "effective_date": row.date,
+                    "value": row.split_factor,
+                    "units": "ratio",
+                    "available_at": available_at,
+                    "eligibility_provenance": "retrieval_time_snapshot",
+                    "source": "tiingo",
+                    "retrieval_time": retrieval_time,
+                }
+            )
+
+    return result
+
+
 def download_tiingo(
     request: TiingoDownloadSpec,
     *,
@@ -569,111 +734,23 @@ def download_tiingo(
     fetch_json: JsonFetcher | None = None,
 ) -> ProviderDownload:
     """Download Tiingo EOD prices and map its action fields to canonical rows."""
-    fetch = fetch_json or _fetch_json
-
     if not token:
         raise ProviderDownloadError("Tiingo credentials are missing: set TIINGO_API_TOKEN.")
 
     result = ProviderDownload()
-    headers = {"Accept": "application/json", "Authorization": f"Token {token}"}
     for symbol in request.symbols:
-        metadata_url = f"https://api.tiingo.com/tiingo/daily/{symbol}"
-        metadata_payload = _call(fetch, metadata_url, headers, "Tiingo")
-        try:
-            metadata = TiingoMetadataResponse.model_validate(metadata_payload)
-        except ValidationError as error:
-            raise ProviderDownloadError(
-                f"Tiingo returned invalid metadata for {symbol}."
-            ) from error
-        result.securities.append(
-            Security(
-                security_id=symbol,
-                symbol=metadata.ticker.upper(),
-                name=metadata.name,
-                exchange=metadata.exchange_code,
-                currency="USD",
-            )
+        single = fetch_tiingo_symbol(
+            symbol,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            token=token,
+            retrieval_time=retrieval_time,
+            fetch_json=fetch_json,
         )
-        query: dict[str, str] = {}
-        if request.start_date:
-            query["startDate"] = request.start_date.isoformat()
-        if request.end_date:
-            query["endDate"] = request.end_date.isoformat()
-        query_string = f"?{urlencode(query)}" if query else ""
-        url = f"https://api.tiingo.com/tiingo/daily/{symbol}/prices{query_string}"
-        payload = _call(
-            fetch,
-            url,
-            headers,
-            "Tiingo",
-        )
-        try:
-            price_payload = TypeAdapter(
-                list[dict[str, str | int | float | bool | None]]
-            ).validate_python(payload)
-        except ValidationError as error:
-            raise ProviderDownloadError(
-                f"Tiingo returned an invalid price payload for {symbol}."
-            ) from error
-
-        for row_number, raw_row in enumerate(price_payload, start=1):
-            try:
-                row = TiingoPriceResponse.model_validate(raw_row)
-            except ValidationError:
-                result.warnings.append(f"Tiingo {symbol} row {row_number} failed validation.")
-                continue
-
-            available_at = _tiingo_available_at(row.date, retrieval_time)
-            result.daily_bars.append(
-                {
-                    "security_id": symbol,
-                    "date": row.date,
-                    "open": row.open,
-                    "high": row.high,
-                    "low": row.low,
-                    "close": row.close,
-                    "volume": row.volume,
-                    "adjusted_open": row.adjusted_open,
-                    "adjusted_high": row.adjusted_high,
-                    "adjusted_low": row.adjusted_low,
-                    "adjusted_close": row.adjusted_close,
-                    "units": "USD",
-                    "available_at": available_at,
-                    "eligibility_provenance": "retrieval_time_snapshot",
-                    "source": "tiingo",
-                    "retrieval_time": retrieval_time,
-                }
-            )
-
-            if row.dividend_cash != 0:
-                result.corporate_actions.append(
-                    {
-                        "security_id": symbol,
-                        "type": "dividend",
-                        "effective_date": row.date,
-                        "value": row.dividend_cash,
-                        "units": "USD/share",
-                        "available_at": available_at,
-                        "eligibility_provenance": "retrieval_time_snapshot",
-                        "source": "tiingo",
-                        "retrieval_time": retrieval_time,
-                    }
-                )
-
-            if row.split_factor != 1:
-                result.corporate_actions.append(
-                    {
-                        "security_id": symbol,
-                        "type": "split",
-                        "effective_date": row.date,
-                        "value": row.split_factor,
-                        "units": "ratio",
-                        "available_at": available_at,
-                        "eligibility_provenance": "retrieval_time_snapshot",
-                        "source": "tiingo",
-                        "retrieval_time": retrieval_time,
-                    }
-                )
+        result.securities.extend(single.securities)
+        result.daily_bars.extend(single.daily_bars)
+        result.corporate_actions.extend(single.corporate_actions)
+        result.warnings.extend(single.warnings)
 
     if not result.daily_bars:
         raise ProviderDownloadError("Tiingo returned no valid daily prices.")
@@ -747,6 +824,111 @@ def _fiscal_period(observation: SecObservation) -> str:
     return f"FY{observation.fy}" if fiscal_period == "FY" else f"{observation.fy}{fiscal_period}"
 
 
+def fetch_sec_edgar_cik(
+    cik: str,
+    *,
+    start_date: date | None,
+    end_date: date | None,
+    user_agent: str | None,
+    retrieval_time: str,
+    fetch_json: JsonFetcher | None = None,
+) -> ProviderDownload:
+    """Fetch submissions and facts for a single CIK."""
+    fetch = fetch_json or _fetch_json
+
+    if not user_agent:
+        raise ProviderDownloadError("SEC EDGAR credentials are missing: set SEC_EDGAR_USER_AGENT.")
+
+    clean_cik = cik.strip().zfill(10)
+    result = ProviderDownload()
+    defaulted_observation_fields: dict[str, int] = {}
+    headers = {"Accept": "application/json", "User-Agent": user_agent}
+
+    submissions_url = f"https://data.sec.gov/submissions/CIK{clean_cik}.json"
+    submissions_payload = _call(fetch, submissions_url, headers, "SEC EDGAR")
+    submissions = _parse_submissions(submissions_payload)
+    acceptance_times = _acceptance_times(submissions)
+
+    facts_url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{clean_cik}.json"
+    payload = _call(fetch, facts_url, headers, "SEC EDGAR")
+    try:
+        company_facts = SecCompanyFacts.model_validate(payload)
+    except ValidationError as error:
+        raise ProviderDownloadError(
+            f"SEC EDGAR returned an invalid Company Facts payload for {clean_cik}."
+        ) from error
+
+    security_symbol = submissions.tickers[0].upper() if submissions.tickers else f"CIK{clean_cik}"
+    security_id = f"CIK{clean_cik}"
+    result.securities.append(
+        Security(
+            security_id=security_id,
+            symbol=security_symbol,
+            name=submissions.name or company_facts.entity_name or f"CIK {clean_cik}",
+            exchange=submissions.exchanges[0] if submissions.exchanges else None,
+            currency="USD",
+        )
+    )
+
+    for taxonomy, concepts in company_facts.facts.items():
+        for concept, definition in concepts.items():
+            for unit, observations in definition.units.items():
+                for observation in observations:
+                    if not observation.form.startswith(("10-K", "10-Q", "20-F", "40-F")):
+                        continue
+                    if not _in_date_range(observation.filed, start_date, end_date):
+                        continue
+
+                    filed_at = _date_at_midnight(observation.filed)
+                    accession = observation.accn or ""
+                    available_at = acceptance_times.get(accession)
+                    provenance = "sec_acceptance_time"
+                    if available_at is None:
+                        provenance = "missing_acceptance_time"
+                        result.warnings.append(
+                            f"SEC EDGAR preserved {accession or 'an observation'} without "
+                            "an acceptance timestamp; historical use is not eligible."
+                        )
+
+                    period_start = _period_date(observation.start, "period start")
+                    period_end = _period_date(observation.end, "period end")
+                    if period_start and period_end and period_start[:10] > period_end[:10]:
+                        raise ProviderDownloadError(
+                            "SEC EDGAR returned a period with reversed dates."
+                        )
+
+                    defaulted_fields = _sec_observation_defaulted_fields(observation)
+                    for defaulted_field in defaulted_fields:
+                        defaulted_observation_fields[defaulted_field] = (
+                            defaulted_observation_fields.get(defaulted_field, 0) + 1
+                        )
+
+                    result.fundamental_facts.append(
+                        {
+                            "security_id": security_id,
+                            "field": f"{taxonomy}:{concept}",
+                            "fiscal_period": _fiscal_period(observation),
+                            "period_start": period_start,
+                            "period_end": period_end,
+                            "value": observation.val,
+                            "unit": str(unit),
+                            "filed_at": filed_at,
+                            "available_at": available_at,
+                            "eligibility_provenance": provenance,
+                            "source": "sec_edgar",
+                            "retrieval_time": retrieval_time,
+                            "incomplete_fields": sorted(defaulted_fields) or None,
+                        }
+                    )
+
+    for defaulted_field, count in sorted(defaulted_observation_fields.items()):
+        result.warnings.append(
+            f"SEC EDGAR preserved {count} observations with defaulted {defaulted_field}."
+        )
+
+    return result
+
+
 def download_sec_edgar(
     request: SecEdgarDownloadSpec,
     *,
@@ -755,98 +937,22 @@ def download_sec_edgar(
     fetch_json: JsonFetcher | None = None,
 ) -> ProviderDownload:
     """Download SEC filing metadata and Company Facts into canonical facts."""
-    fetch = fetch_json or _fetch_json
-
     if not user_agent:
         raise ProviderDownloadError("SEC EDGAR credentials are missing: set SEC_EDGAR_USER_AGENT.")
 
     result = ProviderDownload()
-    defaulted_observation_fields: dict[str, int] = {}
-    headers = {"Accept": "application/json", "User-Agent": user_agent}
     for cik in request.ciks:
-        submissions_url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-        submissions_payload = _call(fetch, submissions_url, headers, "SEC EDGAR")
-        submissions = _parse_submissions(submissions_payload)
-        acceptance_times = _acceptance_times(submissions)
-
-        facts_url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
-        payload = _call(fetch, facts_url, headers, "SEC EDGAR")
-        try:
-            company_facts = SecCompanyFacts.model_validate(payload)
-        except ValidationError as error:
-            raise ProviderDownloadError(
-                f"SEC EDGAR returned an invalid Company Facts payload for {cik}."
-            ) from error
-
-        security_symbol = submissions.tickers[0].upper() if submissions.tickers else f"CIK{cik}"
-        security_id = f"CIK{cik}"
-        result.securities.append(
-            Security(
-                security_id=security_id,
-                symbol=security_symbol,
-                name=submissions.name or company_facts.entity_name or f"CIK {cik}",
-                exchange=submissions.exchanges[0] if submissions.exchanges else None,
-                currency="USD",
-            )
+        single = fetch_sec_edgar_cik(
+            cik,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            user_agent=user_agent,
+            retrieval_time=retrieval_time,
+            fetch_json=fetch_json,
         )
-
-        for taxonomy, concepts in company_facts.facts.items():
-            for concept, definition in concepts.items():
-                for unit, observations in definition.units.items():
-                    for observation in observations:
-                        if not observation.form.startswith(("10-K", "10-Q", "20-F", "40-F")):
-                            continue
-                        if not _in_date_range(
-                            observation.filed, request.start_date, request.end_date
-                        ):
-                            continue
-
-                        filed_at = _date_at_midnight(observation.filed)
-                        accession = observation.accn or ""
-                        available_at = acceptance_times.get(accession)
-                        provenance = "sec_acceptance_time"
-                        if available_at is None:
-                            provenance = "missing_acceptance_time"
-                            result.warnings.append(
-                                f"SEC EDGAR preserved {accession or 'an observation'} without "
-                                "an acceptance timestamp; historical use is not eligible."
-                            )
-
-                        period_start = _period_date(observation.start, "period start")
-                        period_end = _period_date(observation.end, "period end")
-                        if period_start and period_end and period_start[:10] > period_end[:10]:
-                            raise ProviderDownloadError(
-                                "SEC EDGAR returned a period with reversed dates."
-                            )
-
-                        defaulted_fields = _sec_observation_defaulted_fields(observation)
-                        for defaulted_field in defaulted_fields:
-                            defaulted_observation_fields[defaulted_field] = (
-                                defaulted_observation_fields.get(defaulted_field, 0) + 1
-                            )
-
-                        result.fundamental_facts.append(
-                            {
-                                "security_id": security_id,
-                                "field": f"{taxonomy}:{concept}",
-                                "fiscal_period": _fiscal_period(observation),
-                                "period_start": period_start,
-                                "period_end": period_end,
-                                "value": observation.val,
-                                "unit": str(unit),
-                                "filed_at": filed_at,
-                                "available_at": available_at,
-                                "eligibility_provenance": provenance,
-                                "source": "sec_edgar",
-                                "retrieval_time": retrieval_time,
-                                "incomplete_fields": sorted(defaulted_fields) or None,
-                            }
-                        )
-
-    for defaulted_field, count in sorted(defaulted_observation_fields.items()):
-        result.warnings.append(
-            f"SEC EDGAR preserved {count} observations with defaulted {defaulted_field}."
-        )
+        result.securities.extend(single.securities)
+        result.fundamental_facts.extend(single.fundamental_facts)
+        result.warnings.extend(single.warnings)
 
     if not result.fundamental_facts:
         raise ProviderDownloadError("SEC EDGAR returned no quarterly or annual facts.")
@@ -900,13 +1006,14 @@ def download_massive(
             f"https://api.polygon.io/v2/aggs/ticker/{quote(symbol, safe='')}/range/1/{timespan}/"
             f"{start_str}/{end_str}?adjusted=true&sort=asc&limit=50000"
         )
-        payload = _call(fetch, url, headers, "Massive")
-        try:
-            aggs = MassiveAggsResponse.model_validate(payload).results
-        except ValidationError as error:
-            raise ProviderDownloadError(
-                f"Massive returned invalid aggregates for {symbol}."
-            ) from error
+        aggs: list[MassiveAggResponse] = []
+        for page_payload in _fetch_massive_pages(fetch, url, headers, "Massive"):
+            try:
+                aggs.extend(MassiveAggsResponse.model_validate(page_payload).results)
+            except ValidationError as error:
+                raise ProviderDownloadError(
+                    f"Massive returned invalid aggregates for {symbol}."
+                ) from error
 
         if not aggs:
             raise ProviderDownloadError(f"Massive returned no data for {symbol}.")
@@ -961,9 +1068,9 @@ def download_massive(
             f"{start_str}/{end_str}?adjusted=true&sort=asc&limit=50000"
         )
         aggs: list[MassiveAggResponse] = []
-        with contextlib.suppress(Exception):
-            payload = _call(fetch, url, headers, "Massive")
-            aggs = MassiveAggsResponse.model_validate(payload).results
+        for page_payload in _fetch_massive_pages(fetch, url, headers, "Massive"):
+            with contextlib.suppress(Exception):
+                aggs.extend(MassiveAggsResponse.model_validate(page_payload).results)
 
         for agg in aggs:
             ts_iso = _massive_ms_to_iso(agg.timestamp, daily=False)
@@ -1008,13 +1115,16 @@ def download_massive(
             f"expiration_date.gte={start_str}&"
             f"expiration_date.lte={(request.end_date + timedelta(days=45)).isoformat()}&limit=1000"
         )
-        payload = _call(fetch, contract_url, headers, "Massive")
-        try:
-            contracts = MassiveOptionContractsResponse.model_validate(payload).results
-        except ValidationError as error:
-            raise ProviderDownloadError(
-                "Massive returned invalid option contracts."
-            ) from error
+        contracts: list[MassiveOptionContractResponse] = []
+        for page_payload in _fetch_massive_pages(fetch, contract_url, headers, "Massive"):
+            try:
+                contracts.extend(
+                    MassiveOptionContractsResponse.model_validate(page_payload).results
+                )
+            except ValidationError as error:
+                raise ProviderDownloadError(
+                    "Massive returned invalid option contracts."
+                ) from error
 
         contract_available_at = f"{start_str}T00:00:00+00:00"
         for contract in contracts:
@@ -1043,26 +1153,91 @@ def download_massive(
                 f"https://api.polygon.io/v2/aggs/ticker/O:{safe_ticker}/range/1/minute/"
                 f"{start_str}/{end_str}?sort=asc&limit=50000"
             )
-            try:
-                opt_payload = _call(fetch, trade_url, headers, "Massive")
-                opt_aggs = MassiveAggsResponse.model_validate(opt_payload).results
-                for opt_agg in opt_aggs:
-                    ts_iso = _massive_ms_to_iso(opt_agg.timestamp, daily=False)
-                    result.options_records.append(
-                        {
-                            "record_type": "trade",
-                            "contract_id": contract_ticker,
-                            "timestamp": ts_iso,
-                            "price": opt_agg.close,
-                            "size": opt_agg.volume,
-                            "available_at": _massive_available_at(opt_agg.timestamp, daily=False),
-                            "eligibility_provenance": "completed_minute",
-                            "source": "massive",
-                            "retrieval_time": retrieval_time,
-                        }
-                    )
-            except Exception:
-                continue
+            for page_payload in _fetch_massive_pages(fetch, trade_url, headers, "Massive"):
+                try:
+                    opt_aggs = MassiveAggsResponse.model_validate(page_payload).results
+                    for opt_agg in opt_aggs:
+                        ts_iso = _massive_ms_to_iso(opt_agg.timestamp, daily=False)
+                        result.options_records.append(
+                            {
+                                "record_type": "trade",
+                                "contract_id": contract_ticker,
+                                "timestamp": ts_iso,
+                                "price": opt_agg.close,
+                                "size": opt_agg.volume,
+                                "available_at": _massive_available_at(
+                                    opt_agg.timestamp, daily=False
+                                ),
+                                "eligibility_provenance": "completed_minute",
+                                "source": "massive",
+                                "retrieval_time": retrieval_time,
+                            }
+                        )
+                except Exception:
+                    continue
+
+    return result
+
+
+def fetch_massive_grouped_daily(
+    target_date: date,
+    *,
+    selected_symbols: set[str],
+    credentials: MassiveCredentials,
+    retrieval_time: str,
+    fetch_json: JsonFetcher | None = None,
+) -> ProviderDownload:
+    """Download all US stock bars for one day using Massive Grouped Daily endpoint."""
+    fetch = fetch_json or _fetch_json
+    if not credentials.api_key:
+        raise ProviderDownloadError(
+            "Massive credentials are missing: set MASSIVE_API_KEY or POLYGON_API_KEY."
+        )
+
+    headers = {"Authorization": f"Bearer {credentials.api_key}", "Accept": "application/json"}
+    date_str = target_date.isoformat()
+    url = f"https://api.polygon.io/v2/aggs/grouped/locale/us/market/stocks/{date_str}?adjusted=true"
+    payload = _call(fetch, url, headers, "Massive")
+    try:
+        response = MassiveGroupedDailyResponse.model_validate(payload)
+    except ValidationError as error:
+        raise ProviderDownloadError(
+            f"Massive returned invalid grouped daily data for {date_str}."
+        ) from error
+
+    result = ProviderDownload()
+    upper_symbols = {s.upper() for s in selected_symbols}
+
+    for item in response.results:
+        sym = item.ticker.upper()
+        if sym not in upper_symbols:
+            continue
+
+        session_date = _massive_ms_to_iso(item.timestamp, daily=True)
+        available_at = _massive_available_at(item.timestamp, daily=True)
+        result.securities.append(
+            Security(security_id=sym, symbol=sym, name=sym, currency="USD")
+        )
+        result.daily_bars.append(
+            {
+                "security_id": sym,
+                "date": session_date,
+                "open": item.open,
+                "high": item.high,
+                "low": item.low,
+                "close": item.close,
+                "volume": item.volume,
+                "adjusted_open": item.open,
+                "adjusted_high": item.high,
+                "adjusted_low": item.low,
+                "adjusted_close": item.close,
+                "units": "USD",
+                "available_at": available_at,
+                "eligibility_provenance": "completed_day",
+                "source": "massive",
+                "retrieval_time": retrieval_time,
+            }
+        )
 
     return result
 
