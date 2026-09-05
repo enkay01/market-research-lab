@@ -878,3 +878,4 @@ def evaluate_strategy_verdict(
         equity_curve=tuple(verdict_curve),
         friction_ladder=tuple(friction_results),
     )
+

@@ -432,7 +432,7 @@ def test_strategy_verdict_full_execution_fails_gate_3_when_sample_too_small() ->
 
 
 def test_strategy_verdict_full_execution_all_gates_pass() -> None:
-    """Full verdict execution where strategy generates >= 30 trades and clears all statistical hurdles."""
+    """Full verdict execution where strategy clears all statistical hurdles."""
     # Generate 140 bars: 35 cycles of 4 bars creating oscillating crossovers with upward drift
     dates = _make_dates(210)
     bars: list[DailyBar] = []
@@ -521,6 +521,7 @@ def test_strategy_verdict_full_execution_fail() -> None:
     assert result.gates[0].verdict_note == "Loses to benchmark after costs"
     assert result.rejection_reason == "Loses to benchmark after costs"
     assert "Loses to benchmark after costs" in result.headline_verdict
+
 
 
 
