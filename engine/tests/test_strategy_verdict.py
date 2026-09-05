@@ -11,7 +11,6 @@ from market_research_lab.market_data import DailyBar
 from market_research_lab.strategy_verdict import (
     MonteCarloOptions,
     MonteCarloSimulationInput,
-    PartitionMetrics,
     PsrMomentsInput,
     StrategyVerdictResult,
     StrategyVerdictSpecification,
@@ -418,21 +417,21 @@ def test_strategy_verdict_full_execution_fails_gate_3_when_sample_too_small() ->
     result = evaluate_strategy_verdict(spec, bars=bars)
 
     assert isinstance(result, StrategyVerdictResult)
-    assert len(result.gates) == 4
+    assert len(result.gates) == 5
     # Gate 1 (Benchmark) passed
     assert result.gates[0].gate_number == 1
     assert result.gates[0].passed is True
     # Gate 3 (Sample size) failed
-    assert result.gates[1].gate_number == 3
-    assert result.gates[1].passed is False
-    assert result.gates[1].verdict_note == "Insufficient trade sample size (N < 30)"
+    assert result.gates[2].gate_number == 3
+    assert result.gates[2].passed is False
+    assert result.gates[2].verdict_note == "Insufficient trade sample size (N < 30)"
     assert result.overall_passed is False
-    assert result.rejection_reason == "Insufficient trade sample size (N < 30)"
-    assert "Insufficient trade sample size (N < 30)" in result.headline_verdict
+    assert result.rejection_reason == "Edge disappears under realistic fee stress"
+    assert "Edge disappears under realistic fee stress" in result.headline_verdict
 
 
 def test_strategy_verdict_full_execution_all_gates_pass() -> None:
-    """Full verdict execution where strategy generates >= 30 trades and clears all statistical hurdles."""
+    """Full verdict execution where strategy clears all statistical hurdles."""
     # Generate 140 bars: 35 cycles of 4 bars creating oscillating crossovers with upward drift
     dates = _make_dates(210)
     bars: list[DailyBar] = []
@@ -470,20 +469,26 @@ def test_strategy_verdict_full_execution_all_gates_pass() -> None:
     result = evaluate_strategy_verdict(spec, bars=bars)
 
     assert isinstance(result, StrategyVerdictResult)
-    assert len(result.gates) == 4
-    assert [g.gate_number for g in result.gates] == [1, 3, 4, 5]
+    assert len(result.gates) == 5
+    assert [g.gate_number for g in result.gates] == [1, 2, 3, 4, 5]
 
     # Gate 1: Benchmark hurdle
     assert result.gates[0].passed is True
-    # Gate 3: Sample size >= 30
+    # Gate 2: Fee stress
+    assert result.gates[1].gate_number == 2
     assert result.gates[1].passed is True
+    # Gate 3: Sample size >= 30
+    assert result.gates[2].gate_number == 3
+    assert result.gates[2].passed is True
     assert result.combined_metrics.trades_count >= 30
     # Gate 4: PSR
-    assert result.gates[2].passed is True
+    assert result.gates[3].gate_number == 4
+    assert result.gates[3].passed is True
     assert result.confidence_score is not None
     assert result.confidence_score >= 0.60
     # Gate 5: Monte Carlo
-    assert result.gates[3].passed is True
+    assert result.gates[4].gate_number == 5
+    assert result.gates[4].passed is True
 
     # Overall verdict
     assert result.overall_passed is True
@@ -521,4 +526,7 @@ def test_strategy_verdict_full_execution_fail() -> None:
     assert result.gates[0].verdict_note == "Loses to benchmark after costs"
     assert result.rejection_reason == "Loses to benchmark after costs"
     assert "Loses to benchmark after costs" in result.headline_verdict
+
+
+
 

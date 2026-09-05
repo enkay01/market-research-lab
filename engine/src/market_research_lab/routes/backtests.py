@@ -655,6 +655,20 @@ class GateResultResponse(BaseModel):
     verdict_note: str
 
 
+class FrictionTierResponse(BaseModel):
+    multiplier: int
+    commission_bps: float
+    slippage_bps: float
+    borrow_fee_bps: float
+    total_return_pct: float
+    net_profit_usd: float
+    profit_factor: float
+    max_drawdown_pct: float
+    commission_paid_usd: float
+    slippage_drag_usd: float
+    borrow_paid_usd: float
+
+
 class PartitionMetricsResponse(BaseModel):
     total_return: float
     cagr: float
@@ -687,6 +701,7 @@ class StrategyVerdictResponse(BaseModel):
     out_of_sample_metrics: PartitionMetricsResponse
     combined_metrics: PartitionMetricsResponse
     equity_curve: list[VerdictEquityPointResponse]
+    friction_ladder: list[FrictionTierResponse]
 
 
 @router.post(
@@ -877,5 +892,21 @@ def evaluate_strategy_verdict_route(
                 is_holdout=pt.is_holdout,
             )
             for pt in domain_result.equity_curve
+        ],
+        friction_ladder=[
+            FrictionTierResponse(
+                multiplier=tier.multiplier,
+                commission_bps=tier.commission_bps,
+                slippage_bps=tier.slippage_bps,
+                borrow_fee_bps=tier.borrow_fee_bps,
+                total_return_pct=tier.total_return_pct,
+                net_profit_usd=tier.net_profit_usd,
+                profit_factor=tier.profit_factor,
+                max_drawdown_pct=tier.max_drawdown_pct,
+                commission_paid_usd=tier.commission_paid_usd,
+                slippage_drag_usd=tier.slippage_drag_usd,
+                borrow_paid_usd=tier.borrow_paid_usd,
+            )
+            for tier in domain_result.friction_ladder
         ],
     )

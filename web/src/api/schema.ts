@@ -1553,6 +1553,31 @@ export interface components {
             /** Rationale */
             rationale: string;
         };
+        /** FrictionTierResponse */
+        FrictionTierResponse: {
+            /** Multiplier */
+            multiplier: number;
+            /** Commission Bps */
+            commission_bps: number;
+            /** Slippage Bps */
+            slippage_bps: number;
+            /** Borrow Fee Bps */
+            borrow_fee_bps: number;
+            /** Total Return Pct */
+            total_return_pct: number;
+            /** Net Profit Usd */
+            net_profit_usd: number;
+            /** Profit Factor */
+            profit_factor: number;
+            /** Max Drawdown Pct */
+            max_drawdown_pct: number;
+            /** Commission Paid Usd */
+            commission_paid_usd: number;
+            /** Slippage Drag Usd */
+            slippage_drag_usd: number;
+            /** Borrow Paid Usd */
+            borrow_paid_usd: number;
+        };
         /** FundamentalFactResponse */
         FundamentalFactResponse: {
             /** Security Id */
@@ -2301,6 +2326,8 @@ export interface components {
             combined_metrics: components["schemas"]["PartitionMetricsResponse"];
             /** Equity Curve */
             equity_curve: components["schemas"]["VerdictEquityPointResponse"][];
+            /** Friction Ladder */
+            friction_ladder: components["schemas"]["FrictionTierResponse"][];
         };
         /** TradeResponse */
         TradeResponse: {
