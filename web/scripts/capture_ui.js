@@ -82,12 +82,12 @@ async function main() {
 
   // Click Execute Backtest Run
   console.log('Executing Backtest simulation...');
-  const runBtn = page.getByRole('button', { name: 'Execute Backtest Run' });
-  await runBtn.click();
-
-  // Wait for result
-  await page.waitForTimeout(4000);
-  await page.screenshot({ path: path.join(outDir, 'shot_03_backtest_overview.png') });
+  const runBtn = page.getByRole('button', { name: /Run Backtest|Execute/i }).first();
+  if (await runBtn.isVisible()) {
+    await runBtn.click();
+    await page.waitForTimeout(4000);
+    await page.screenshot({ path: path.join(outDir, 'shot_03_backtest_overview.png') });
+  }
 
   // Navigate through sub-tabs
   console.log('Checking Closed Trades tab...');
