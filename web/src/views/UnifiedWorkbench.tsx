@@ -408,9 +408,11 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
   const netEdge = combined.total_return - combined.benchmark_return;
 
   const gate1 = verdictResult.gates.find((g) => g.gate_number === 1);
+  const gate2 = verdictResult.gates.find((g) => g.gate_number === 2);
   const gate3 = verdictResult.gates.find((g) => g.gate_number === 3);
   const gate4 = verdictResult.gates.find((g) => g.gate_number === 4);
   const gate5 = verdictResult.gates.find((g) => g.gate_number === 5);
+  const stressedTier = verdictResult.friction_ladder.find((tier) => tier.multiplier === 3);
 
   return (
     <VStack gap={4} style={{ maxWidth: "1200px", margin: "0 auto" }}>
@@ -437,7 +439,7 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
                 {verdictResult.headline_verdict}
               </Text>
               <Text size="sm" type="supporting">
-                Universe: {universe.toUpperCase()} · Benchmark: {benchmark.toUpperCase()} ETF · Evaluated: 4 Hurdle Gates (1, 3, 4, 5)
+                Universe: {universe.toUpperCase()} · Benchmark: {benchmark.toUpperCase()} ETF · Evaluated: 5 Hurdle Gates (1, 2, 3, 4, 5)
               </Text>
             </VStack>
           </HStack>
@@ -593,7 +595,7 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
               <VStack gap={1}>
                 <Text size="sm" type="supporting">3x Cost Stress PF</Text>
                 <Text weight="bold" size="lg" style={{ color: "var(--color-text-secondary)" }}>
-                  Pending Gate 2 (#115)
+                  {stressedTier ? stressedTier.profit_factor.toFixed(2) + " PF" : "Unavailable"}
                 </Text>
               </VStack>
             </Card>
@@ -750,27 +752,27 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
               <VStack gap={2}>
                 <HStack justify="between" align="center">
                   <HStack gap={2} align="center">
-                    <Token label="GATE 2" color="purple" />
-                    <Text weight="bold">Dynamic Fee Stress</Text>
+                    <Token label="GATE 2" color="blue" />
+                    <Text weight="bold">Fee Stress</Text>
                   </HStack>
-                  <Token label="SCHEDULED (#115)" color="purple" />
+                  {gate2 && <Token label={gate2.passed ? "PASS" : "FAIL"} color={gate2.passed ? "green" : "red"} />}
                 </HStack>
                 <Divider />
                 <Grid columns={{ minWidth: 120, repeat: "fit" }} gap={2}>
                   <VStack gap={1}>
                     <Text size="sm" type="supporting">3x Cost Stress PF</Text>
                     <Text weight="bold" size="lg" style={{ color: "var(--color-text-secondary)" }}>
-                      Pending #115
+                      {stressedTier ? stressedTier.profit_factor.toFixed(2) : "Unavailable"}
                     </Text>
                   </VStack>
                   <VStack gap={1}>
-                    <Text size="sm" type="supporting">Profit Factor Floor</Text>
-                    <Text weight="bold" size="lg">&gt; 1.00</Text>
+                    <Text size="sm" type="supporting">3x Total Return</Text>
+                    <Text weight="bold" size="lg">{stressedTier ? (stressedTier.total_return_pct >= 0 ? "+" : "") + stressedTier.total_return_pct.toFixed(1) + "%" : "Unavailable"}</Text>
                   </VStack>
                 </Grid>
                 <Divider />
                 <Text size="sm" type="supporting">
-                  Dynamic 1x, 2x, and 3x friction scaling is scheduled in ticket #115.
+                  {gate2?.verdict_note}
                 </Text>
               </VStack>
             </Card>

@@ -474,14 +474,20 @@ def test_strategy_verdict_full_execution_all_gates_pass() -> None:
 
     # Gate 1: Benchmark hurdle
     assert result.gates[0].passed is True
+    # Gate 2: Fee stress
+    assert result.gates[1].gate_number == 2
+    assert result.gates[1].passed is True
     # Gate 3: Sample size >= 30
-    assert result.gates[4].passed is True
+    assert result.gates[2].gate_number == 3
+    assert result.gates[2].passed is True
     assert result.combined_metrics.trades_count >= 30
     # Gate 4: PSR
-    assert result.gates[4].passed is True
+    assert result.gates[3].gate_number == 4
+    assert result.gates[3].passed is True
     assert result.confidence_score is not None
     assert result.confidence_score >= 0.60
     # Gate 5: Monte Carlo
+    assert result.gates[4].gate_number == 5
     assert result.gates[4].passed is True
 
     # Overall verdict
