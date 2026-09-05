@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 
 import pytest
@@ -9,10 +10,12 @@ import pytest
 from market_research_lab.backtest import BacktestError, ExecutionModelAssumptions
 from market_research_lab.market_data import DailyBar
 from market_research_lab.strategy_verdict import (
+    FrictionTier,
     PartitionMetrics,
     StrategyVerdictResult,
     StrategyVerdictSpecification,
     evaluate_gate_1,
+    evaluate_gate_2,
     evaluate_strategy_verdict,
     partition_chronological_data,
 )
@@ -118,6 +121,27 @@ def test_evaluate_gate_1_fail_on_tie() -> None:
     assert gate.verdict_note == "Loses to benchmark after costs"
 
 
+def test_evaluate_gate_2_requires_strict_positive_return_and_profit_factor() -> None:
+    tier = FrictionTier(
+        multiplier=3,
+        commission_bps=15.0,
+        slippage_bps=6.0,
+        borrow_fee_bps=0.0,
+        total_return_pct=0.0,
+        net_profit_usd=0.0,
+        profit_factor=1.01,
+        max_drawdown_pct=0.0,
+        commission_paid_usd=0.0,
+        slippage_drag_usd=0.0,
+        borrow_paid_usd=0.0,
+    )
+    assert evaluate_gate_2(tier).passed is False
+    assert evaluate_gate_2(replace(tier, total_return_pct=0.1, profit_factor=1.0)).verdict_note == (
+        "Edge disappears under realistic fee stress"
+    )
+    assert evaluate_gate_2(replace(tier, total_return_pct=0.1, profit_factor=1.01)).passed is True
+
+
 def test_strategy_verdict_full_execution_pass() -> None:
     """Full verdict execution on rising bars where moving average strategy beats benchmark."""
     dates = _make_dates(16)
@@ -148,12 +172,16 @@ def test_strategy_verdict_full_execution_pass() -> None:
     result = evaluate_strategy_verdict(spec, bars=bars)
 
     assert isinstance(result, StrategyVerdictResult)
-    assert len(result.gates) == 1
+    assert len(result.gates) == 2
     assert result.gates[0].gate_number == 1
     assert result.gates[0].passed is True
-    assert result.overall_passed is True
-    assert "Clears Gate 1" in result.headline_verdict
-    assert result.rejection_reason is None
+    assert result.gates[1].gate_number == 2
+    assert len(result.friction_ladder) == 3
+    assert [tier.multiplier for tier in result.friction_ladder] == [1, 2, 3]
+    assert result.overall_passed is result.gates[1].passed
+    assert result.rejection_reason == (
+        None if result.gates[1].passed else "Edge disappears under realistic fee stress"
+    )
 
     # Check partition metrics
     assert isinstance(result.in_sample_metrics, PartitionMetrics)
