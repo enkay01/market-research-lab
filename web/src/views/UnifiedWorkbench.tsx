@@ -26,6 +26,48 @@ import {
   type StrategyVerdictResponse,
 } from "../api/client";
 
+type HurdleGate = NonNullable<StrategyVerdictResponse["gates"]>[number];
+
+function HurdleGateCard({ gate }: { gate: HurdleGate }) {
+  return (
+    <Card padding={3}>
+      <VStack gap={2}>
+        <HStack justify="between" align="center">
+          <HStack gap={2} align="center">
+            <Token label={`GATE ${gate.gate_number}`} color="blue" />
+            <Text weight="bold">{gate.name}</Text>
+          </HStack>
+          <Token
+            label={gate.passed ? "PASS" : "FAIL"}
+            color={gate.passed ? "green" : "red"}
+          />
+        </HStack>
+        <Divider />
+        <Grid columns={{ minWidth: 120, repeat: "fit" }} gap={2}>
+          <VStack gap={1}>
+            <Text size="sm" type="supporting">{gate.metric_label}</Text>
+            <Text
+              weight="bold"
+              size="lg"
+              style={{
+                color: gate.passed ? "var(--color-text-green)" : "var(--color-text-red)",
+              }}
+            >
+              {gate.metric_value}
+            </Text>
+          </VStack>
+          <VStack gap={1}>
+            <Text size="sm" type="supporting">{gate.threshold_label}</Text>
+            <Text weight="bold" size="lg">{gate.threshold_value}</Text>
+          </VStack>
+        </Grid>
+        <Divider />
+        <Text size="sm" type="supporting">{gate.verdict_note}</Text>
+      </VStack>
+    </Card>
+  );
+}
+
 interface UnifiedWorkbenchProps {
   project?: Project;
 }
@@ -365,6 +407,11 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
   const oosMetrics = verdictResult.out_of_sample_metrics;
   const netEdge = combined.total_return - combined.benchmark_return;
 
+  const gate1 = verdictResult.gates.find((g) => g.gate_number === 1);
+  const gate3 = verdictResult.gates.find((g) => g.gate_number === 3);
+  const gate4 = verdictResult.gates.find((g) => g.gate_number === 4);
+  const gate5 = verdictResult.gates.find((g) => g.gate_number === 5);
+
   return (
     <VStack gap={4} style={{ maxWidth: "1200px", margin: "0 auto" }}>
       {/* 1. TOP HEADER: THE VERDICT BANNER (Primary conclusion surfaced immediately) */}
@@ -387,12 +434,10 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
             />
             <VStack gap={1}>
               <Text weight="bold" size="lg">
-                {verdictResult.overall_passed
-                  ? "Strategy Clears Gate 1 (Benchmark Hurdle)"
-                  : `Strategy Rejected: ${verdictResult.rejection_reason ?? "Loses to benchmark after costs"}`}
+                {verdictResult.headline_verdict}
               </Text>
               <Text size="sm" type="supporting">
-                Universe: {universe.toUpperCase()} · Benchmark: {benchmark.toUpperCase()} ETF · Evaluated: Gate 1 (Benchmark Hurdle)
+                Universe: {universe.toUpperCase()} · Benchmark: {benchmark.toUpperCase()} ETF · Evaluated: 4 Hurdle Gates (1, 3, 4, 5)
               </Text>
             </VStack>
           </HStack>
@@ -556,8 +601,21 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
             <Card padding={2}>
               <VStack gap={1}>
                 <Text size="sm" type="supporting">Luck Confidence (PSR)</Text>
-                <Text weight="bold" size="lg" style={{ color: "var(--color-text-blue)" }}>
-                  Pending Gate 4 (#116)
+                <Text
+                  weight="bold"
+                  size="lg"
+                  style={{
+                    color:
+                      verdictResult.confidence_score !== null && verdictResult.confidence_score !== undefined
+                        ? verdictResult.confidence_score >= 0.60
+                          ? "var(--color-text-green)"
+                          : "var(--color-text-red)"
+                        : "var(--color-text-blue)",
+                  }}
+                >
+                  {verdictResult.confidence_score !== null && verdictResult.confidence_score !== undefined
+                    ? `${(verdictResult.confidence_score * 100).toFixed(1)}%`
+                    : "Pending Gate 4 (#116)"}
                 </Text>
               </VStack>
             </Card>
@@ -661,19 +719,86 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
         </VStack>
       )}
 
-      {/* TABS 2-5: PENDING FUTURE TICKETS (#115-#119) */}
-      {activeTab !== "summary" && (
+      {/* TAB 2: THE 5 SEQUENTIAL STATISTICAL HURDLE GATES (Issue #116) */}
+      {activeTab === "gates" && (
+        <VStack gap={4}>
+          <Card padding={3}>
+            <VStack gap={1}>
+              <HStack justify="between" align="center" style={{ flexWrap: "wrap", gap: "8px" }}>
+                <HStack gap={2} align="center">
+                  <Text weight="bold" size="lg">
+                    The 5 Sequential Statistical Hurdle Gates
+                  </Text>
+                  <Token
+                    label={verdictResult.overall_passed ? "Hurdles Cleared" : "Hurdle Breached"}
+                    color={verdictResult.overall_passed ? "green" : "red"}
+                  />
+                </HStack>
+                <Text size="sm" type="supporting">
+                  Statistical controls for sample size, return distribution shape, and random entry timing
+                </Text>
+              </HStack>
+            </VStack>
+          </Card>
+
+          <Grid columns={{ minWidth: 320, repeat: "fit" }} gap={3}>
+            {/* Gate 1: Benchmark Hurdle */}
+            {gate1 && <HurdleGateCard gate={gate1} />}
+
+            {/* Gate 2: Fee Stress Ladder (Issue #115) */}
+            <Card padding={3}>
+              <VStack gap={2}>
+                <HStack justify="between" align="center">
+                  <HStack gap={2} align="center">
+                    <Token label="GATE 2" color="purple" />
+                    <Text weight="bold">Dynamic Fee Stress</Text>
+                  </HStack>
+                  <Token label="SCHEDULED (#115)" color="purple" />
+                </HStack>
+                <Divider />
+                <Grid columns={{ minWidth: 120, repeat: "fit" }} gap={2}>
+                  <VStack gap={1}>
+                    <Text size="sm" type="supporting">3x Cost Stress PF</Text>
+                    <Text weight="bold" size="lg" style={{ color: "var(--color-text-secondary)" }}>
+                      Pending #115
+                    </Text>
+                  </VStack>
+                  <VStack gap={1}>
+                    <Text size="sm" type="supporting">Profit Factor Floor</Text>
+                    <Text weight="bold" size="lg">&gt; 1.00</Text>
+                  </VStack>
+                </Grid>
+                <Divider />
+                <Text size="sm" type="supporting">
+                  Dynamic 1x, 2x, and 3x friction scaling is scheduled in ticket #115.
+                </Text>
+              </VStack>
+            </Card>
+
+            {/* Gate 3: Sample Size */}
+            {gate3 && <HurdleGateCard gate={gate3} />}
+
+            {/* Gate 4: Probabilistic Sharpe Ratio */}
+            {gate4 && <HurdleGateCard gate={gate4} />}
+
+            {/* Gate 5: Monte Carlo Random Entry */}
+            {gate5 && <HurdleGateCard gate={gate5} />}
+          </Grid>
+        </VStack>
+      )}
+
+      {/* TABS 3-5: PENDING FUTURE TICKETS (#117-#119) */}
+      {activeTab !== "summary" && activeTab !== "gates" && (
         <Card padding={4}>
           <VStack gap={3} align="center" style={{ textAlign: "center", padding: "32px 16px" }}>
             <Token label="AVAILABLE IN EPIC PHASE 2" color="purple" />
             <Text weight="bold" size="lg">
-              {activeTab === "gates" && "The 5 Sequential Statistical Hurdle Gates"}
               {activeTab === "replay" && "Interactive Simulation Replay Canvas"}
               {activeTab === "screener" && "Market-Wide Diagnostic Universe Screener"}
               {activeTab === "ledger" && "Daily Mark-to-Market Ledger Audit"}
             </Text>
             <Text size="sm" type="supporting" style={{ maxWidth: "600px" }}>
-              This tab is scheduled for implementation in tickets #115–#119. Tab 1 currently provides the verified Gate 1 (Benchmark Hurdle) verdict and out-of-sample partition evaluation foundation.
+              This tab is scheduled for implementation in tickets #117–#119.
             </Text>
             <Button
               label="Return to Tab 1 (Verdict &amp; Summary)"
