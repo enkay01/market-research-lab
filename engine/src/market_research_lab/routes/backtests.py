@@ -16,19 +16,30 @@ from fastapi import (
 from fastapi import (
     Path as FastAPIPath,
 )
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 from ..backtest import (
+    BacktestError,
     BacktestSpecification,
     ExecutionModelAssumptions,
     run_backtest,
 )
 from ..json_types import JsonValue
-from ..market_data import DATASET_TYPE_CORPORATE_ACTIONS, MarketDataStore, Security
+from ..market_data import (
+    DATASET_TYPE_CORPORATE_ACTIONS,
+    CorporateAction,
+    DailyBar,
+    MarketDataStore,
+    Security,
+)
 from ..projects import (
     BacktestRunRecord,
     FailedBacktestRunRecord,
     ProjectStore,
+)
+from ..strategy_verdict import (
+    StrategyVerdictSpecification,
+    evaluate_strategy_verdict,
 )
 from .deps import (
     SecurityNotFoundError,
@@ -569,4 +580,259 @@ def compare_backtests(
     return BacktestComparisonResponse(
         items=items,
         compared_at=datetime.now(UTC).isoformat(),
+    )
+
+
+class StrategyVerdictRequest(BaseModel):
+    strategy_name: str = Field(default="trend_exhaustion", min_length=1, max_length=64)
+    strategy_revision: str = Field(default="v1", min_length=1, max_length=64)
+    dataset_version_id: str | None = None
+    universe_preset: str | None = Field(default="megacap")
+    symbol: str | None = None
+    symbols: list[str] | None = None
+    benchmark_symbol: str = Field(default="SPY", max_length=32)
+    start_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    end_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    starting_cash: float = Field(default=100000.0, gt=0)
+    parameters: dict[str, JsonValue] = Field(default_factory=dict)
+    holdout_ratio: float = Field(default=0.25, ge=0.05, le=0.50)
+    execution: ExecutionModelAssumptionsRequest = Field(
+        default_factory=ExecutionModelAssumptionsRequest
+    )
+
+
+class GateResultResponse(BaseModel):
+    gate_number: int
+    name: str
+    passed: bool
+    metric_label: str
+    metric_value: str
+    threshold_label: str
+    threshold_value: str
+    verdict_note: str
+
+
+class PartitionMetricsResponse(BaseModel):
+    total_return: float
+    cagr: float
+    sharpe_ratio: float
+    sortino_ratio: float
+    max_drawdown: float
+    benchmark_return: float
+    win_rate: float
+    profit_factor: float
+    trades_count: int
+    exposure_pct: float
+
+
+class VerdictEquityPointResponse(BaseModel):
+    session_date: str
+    strategy_equity: float
+    benchmark_equity: float
+    drawdown_pct: float
+    is_holdout: bool
+
+
+class StrategyVerdictResponse(BaseModel):
+    overall_passed: bool
+    headline_verdict: str
+    rejection_reason: str | None = None
+    confidence_score: float | None = None
+    holdout_ratio: float
+    gates: list[GateResultResponse]
+    in_sample_metrics: PartitionMetricsResponse
+    out_of_sample_metrics: PartitionMetricsResponse
+    combined_metrics: PartitionMetricsResponse
+    equity_curve: list[VerdictEquityPointResponse]
+
+
+@router.post(
+    "/api/projects/{project_id}/backtests/verdict",
+    response_model=StrategyVerdictResponse,
+    tags=["backtests"],
+)
+def evaluate_strategy_verdict_route(
+    project_id: UUID,
+    request: StrategyVerdictRequest,
+    store: ProjectStore = Depends(get_project_store),
+    market_store: MarketDataStore = Depends(get_market_store),
+) -> StrategyVerdictResponse:
+    store.get_project(str(project_id))
+
+    # Resolve dataset_version_id
+    dataset_version_id = request.dataset_version_id
+    if not dataset_version_id:
+        versions = [
+            v
+            for v in market_store.list_dataset_versions()
+            if v.dataset_type != DATASET_TYPE_CORPORATE_ACTIONS and not v.is_corporate_actions
+        ]
+        if not versions:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="No daily market bar datasets found in workspace.",
+            )
+        dataset_version_id = versions[0].id
+
+    # Resolve target symbols
+    target_symbols: list[str] = []
+    if request.symbols:
+        target_symbols = [s.strip().upper() for s in request.symbols if s.strip()]
+    elif request.symbol and request.symbol.strip():
+        target_symbols = [request.symbol.strip().upper()]
+    elif request.universe_preset == "megacap":
+        megacaps = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA"]
+        dataset_bars = market_store.history(dataset_version_id)
+        available_syms = {b.security_id for b in dataset_bars}
+        matched = [s for s in megacaps if s in available_syms]
+        target_symbols = matched if matched else list(available_syms)
+    else:
+        dataset_bars = market_store.history(dataset_version_id)
+        target_symbols = list({b.security_id for b in dataset_bars})
+
+    if not target_symbols:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"No eligible symbols resolved for dataset '{dataset_version_id}'.",
+        )
+
+    benchmark_sym = (request.benchmark_symbol or "SPY").strip().upper()
+    bench_bars = market_store.history(dataset_version_id, symbol=benchmark_sym)
+    if not bench_bars:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Benchmark symbol '{benchmark_sym}' has no price history in dataset "
+                f"'{dataset_version_id}'."
+            ),
+        )
+
+    market_store.ensure_historical_eligibility(dataset_version_id)
+    all_bars: list[DailyBar] = []
+    for sym in target_symbols:
+        bars_sec = market_store.history(dataset_version_id, symbol=sym)
+        all_bars.extend(bars_sec)
+
+    if benchmark_sym not in target_symbols:
+        all_bars.extend(bench_bars)
+
+    if not all_bars:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"No price history found for symbols in dataset '{dataset_version_id}'.",
+        )
+
+    all_corp_actions: list[CorporateAction] = []
+    for sym in target_symbols:
+        acts = market_store.corporate_actions(dataset_version_id, symbol=sym)
+        if isinstance(acts, list):
+            all_corp_actions.extend(acts)
+
+    session_dates = sorted({b.session_date for b in all_bars})
+    start_date = request.start_date or (session_dates[0] if session_dates else "")
+    end_date = request.end_date or (session_dates[-1] if session_dates else "")
+
+    verdict_spec = StrategyVerdictSpecification(
+        strategy_name=request.strategy_name,
+        strategy_revision=request.strategy_revision,
+        dataset_version_id=dataset_version_id,
+        universe=tuple(target_symbols),
+        benchmark_security_id=benchmark_sym,
+        start_date=start_date,
+        end_date=end_date,
+        starting_cash=request.starting_cash,
+        parameters=request.parameters,
+        holdout_ratio=request.holdout_ratio,
+        execution=ExecutionModelAssumptions(
+            schedule=request.execution.schedule,
+            commission_rate=request.execution.commission_rate,
+            slippage_rate=request.execution.slippage_rate,
+            allow_shorting=request.execution.allow_shorting,
+            borrow_fee_rate=request.execution.borrow_fee_rate,
+            cash_interest_rate=request.execution.cash_interest_rate,
+            unavailable_borrow=tuple(request.execution.unavailable_borrow),
+            max_leverage=request.execution.max_leverage,
+            margin_requirement=request.execution.margin_requirement,
+            maintenance_margin=request.execution.maintenance_margin,
+            leverage_mode=request.execution.leverage_mode,
+        ),
+    )
+
+    try:
+        domain_result = evaluate_strategy_verdict(
+            verdict_spec,
+            bars=all_bars,
+            corporate_actions=all_corp_actions,
+        )
+    except BacktestError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(error),
+        ) from error
+
+    return StrategyVerdictResponse(
+        overall_passed=domain_result.overall_passed,
+        headline_verdict=domain_result.headline_verdict,
+        rejection_reason=domain_result.rejection_reason,
+        confidence_score=domain_result.confidence_score,
+        holdout_ratio=verdict_spec.holdout_ratio,
+        gates=[
+            GateResultResponse(
+                gate_number=g.gate_number,
+                name=g.name,
+                passed=g.passed,
+                metric_label=g.metric_label,
+                metric_value=g.metric_value,
+                threshold_label=g.threshold_label,
+                threshold_value=g.threshold_value,
+                verdict_note=g.verdict_note,
+            )
+            for g in domain_result.gates
+        ],
+        in_sample_metrics=PartitionMetricsResponse(
+            total_return=domain_result.in_sample_metrics.total_return,
+            cagr=domain_result.in_sample_metrics.cagr,
+            sharpe_ratio=domain_result.in_sample_metrics.sharpe_ratio,
+            sortino_ratio=domain_result.in_sample_metrics.sortino_ratio,
+            max_drawdown=domain_result.in_sample_metrics.max_drawdown,
+            benchmark_return=domain_result.in_sample_metrics.benchmark_return,
+            win_rate=domain_result.in_sample_metrics.win_rate,
+            profit_factor=domain_result.in_sample_metrics.profit_factor,
+            trades_count=domain_result.in_sample_metrics.trades_count,
+            exposure_pct=domain_result.in_sample_metrics.exposure_pct,
+        ),
+        out_of_sample_metrics=PartitionMetricsResponse(
+            total_return=domain_result.out_of_sample_metrics.total_return,
+            cagr=domain_result.out_of_sample_metrics.cagr,
+            sharpe_ratio=domain_result.out_of_sample_metrics.sharpe_ratio,
+            sortino_ratio=domain_result.out_of_sample_metrics.sortino_ratio,
+            max_drawdown=domain_result.out_of_sample_metrics.max_drawdown,
+            benchmark_return=domain_result.out_of_sample_metrics.benchmark_return,
+            win_rate=domain_result.out_of_sample_metrics.win_rate,
+            profit_factor=domain_result.out_of_sample_metrics.profit_factor,
+            trades_count=domain_result.out_of_sample_metrics.trades_count,
+            exposure_pct=domain_result.out_of_sample_metrics.exposure_pct,
+        ),
+        combined_metrics=PartitionMetricsResponse(
+            total_return=domain_result.combined_metrics.total_return,
+            cagr=domain_result.combined_metrics.cagr,
+            sharpe_ratio=domain_result.combined_metrics.sharpe_ratio,
+            sortino_ratio=domain_result.combined_metrics.sortino_ratio,
+            max_drawdown=domain_result.combined_metrics.max_drawdown,
+            benchmark_return=domain_result.combined_metrics.benchmark_return,
+            win_rate=domain_result.combined_metrics.win_rate,
+            profit_factor=domain_result.combined_metrics.profit_factor,
+            trades_count=domain_result.combined_metrics.trades_count,
+            exposure_pct=domain_result.combined_metrics.exposure_pct,
+        ),
+        equity_curve=[
+            VerdictEquityPointResponse(
+                session_date=pt.session_date,
+                strategy_equity=pt.strategy_equity,
+                benchmark_equity=pt.benchmark_equity,
+                drawdown_pct=pt.drawdown_pct,
+                is_holdout=pt.is_holdout,
+            )
+            for pt in domain_result.equity_curve
+        ],
     )

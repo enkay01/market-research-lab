@@ -36,6 +36,7 @@ import {
   type StrategyMetadata,
 } from "../api/client";
 import { OptionsBacktestView } from "./OptionsBacktestView";
+import { UnifiedWorkbench } from "./UnifiedWorkbench";
 
 interface BacktestViewProps {
   project?: Project;
@@ -275,9 +276,12 @@ function EquityDrawdownChart({
 }
 
 export function BacktestView({ project }: BacktestViewProps) {
-  const [simulationType, setSimulationType] = useState<"standard" | "options">(() => {
+  const [simulationType, setSimulationType] = useState<"verdict" | "standard" | "options">(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get("mode") === "options" ? "options" : "standard";
+    const mode = params.get("mode");
+    if (mode === "options") return "options";
+    if (mode === "legacy" || mode === "standard") return "standard";
+    return "verdict";
   });
   const [activeTab, setActiveTab] = useState<
     "overview" | "trades" | "fills" | "ledger" | "rejections" | "manifest" | "compare"
@@ -499,7 +503,46 @@ export function BacktestView({ project }: BacktestViewProps) {
   }, [currentResult]);
 
   if (simulationType === "options") {
-    return <OptionsBacktestView project={project} onBackToStandard={() => setSimulationType("standard")} />;
+    return <OptionsBacktestView project={project} onBackToStandard={() => setSimulationType("verdict")} />;
+  }
+
+  if (simulationType === "verdict") {
+    return (
+      <Layout
+        height="fill"
+        header={
+          <LayoutHeader hasDivider padding={2}>
+            <HStack justify="between" align="center" style={{ width: "100%" }}>
+              <HStack align="center" gap={3}>
+                <Heading level={2}>Strategy Evaluation &amp; Verdict Lab</Heading>
+                {project && <Token label={`Project: ${project.name}`} color="purple" />}
+                <Token label="Gate 1 Foundation" color="blue" />
+              </HStack>
+
+              <HStack gap={2}>
+                <Button
+                  label="Legacy Engine"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setSimulationType("standard")}
+                />
+                <Button
+                  label="Options Credit Spreads (Alpaca)"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setSimulationType("options")}
+                />
+              </HStack>
+            </HStack>
+          </LayoutHeader>
+        }
+        content={
+          <LayoutContent padding={3} isScrollable>
+            <UnifiedWorkbench project={project} />
+          </LayoutContent>
+        }
+      />
+    );
   }
 
   return (
@@ -516,6 +559,12 @@ export function BacktestView({ project }: BacktestViewProps) {
             </HStack>
 
             <HStack gap={2}>
+              <Button
+                label="Strategy Verdict Lab"
+                variant="secondary"
+                size="sm"
+                onClick={() => setSimulationType("verdict")}
+              />
               <Button
                 label="Options Credit Spreads (Alpaca)"
                 variant="secondary"

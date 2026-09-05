@@ -59,6 +59,11 @@ export type LedgerRow = components["schemas"]["LedgerRowResponse"];
 export type EquityPoint = components["schemas"]["EquityPointResponse"];
 export type BacktestSpecification = components["schemas"]["BacktestSpecificationResponse"];
 export type RunSummary = components["schemas"]["RunSummaryResponse"];
+export type StrategyVerdictRequest = components["schemas"]["StrategyVerdictRequest"];
+export type StrategyVerdictResponse = components["schemas"]["StrategyVerdictResponse"];
+export type GateResult = components["schemas"]["GateResultResponse"];
+export type PartitionMetrics = components["schemas"]["PartitionMetricsResponse"];
+export type VerdictEquityPoint = components["schemas"]["VerdictEquityPointResponse"];
 
 export interface OptionsGreeks {
   delta: number;
@@ -663,6 +668,13 @@ export const api = {
     dataOrThrow(
       client.GET("/api/projects/{project_id}/definitions/{kind}/{name}/{revision}", {
         params: { path: { project_id: projectId, kind, name, revision } },
+      }),
+    ),
+  evaluateVerdict: (projectId: string, request: StrategyVerdictRequest) =>
+    dataOrThrow<StrategyVerdictResponse>(
+      client.POST("/api/projects/{project_id}/backtests/verdict", {
+        params: { path: { project_id: projectId } },
+        body: request,
       }),
     ),
 };

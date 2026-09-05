@@ -590,6 +590,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/backtests/verdict": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Evaluate Strategy Verdict Route */
+        post: operations["evaluate_strategy_verdict_route_api_projects__project_id__backtests_verdict_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/options-backtests": {
         parameters: {
             query?: never;
@@ -1344,6 +1361,25 @@ export interface components {
             /** Incomplete Fields */
             incomplete_fields?: string[] | null;
         };
+        /** GateResultResponse */
+        GateResultResponse: {
+            /** Gate Number */
+            gate_number: number;
+            /** Name */
+            name: string;
+            /** Passed */
+            passed: boolean;
+            /** Metric Label */
+            metric_label: string;
+            /** Metric Value */
+            metric_value: string;
+            /** Threshold Label */
+            threshold_label: string;
+            /** Threshold Value */
+            threshold_value: string;
+            /** Verdict Note */
+            verdict_note: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1701,6 +1737,29 @@ export interface components {
              */
             cash_interest_rate: number;
         };
+        /** PartitionMetricsResponse */
+        PartitionMetricsResponse: {
+            /** Total Return */
+            total_return: number;
+            /** Cagr */
+            cagr: number;
+            /** Sharpe Ratio */
+            sharpe_ratio: number;
+            /** Sortino Ratio */
+            sortino_ratio: number;
+            /** Max Drawdown */
+            max_drawdown: number;
+            /** Benchmark Return */
+            benchmark_return: number;
+            /** Win Rate */
+            win_rate: number;
+            /** Profit Factor */
+            profit_factor: number;
+            /** Trades Count */
+            trades_count: number;
+            /** Exposure Pct */
+            exposure_pct: number;
+        };
         /** PositionSnapshotResponse */
         PositionSnapshotResponse: {
             /** Shares */
@@ -1963,6 +2022,74 @@ export interface components {
             /** Code */
             code: string;
         };
+        /** StrategyVerdictRequest */
+        StrategyVerdictRequest: {
+            /**
+             * Strategy Name
+             * @default trend_exhaustion
+             */
+            strategy_name: string;
+            /**
+             * Strategy Revision
+             * @default v1
+             */
+            strategy_revision: string;
+            /** Dataset Version Id */
+            dataset_version_id?: string | null;
+            /**
+             * Universe Preset
+             * @default megacap
+             */
+            universe_preset: string | null;
+            /** Symbol */
+            symbol?: string | null;
+            /** Symbols */
+            symbols?: string[] | null;
+            /**
+             * Benchmark Symbol
+             * @default SPY
+             */
+            benchmark_symbol: string;
+            /** Start Date */
+            start_date?: string | null;
+            /** End Date */
+            end_date?: string | null;
+            /**
+             * Starting Cash
+             * @default 100000
+             */
+            starting_cash: number;
+            /** Parameters */
+            parameters?: {
+                [key: string]: components["schemas"]["JsonValue-Input"];
+            };
+            /**
+             * Holdout Ratio
+             * @default 0.25
+             */
+            holdout_ratio: number;
+            execution?: components["schemas"]["ExecutionModelAssumptionsRequest"];
+        };
+        /** StrategyVerdictResponse */
+        StrategyVerdictResponse: {
+            /** Overall Passed */
+            overall_passed: boolean;
+            /** Headline Verdict */
+            headline_verdict: string;
+            /** Rejection Reason */
+            rejection_reason?: string | null;
+            /** Confidence Score */
+            confidence_score?: number | null;
+            /** Holdout Ratio */
+            holdout_ratio: number;
+            /** Gates */
+            gates: components["schemas"]["GateResultResponse"][];
+            in_sample_metrics: components["schemas"]["PartitionMetricsResponse"];
+            out_of_sample_metrics: components["schemas"]["PartitionMetricsResponse"];
+            combined_metrics: components["schemas"]["PartitionMetricsResponse"];
+            /** Equity Curve */
+            equity_curve: components["schemas"]["VerdictEquityPointResponse"][];
+        };
         /** TiingoDownloadRequest */
         TiingoDownloadRequest: {
             /** Start Date */
@@ -2014,6 +2141,19 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** VerdictEquityPointResponse */
+        VerdictEquityPointResponse: {
+            /** Session Date */
+            session_date: string;
+            /** Strategy Equity */
+            strategy_equity: number;
+            /** Benchmark Equity */
+            benchmark_equity: number;
+            /** Drawdown Pct */
+            drawdown_pct: number;
+            /** Is Holdout */
+            is_holdout: boolean;
         };
         /** WatchlistAddRequest */
         WatchlistAddRequest: {
@@ -3369,6 +3509,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BacktestComparisonResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    evaluate_strategy_verdict_route_api_projects__project_id__backtests_verdict_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StrategyVerdictRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyVerdictResponse"];
                 };
             };
             /** @description Validation Error */
