@@ -497,6 +497,70 @@ BUILTIN_STRATEGIES: dict[str, StrategyMetadata] = {
         ],
         outputs=["spread_trades", "pnl", "greeks"],
     ),
+    "ma_crossover": StrategyMetadata(
+        name="ma_crossover",
+        display_name="Dual Moving Average Crossover",
+        description="Long when fast MA exceeds slow MA, flat otherwise.",
+        parameters=[
+            StrategyParameter(
+                name="fast_period",
+                param_type="int",
+                default=20,
+                description="Fast moving-average lookback in daily bars",
+                min_value=1,
+                max_value=250,
+            ),
+            StrategyParameter(
+                name="slow_period",
+                param_type="int",
+                default=50,
+                description="Slow moving-average lookback in daily bars",
+                min_value=2,
+                max_value=500,
+            ),
+        ],
+        outputs=["weight", "rationale", "indicator_state"],
+    ),
+    "trend_exhaustion": StrategyMetadata(
+        name="trend_exhaustion",
+        display_name="Trend Exhaustion + Volatility Sizing",
+        description="Detects trend exhaustion and sizes positions inversely to volatility.",
+        parameters=[
+            StrategyParameter(
+                name="fast_period",
+                param_type="int",
+                default=10,
+                description="Fast lookback in daily bars",
+                min_value=1,
+                max_value=250,
+            ),
+            StrategyParameter(
+                name="slow_period",
+                param_type="int",
+                default=50,
+                description="Slow lookback in daily bars",
+                min_value=2,
+                max_value=500,
+            ),
+        ],
+        outputs=["weight", "rationale", "indicator_state"],
+    ),
+    "rsi_reversal": StrategyMetadata(
+        name="rsi_reversal",
+        display_name="RSI Mean Reversion",
+        description="Buys oversold dips and exits when overbought.",
+        parameters=[
+            StrategyParameter(
+                name="period",
+                param_type="int",
+                default=14,
+                description="RSI calculation period in daily bars",
+                min_value=2,
+                max_value=100,
+            ),
+        ],
+        outputs=["weight", "rationale", "indicator_state"],
+    ),
 }
 
 STRATEGY_REGISTRY = BUILTIN_STRATEGIES
@@ -532,7 +596,7 @@ def validate_strategy_parameters(
 ) -> None:
     """Validate a saved Strategy's parameters without needing Market Dataset rows."""
     get_strategy_spec(name)
-    if name == "long_flat_moving_average":
+    if name in {"long_flat_moving_average", "ma_crossover", "trend_exhaustion"}:
         _validated_long_flat_parameters(parameters)
 
 
@@ -572,6 +636,9 @@ _BUILTIN_EVALUATORS: dict[
     "long_short_moving_average": evaluate_long_short_moving_average,
     "rsi_mean_reversion": evaluate_rsi_strategy,
     "put_credit_spread_strategy": evaluate_put_credit_spread_strategy,
+    "ma_crossover": evaluate_long_flat_moving_average,
+    "trend_exhaustion": evaluate_long_flat_moving_average,
+    "rsi_reversal": evaluate_rsi_strategy,
 }
 
 
