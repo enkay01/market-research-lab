@@ -253,3 +253,44 @@ def test_multi_security_future_data_leakage_invariant():
     assert base_run.trades == extended_run.trades
     assert base_run.ledger == extended_run.ledger
     assert base_run.metrics == extended_run.metrics
+
+
+def test_top_n_momentum_ranks_the_universe_and_allocates_to_the_winner():
+    dates = make_dates(4)
+    closes = {
+        "AAA": [10.0, 11.0, 13.0, 14.0],
+        "BBB": [10.0, 10.0, 10.0, 10.0],
+        "CCC": [10.0, 9.0, 8.0, 7.0],
+    }
+    bars = [
+        make_bar(symbol, session_date, close, close)
+        for symbol, prices in closes.items()
+        for session_date, close in zip(dates, prices)
+    ]
+    specification = BacktestSpecification(
+        strategy_name="top_n_momentum",
+        strategy_revision="top_n_momentum:v1",
+        dataset_version_id="ds-market",
+        universe=("AAA", "BBB", "CCC"),
+        start_date=dates[0],
+        end_date=dates[-1],
+        starting_cash=100_000.0,
+        parameters={"lookback_period": 2, "top_n": 1, "weighting": "equal"},
+    )
+
+    result = run_backtest(specification, bars=bars)
+
+    decision_records = [
+        row for row in result.ranking_records if row.session_date == dates[2]
+    ]
+    assert [(row.security_id, row.rank, row.selected) for row in decision_records] == [
+        ("AAA", 1, True),
+        ("BBB", 2, False),
+        ("CCC", 3, False),
+    ]
+    winner = next(row for row in decision_records if row.security_id == "AAA")
+    assert winner.target_weight == 1.0
+    assert any(fill.security_id == "AAA" for fill in result.fills)
+    payload = result.to_json()
+    assert "rankings" in payload
+    assert "ranking_records" not in payload

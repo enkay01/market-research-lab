@@ -81,7 +81,7 @@ export function InteractiveCandlestickChart({ position }: InteractiveCandlestick
     if (candles.length > 0) {
       const entry = candles.find((candle) => candle.time === chartTime(position.open_timestamp))?.time ?? candles[0].time;
       const exit = position.close_timestamp
-        ? candles.find((candle) => candle.time === chartTime(position.close_timestamp))?.time ?? candles[candles.length - 1].time
+        ? candles.find((candle) => candle.time === chartTime(position.close_timestamp!))?.time ?? candles[candles.length - 1].time
         : candles[candles.length - 1].time;
       const markers: SeriesMarker<Time>[] = [
         { time: entry, position: "belowBar", color: blue, ["shape"]: "arrowUp", text: "Entry" },
@@ -114,13 +114,13 @@ export function InteractiveCandlestickChart({ position }: InteractiveCandlestick
   return (
     <VStack gap={2} style={{ width: "100%" }}>
       <Card padding={2}>
-        <HStack justify="between" align="center" wrap gap={2}>
+        <HStack justify="between" align="center" wrap="wrap" gap={2}>
           <Text size="sm" type="supporting">{hover?.time ?? "Hover a candlestick to inspect the market state"}</Text>
-          {hover && <HStack gap={3} wrap><Text size="sm">O {hover.open.toFixed(2)}</Text><Text size="sm">H {hover.high.toFixed(2)}</Text><Text size="sm">L {hover.low.toFixed(2)}</Text><Text size="sm">C {hover.close.toFixed(2)}</Text><Text size="sm">Spread worst {hover.spreadWorst?.toFixed(2) ?? "n/a"}</Text><Text size="sm">Spread best {hover.spreadBest?.toFixed(2) ?? "n/a"}</Text><Text size="sm">Stop {hover.stopLevel?.toFixed(2) ?? "n/a"}</Text><Text size="sm">Delta {hover.delta?.toFixed(3) ?? "n/a"}</Text></HStack>}
+          {hover && <HStack gap={3} wrap="wrap"><Text size="sm">O {hover.open.toFixed(2)}</Text><Text size="sm">H {hover.high.toFixed(2)}</Text><Text size="sm">L {hover.low.toFixed(2)}</Text><Text size="sm">C {hover.close.toFixed(2)}</Text><Text size="sm">Spread worst {hover.spreadWorst?.toFixed(2) ?? "n/a"}</Text><Text size="sm">Spread best {hover.spreadBest?.toFixed(2) ?? "n/a"}</Text><Text size="sm">Stop {hover.stopLevel?.toFixed(2) ?? "n/a"}</Text><Text size="sm">Delta {hover.delta?.toFixed(3) ?? "n/a"}</Text></HStack>}
         </HStack>
       </Card>
       <Card ref={containerRef} padding={0} style={{ width: "100%", height: "320px", overflow: "hidden", border: "1px solid var(--color-border)" }} />
-      <HStack justify="between" wrap gap={2}>
+      <HStack justify="between" wrap="wrap" gap={2}>
         <HStack gap={3}><Text size="sm" type="supporting">↑ Entry</Text><Text size="sm" type="supporting">Short ${position.short_strike}</Text><Text size="sm" type="supporting">Long ${position.long_strike}</Text><Text size="sm" type="supporting">↓ Exit</Text></HStack>
         <Text size="sm" type="supporting">Scroll to zoom · drag to pan</Text>
       </HStack>

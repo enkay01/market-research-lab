@@ -163,6 +163,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/security-lists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Security Lists */
+        get: operations["get_security_lists_api_security_lists_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/securities": {
         parameters: {
             query?: never;
@@ -300,6 +317,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/downloads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Download */
+        post: operations["start_download_api_downloads_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/datasets/download": {
         parameters: {
             query?: never;
@@ -309,8 +343,59 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Download Dataset */
-        post: operations["download_dataset_api_datasets_download_post"];
+        /** Start Download */
+        post: operations["start_download_api_datasets_download_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/downloads/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Latest Download */
+        get: operations["get_latest_download_api_downloads_latest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/downloads/{download_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Download Status */
+        get: operations["get_download_status_api_downloads__download_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/downloads/{download_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Download */
+        post: operations["cancel_download_api_downloads__download_id__cancel_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -748,26 +833,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** AlpacaDownloadRequest */
-        AlpacaDownloadRequest: {
-            /**
-             * Start Date
-             * Format: date
-             */
-            start_date: string;
-            /**
-             * End Date
-             * Format: date
-             */
-            end_date: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            provider: "alpaca";
-            /** Symbol */
-            symbol: string;
-        };
         /** BacktestComparisonItemResponse */
         BacktestComparisonItemResponse: {
             /** Run Id */
@@ -874,6 +939,8 @@ export interface components {
             benchmark_equity_curve?: components["schemas"]["EquityPointResponse"][];
             /** Rejections */
             rejections?: components["schemas"]["ConstraintRejectionResponse"][];
+            /** Rankings */
+            rankings?: components["schemas"]["RankingResponse"][];
         };
         /** BacktestRunRequest */
         BacktestRunRequest: {
@@ -993,6 +1060,23 @@ export interface components {
             /** Deleted Ids */
             deleted_ids: string[];
         };
+        /** CompositeDownloadRequest */
+        CompositeDownloadRequest: {
+            /** Security List Id */
+            security_list_id: string;
+            /**
+             * Start Date
+             * Format: date
+             */
+            start_date: string;
+            /**
+             * End Date
+             * Format: date
+             */
+            end_date: string;
+            /** Downloads */
+            downloads: components["schemas"]["ProviderDownloadItem"][];
+        };
         /** ConstraintRejectionResponse */
         ConstraintRejectionResponse: {
             /** Session Date */
@@ -1039,23 +1123,32 @@ export interface components {
             /** Retrieval Time */
             retrieval_time: string;
             /** Coverage Start */
-            coverage_start: string | null;
+            coverage_start?: string | null;
             /** Coverage End */
-            coverage_end: string | null;
-            /** Row Count */
+            coverage_end?: string | null;
+            /**
+             * Row Count
+             * @default 0
+             */
             row_count: number;
-            /** Rejected Count */
+            /**
+             * Rejected Count
+             * @default 0
+             */
             rejected_count: number;
             /** Missing Fields */
-            missing_fields: {
+            missing_fields?: {
                 [key: string]: number;
             };
             /** Warnings */
-            warnings: string[];
-            /** Total Warnings */
+            warnings?: string[];
+            /**
+             * Total Warnings
+             * @default 0
+             */
             total_warnings: number;
             /** Files */
-            files: string[];
+            files?: string[];
             /**
              * Has Temporal Provenance
              * @default false
@@ -1076,6 +1169,12 @@ export interface components {
              * @default daily_bars
              */
             dataset_type: string;
+            /** Security List Id */
+            security_list_id?: string | null;
+            /** Security List As Of Date */
+            security_list_as_of_date?: string | null;
+            /** Parts */
+            parts?: components["schemas"]["DatasetPartResponse"][];
         };
         /** DailyBarResponse */
         DailyBarResponse: {
@@ -1120,6 +1219,57 @@ export interface components {
             /** Dataset Version Id */
             dataset_version_id: string;
         };
+        /** DatasetPartResponse */
+        DatasetPartResponse: {
+            /** Id */
+            id: string;
+            /** Source */
+            source: string;
+            /** Dataset Type */
+            dataset_type: string;
+            /** Coverage Start */
+            coverage_start?: string | null;
+            /** Coverage End */
+            coverage_end?: string | null;
+            /**
+             * Row Count
+             * @default 0
+             */
+            row_count: number;
+            /**
+             * Rejected Count
+             * @default 0
+             */
+            rejected_count: number;
+            /** Missing Fields */
+            missing_fields?: {
+                [key: string]: number;
+            };
+            /** Warnings */
+            warnings?: string[];
+            /**
+             * Total Warnings
+             * @default 0
+             */
+            total_warnings: number;
+            /** Files */
+            files?: string[];
+            /**
+             * Has Temporal Provenance
+             * @default false
+             */
+            has_temporal_provenance: boolean;
+            /**
+             * Is Fundamentals
+             * @default false
+             */
+            is_fundamentals: boolean;
+            /**
+             * Is Corporate Actions
+             * @default false
+             */
+            is_corporate_actions: boolean;
+        };
         /** DefinitionCreateRequest */
         DefinitionCreateRequest: {
             /** Kind */
@@ -1148,6 +1298,77 @@ export interface components {
             definition: {
                 [key: string]: components["schemas"]["JsonValue-Output"];
             };
+        };
+        /** DownloadEventResponse */
+        DownloadEventResponse: {
+            /** Timestamp */
+            timestamp: string;
+            /** Phase */
+            phase: string;
+            /** Message */
+            message: string;
+            /** Details */
+            details?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+        };
+        /** DownloadSnapshotResponse */
+        DownloadSnapshotResponse: {
+            /** Download Id */
+            download_id: string;
+            /** State */
+            state: string;
+            /** Phase */
+            phase: string;
+            /** Started At */
+            started_at: string;
+            /** Updated At */
+            updated_at: string;
+            /** Dataset Version Id */
+            dataset_version_id?: string | null;
+            /** Security List Id */
+            security_list_id?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /**
+             * Total Logical Units
+             * @default 0
+             */
+            total_logical_units: number;
+            /**
+             * Completed Logical Units
+             * @default 0
+             */
+            completed_logical_units: number;
+            /**
+             * Total Requests
+             * @default 0
+             */
+            total_requests: number;
+            /**
+             * Completed Requests
+             * @default 0
+             */
+            completed_requests: number;
+            /** Active Provider */
+            active_provider?: string | null;
+            /** Active Operation */
+            active_operation?: string | null;
+            /**
+             * Rate Limit Wait Seconds
+             * @default 0
+             */
+            rate_limit_wait_seconds: number;
+            /** Recent Events */
+            recent_events?: components["schemas"]["DownloadEventResponse"][];
+        };
+        /** DownloadStartResponse */
+        DownloadStartResponse: {
+            /** Download Id */
+            download_id: string;
+            /** Status Url */
+            status_url: string;
+            snapshot: components["schemas"]["DownloadSnapshotResponse"];
         };
         /** DraftRequest */
         DraftRequest: {
@@ -1247,7 +1468,7 @@ export interface components {
              * @default reject
              * @enum {string}
              */
-            leverage_mode: "reject" | "clamp";
+            leverage_mode: "reject" | "constrain";
         };
         /** ExecutionModelAssumptionsResponse */
         ExecutionModelAssumptionsResponse: {
@@ -1473,12 +1694,8 @@ export interface components {
             /** Points */
             points: components["schemas"]["IndicatorPointResponse"][];
         };
-        "JsonValue-Input": boolean | number | string | components["schemas"]["JsonValue-Input"][] | {
-            [key: string]: components["schemas"]["JsonValue-Input"];
-        } | null;
-        "JsonValue-Output": boolean | number | string | components["schemas"]["JsonValue-Output"][] | {
-            [key: string]: components["schemas"]["JsonValue-Output"];
-        } | null;
+        "JsonValue-Input": unknown;
+        "JsonValue-Output": unknown;
         /** LedgerRowResponse */
         LedgerRowResponse: {
             /** Session Date */
@@ -1537,32 +1754,6 @@ export interface components {
             };
             /** Delistings */
             delistings?: string[];
-        };
-        /** MassiveDownloadRequest */
-        MassiveDownloadRequest: {
-            /**
-             * Start Date
-             * Format: date
-             */
-            start_date: string;
-            /**
-             * End Date
-             * Format: date
-             */
-            end_date: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            provider: "massive";
-            /** Symbol */
-            symbol: string;
-            /**
-             * Data Type
-             * @default stocks_daily
-             * @enum {string}
-             */
-            data_type: "stocks_daily" | "stocks_minute" | "options";
         };
         /** OptionsBacktestResponse */
         OptionsBacktestResponse: {
@@ -1790,12 +1981,34 @@ export interface components {
             /** Created At */
             created_at: string;
         };
-        /** ProviderDownloadResponse */
-        ProviderDownloadResponse: {
-            /** Dataset Version Id */
-            dataset_version_id: string;
-            /** Dataset Version Ids */
-            dataset_version_ids: string[];
+        /** ProviderDownloadItem */
+        ProviderDownloadItem: {
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "tiingo" | "massive" | "sec_edgar" | "alpaca";
+            /** Data Types */
+            data_types?: string[];
+        };
+        /** RankingResponse */
+        RankingResponse: {
+            /** Session Date */
+            session_date: string;
+            /** Decision Time */
+            decision_time: string;
+            /** Security Id */
+            security_id: string;
+            /** Score */
+            score?: number | null;
+            /** Rank */
+            rank?: number | null;
+            /** Selected */
+            selected: boolean;
+            /** Target Weight */
+            target_weight: number;
+            /** Rationale */
+            rationale: string;
         };
         /** RunResponse */
         RunResponse: {
@@ -1855,19 +2068,18 @@ export interface components {
             /** Saved At */
             saved_at: string;
         };
-        /** SecEdgarDownloadRequest */
-        SecEdgarDownloadRequest: {
-            /** Start Date */
-            start_date?: string | null;
-            /** End Date */
-            end_date?: string | null;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            provider: "sec_edgar";
-            /** Ciks */
-            ciks: string[];
+        /** SecurityListSummaryResponse */
+        SecurityListSummaryResponse: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Member Count */
+            member_count: number;
+            /** As Of Date */
+            as_of_date: string;
+            /** Source Url */
+            source_url: string;
         };
         /** SecurityResponse */
         SecurityResponse: {
@@ -2089,20 +2301,6 @@ export interface components {
             combined_metrics: components["schemas"]["PartitionMetricsResponse"];
             /** Equity Curve */
             equity_curve: components["schemas"]["VerdictEquityPointResponse"][];
-        };
-        /** TiingoDownloadRequest */
-        TiingoDownloadRequest: {
-            /** Start Date */
-            start_date?: string | null;
-            /** End Date */
-            end_date?: string | null;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            provider: "tiingo";
-            /** Symbols */
-            symbols: string[];
         };
         /** TradeResponse */
         TradeResponse: {
@@ -2679,6 +2877,26 @@ export interface operations {
             };
         };
     };
+    get_security_lists_api_security_lists_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecurityListSummaryResponse"][];
+                };
+            };
+        };
+    };
     list_securities_api_securities_get: {
         parameters: {
             query?: {
@@ -2970,7 +3188,7 @@ export interface operations {
             };
         };
     };
-    download_dataset_api_datasets_download_post: {
+    start_download_api_downloads_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -2979,17 +3197,132 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TiingoDownloadRequest"] | components["schemas"]["SecEdgarDownloadRequest"] | components["schemas"]["AlpacaDownloadRequest"] | components["schemas"]["MassiveDownloadRequest"];
+                "application/json": components["schemas"]["CompositeDownloadRequest"];
             };
         };
         responses: {
             /** @description Successful Response */
-            201: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ProviderDownloadResponse"];
+                    "application/json": components["schemas"]["DownloadStartResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_download_api_datasets_download_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompositeDownloadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadStartResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_latest_download_api_downloads_latest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadSnapshotResponse"];
+                };
+            };
+        };
+    };
+    get_download_status_api_downloads__download_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                download_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadSnapshotResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_download_api_downloads__download_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                download_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadSnapshotResponse"];
                 };
             };
             /** @description Validation Error */

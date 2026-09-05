@@ -15,7 +15,6 @@ const terminalTheme = defineTheme({
     "--color-background-muted": ["#F8FAFC", "#0F172A"],
     "--color-text-primary": ["#0A1317", "#F8FAFC"],
     "--color-text-secondary": ["#4E606F", "#CBD5E1"],
-    "--color-text-supporting": ["#64748B", "#94A3B8"],
     "--color-border": ["#E2E8F0", "#334155"],
     "--color-border-emphasized": ["#CBD5E1", "#475569"],
   },

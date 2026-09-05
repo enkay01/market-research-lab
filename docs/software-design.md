@@ -127,6 +127,10 @@ New internal seams start with functions, dataclasses, and composition. Add a str
 
 `market_data.py` owns ingestion, validation, Dataset Version creation, coverage inspection, point-in-time queries, and deletion of Dataset Version metadata plus owned Parquet files. Provider-specific parsing remains internal until more than one provider requires a real seam. The application interface checks Project Run references before it calls Dataset Version deletion.
 
+The standard equity Backtest accepts daily-bar Dataset Versions. The browser filters its choices for convenience, while FastAPI validates the type before loading history. Minute-bar Dataset Versions belong to intraday and options workflows.
+
+Provider downloads choose the smallest supported request shape for the requested universe and period. Initial daily history may use a bulk range, grouped session, or per-Security range. The planner reports the chosen shape and minimum provider-paced duration. Validated daily responses are cached by provider and request identity under the local workspace. A repeated request reuses matching cache entries, while an incremental refresh requests only missing coverage. The cache is working data, not a Dataset Version; a successful publish still creates an immutable Dataset Version.
+
 Its important interface is behavioral rather than class-heavy:
 
 ```python
@@ -185,6 +189,8 @@ targets = evaluate_strategy(name, market_view, state, parameters)
 
 The interface returns desired weights rather than orders. This keeps Indicators and Predictive Models reusable and moves fill assumptions into the Execution Model.
 
+Strategies have two explicit evaluation modes. A time-series Strategy receives one Security view and cannot compare Securities. A cross-sectional Strategy receives the eligible universe at one decision time, returns a Candidate Ranking, and derives target weights from an explicit selection rule. The first cross-sectional Strategy ranks trailing return, selects the positive-scoring top N, breaks ties by Security ID, and weights selected Securities equally. Frozen dataclasses carry the market input and ranking output. Function registries select implementations; no class hierarchy or separate screening subsystem is required.
+
 ### Backtesting
 
 The backtest module is a deep module with one primary interface:
@@ -211,7 +217,7 @@ Daily event order is explicit:
 6. Update cash, positions, costs, and portfolio value.
 7. Append immutable ledger and metric rows.
 
-The first implementation supports one Security and long/flat weights. Later stories deepen the same module with multiple positions, shorts, leverage, borrow, and richer corporate actions; callers retain the same `run_backtest` interface.
+The same `run_backtest` interface supports independent time-series and cross-sectional Strategies. For cross-sectional evaluation, the event loop builds every eligible Security view at the decision time, evaluates the universe once, records the Candidate Ranking, and schedules the resulting targets for the next eligible execution time.
 
 ### Options Backtesting
 

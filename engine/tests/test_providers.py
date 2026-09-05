@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Any
 
 import pytest
 
 from market_research_lab.json_types import JsonValue
 from market_research_lab.providers import (
+    MassiveCredentials,
     ProviderDownloadError,
     SecEdgarDownloadSpec,
     TiingoDownloadSpec,
@@ -297,3 +299,117 @@ def test_sec_complete_observation_has_no_defaulted_fields():
     fact = result.fundamental_facts[0]
     assert fact["incomplete_fields"] is None
     assert not any("defaulted" in warning for warning in result.warnings)
+
+
+def test_fetch_massive_grouped_daily_preserves_symbol_order():
+    """Spec P2: grouped daily must strictly preserve Security List order."""
+    from market_research_lab.providers import fetch_massive_grouped_daily
+
+    def mock_fetch(url: str, headers: dict[str, str]) -> dict[str, Any]:
+        # Return results in arbitrary provider order (XLK first, then SPY, then QQQ)
+        return {
+            "status": "OK",
+            "resultsCount": 3,
+            "results": [
+                {
+                    "T": "XLK",
+                    "v": 1000,
+                    "o": 150.0,
+                    "c": 152.0,
+                    "h": 153.0,
+                    "l": 149.0,
+                    "t": 1704200000000,
+                },
+                {
+                    "T": "SPY",
+                    "v": 5000,
+                    "o": 470.0,
+                    "c": 472.0,
+                    "h": 473.0,
+                    "l": 469.0,
+                    "t": 1704200000000,
+                },
+                {
+                    "T": "QQQ",
+                    "v": 3000,
+                    "o": 380.0,
+                    "c": 382.0,
+                    "h": 383.0,
+                    "l": 379.0,
+                    "t": 1704200000000,
+                },
+            ],
+        }
+
+    # Request in specific security list order: SPY, QQQ, XLK
+    requested_order = ["SPY", "QQQ", "XLK"]
+    result = fetch_massive_grouped_daily(
+        date(2024, 1, 2),
+        selected_symbols=requested_order,
+        credentials=MassiveCredentials(api_key="test-key"),
+        retrieval_time="2024-01-02T22:00:00Z",
+        fetch_json=mock_fetch,
+    )
+
+    result_symbols = [s.symbol for s in result.securities]
+    assert result_symbols == ["SPY", "QQQ", "XLK"]
+
+    bar_symbols = [b["security_id"] for b in result.daily_bars]
+    assert bar_symbols == ["SPY", "QQQ", "XLK"]
+
+
+def test_download_massive_options_fails_on_malformed_aggs():
+    """Spec P1: corrupted option contract responses must fail the download."""
+    from market_research_lab.providers import MassiveDownloadSpec, download_massive
+
+    def mock_fetch(url: str, headers: dict[str, str]) -> dict[str, Any]:
+        if "reference/options/contracts" in url:
+            return {
+                "status": "OK",
+                "results": [
+                    {
+                        "ticker": "O:SPY240119P00450000",
+                        "underlying_ticker": "SPY",
+                        "expiration_date": "2024-01-19",
+                        "strike_price": 450.0,
+                        "contract_type": "put",
+                        "shares_per_contract": 100,
+                        "exercise_style": "american",
+                    }
+                ],
+            }
+        elif "aggs/ticker/SPY/range/1/minute" in url:
+            return {
+                "status": "OK",
+                "results": [
+                    {
+                        "t": 1704200000000,
+                        "o": 470.0,
+                        "h": 471.0,
+                        "l": 469.0,
+                        "c": 470.5,
+                        "v": 100,
+                    }
+                ],
+            }
+        elif "O:SPY240119P00450000" in url:
+            # Malformed aggregates payload (missing mandatory 't' timestamp)
+            return {
+                "status": "OK",
+                "results": [{"invalid_key": 123}],
+            }
+        return {"status": "OK", "results": []}
+
+    with pytest.raises(ProviderDownloadError, match="invalid option trade minute bars"):
+        download_massive(
+            MassiveDownloadSpec(
+                symbol="SPY",
+                start_date=date(2024, 1, 2),
+                end_date=date(2024, 1, 3),
+                data_type="options",
+            ),
+            credentials=MassiveCredentials(api_key="test-key"),
+            retrieval_time="2024-01-03T22:00:00Z",
+            fetch_json=mock_fetch,
+        )
+

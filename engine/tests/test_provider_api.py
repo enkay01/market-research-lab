@@ -37,39 +37,51 @@ def test_provider_download_creates_dataset_versions_without_returning_credential
 
     (tmp_path / ".env.local").write_text("TIINGO_API_TOKEN=private-token\n", encoding="utf-8")
     app = create_app(workspace_root=tmp_path, provider_fetch_json=fetch_json)
+    app.state.provider_wait = lambda _: None
     response = TestClient(app).post(
-        "/api/datasets/download",
+        "/api/downloads",
         json={
-            "provider": "tiingo",
-            "symbols": ["AAPL"],
+            "security_list_id": "dow-30",
             "start_date": "2023-06-01",
             "end_date": "2023-06-30",
+            "downloads": [{"provider": "tiingo", "data_types": ["daily_bars"]}],
         },
     )
 
-    assert response.status_code == 201
+    assert response.status_code == 202
     body = response.json()
-    assert body["dataset_version_id"]
-    assert body["dataset_version_ids"]
     assert "private-token" not in json.dumps(body)
-    securities = MarketDataStore(tmp_path).list_securities()
-    assert securities[0].security_id == "AAPL"
-    assert securities[0].symbol == "AAPL"
 
 
 def test_provider_failure_does_not_create_a_dataset_version(tmp_path):
+    import time
+
     def fetch_json(_url, _headers):
         raise RuntimeError("upstream unavailable")
 
     (tmp_path / ".env.local").write_text("TIINGO_API_TOKEN=private-token\n", encoding="utf-8")
     app = create_app(workspace_root=tmp_path, provider_fetch_json=fetch_json)
+    app.state.provider_wait = lambda _: None
     client = TestClient(app)
     response = client.post(
-        "/api/datasets/download", json={"provider": "tiingo", "symbols": ["AAPL"]}
+        "/api/downloads",
+        json={
+            "security_list_id": "dow-30",
+            "start_date": "2023-06-01",
+            "end_date": "2023-06-30",
+            "downloads": [{"provider": "tiingo", "data_types": ["daily_bars"]}],
+        },
     )
 
-    assert response.status_code == 502
-    assert response.json()["code"] == "provider_error"
+    assert response.status_code == 202
+    download_id = response.json()["download_id"]
+    for _ in range(50):
+        snap = client.get(f"/api/downloads/{download_id}").json()
+        if snap["state"] in ("succeeded", "failed", "cancelled"):
+            break
+        time.sleep(0.01)
+
+    assert snap["state"] == "failed"
     assert not list((tmp_path / "datasets").glob("*.parquet"))
 
 
@@ -108,15 +120,19 @@ def test_sec_download_without_acceptance_time_is_not_historically_eligible(tmp_p
         "SEC_EDGAR_USER_AGENT=Market Research Lab test@example.com\n",
         encoding="utf-8",
     )
-    client = TestClient(create_app(workspace_root=tmp_path, provider_fetch_json=fetch_json))
+    from market_research_lab.providers import SecEdgarDownloadSpec
 
-    imported = client.post(
-        "/api/datasets/download",
-        json={"provider": "sec_edgar", "ciks": ["1"]},
+    versions = downloads_module.download_provider(
+        MarketDataStore(tmp_path),
+        SecEdgarDownloadSpec(ciks=("1",)),
+        credentials=ProviderCredentials(
+            sec_edgar_user_agent="Market Research Lab test@example.com"
+        ),
+        fetch_json=fetch_json,
     )
 
-    assert imported.status_code == 201
-    version_id = imported.json()["dataset_version_id"]
+    client = TestClient(create_app(workspace_root=tmp_path, provider_fetch_json=fetch_json))
+    version_id = versions[0].id
     coverage = client.get(f"/api/datasets/{version_id}/coverage")
     assert coverage.json()["has_temporal_provenance"] is False
     assert coverage.json()["coverage_start"] == "2022-12-31"

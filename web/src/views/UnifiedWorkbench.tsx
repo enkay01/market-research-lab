@@ -71,12 +71,15 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
       "75_25": 0.25,
       "80_20": 0.20,
       "70_30": 0.30,
-    } satisfies Record<string, number>;
-    const holdoutRatio = splitMap[holdoutSplit] ?? 0.25;
+    } as const;
+    // SAFETY: holdoutSplit membership is checked by the in operator before indexing splitMap
+    const holdoutRatio =
+      holdoutSplit in splitMap ? splitMap[holdoutSplit as keyof typeof splitMap] : 0.25;
 
     try {
       const response = await api.evaluateVerdict(project.id, {
         strategy_name: strategyModel,
+        strategy_revision: "v1",
         universe_preset: universe,
         benchmark_symbol: benchmark.toUpperCase(),
         holdout_ratio: holdoutRatio,
@@ -90,7 +93,7 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
           max_hold: maxHold,
         },
         execution: {
-          schedule: cadence,
+          schedule: "daily",
           commission_rate: (parseFloat(commissionBps) || 0) / 10000.0,
           slippage_rate: (parseFloat(slippageBps) || 0) / 10000.0,
           allow_shorting: true,

@@ -27,6 +27,7 @@ from ..backtest import (
 from ..json_types import JsonValue
 from ..market_data import (
     DATASET_TYPE_CORPORATE_ACTIONS,
+    DATASET_TYPE_DAILY_BARS,
     CorporateAction,
     DailyBar,
     MarketDataStore,
@@ -64,7 +65,7 @@ class ExecutionModelAssumptionsRequest(BaseModel):
     max_leverage: float = Field(default=1.0, gt=0)
     margin_requirement: float = Field(default=1.0, gt=0)
     maintenance_margin: float = Field(default=0.25, ge=0, le=1)
-    leverage_mode: Literal["reject", "clamp"] = "reject"
+    leverage_mode: Literal["reject", "constrain"] = "reject"
 
 
 class BacktestRunRequest(BaseModel):
@@ -155,6 +156,17 @@ class EquityPointResponse(BaseModel):
     drawdown: float
 
 
+class RankingResponse(BaseModel):
+    session_date: str
+    decision_time: str
+    security_id: str
+    score: float | None = None
+    rank: int | None = None
+    selected: bool
+    target_weight: float
+    rationale: str
+
+
 class ExecutionModelAssumptionsResponse(BaseModel):
     schedule: str = "daily"
     commission_rate: float = 0.0
@@ -219,6 +231,7 @@ class BacktestResultResponse(BaseModel):
     manifest: dict[str, JsonValue]
     benchmark_equity_curve: list[EquityPointResponse] = Field(default_factory=list)
     rejections: list[ConstraintRejectionResponse] = Field(default_factory=list)
+    rankings: list[RankingResponse] = Field(default_factory=list)
 
 
 class BacktestComparisonItemResponse(BaseModel):
@@ -265,7 +278,12 @@ def _resolve_target_securities(
 ) -> list[Security]:
     """Resolve target securities from request parameters or dataset history."""
     target_symbols = (
-        [s.strip().upper() for s in request.symbols if s.strip()]
+        [
+            part.upper()
+            for value in request.symbols
+            for part in value.replace(";", ",").replace(",", " ").split()
+            if part
+        ]
         if request.symbols
         else ([request.symbol.strip().upper()] if request.symbol and request.symbol.strip() else [])
     )
@@ -293,6 +311,30 @@ def _resolve_target_securities(
         if sec:
             resolved.append(sec)
     return resolved
+
+
+def _require_daily_dataset(market_store: MarketDataStore, dataset_version_id: str) -> None:
+    """Reject non-daily datasets before any history lookup can occur."""
+    coverage = next(
+        (item for item in market_store.list_dataset_versions() if item.id == dataset_version_id),
+        None,
+    )
+    if coverage is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "Backtests require a daily_bars dataset; "
+                f"dataset '{dataset_version_id}' was not found."
+            ),
+        )
+    if coverage.dataset_type != DATASET_TYPE_DAILY_BARS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "Backtests require dataset_type 'daily_bars'. "
+                f"Dataset '{dataset_version_id}' is '{coverage.dataset_type}'."
+            ),
+        )
 
 
 @router.post(
@@ -328,6 +370,7 @@ def run_project_backtest(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="start_date must not be after end_date.",
         )
+    _require_daily_dataset(market_store, request.dataset_version_id)
     resolved_securities = _resolve_target_securities(market_store, request)
 
     bench_sec = None

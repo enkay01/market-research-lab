@@ -16,6 +16,10 @@ _Avoid_: Stock, asset, instrument
 A provenance-linked collection of historical market observations or company fundamentals available for analysis.
 _Avoid_: Feed, data dump
 
+**Universe Snapshot**:
+A dated, provenance-linked set of Securities eligible for comparison at a stated time.
+_Avoid_: Current constituents, symbol list
+
 **Dataset Version**:
 An immutable identification of the exact Market Dataset state used by an analysis or simulation.
 _Avoid_: Latest data, current data
@@ -55,6 +59,10 @@ _Avoid_: Hidden baseline, hindsight benchmark
 **Strategy**:
 Explicit decision and position rules that transform only information available at a simulated or evaluation time into intended actions.
 _Avoid_: Algorithm, indicator, model
+
+**Candidate Ranking**:
+A Strategy result that orders eligible Securities by a point-in-time score and records which candidates became portfolio targets.
+_Avoid_: Screener result, recommendation
 
 **Portfolio**:
 The cash, positions, and resulting exposures governed together during a Backtest Run or Strategy evaluation.

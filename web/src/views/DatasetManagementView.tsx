@@ -283,7 +283,6 @@ export function DatasetManagementView({ project, onProjectDeleted }: DatasetMana
                   <HStack align="center" gap={2}>
                     <SegmentedControl
                       label="Dataset type filter"
-                      isLabelHidden
                       size="sm"
                       value={typeFilter}
                       onChange={(val) => {
@@ -563,8 +562,8 @@ export function DatasetManagementView({ project, onProjectDeleted }: DatasetMana
                             </TableCell>
                             <TableCell>
                               <Text type="supporting">
-                                {r.dataset_version_ids.length > 0
-                                  ? r.dataset_version_ids.map((id) => id.slice(0, 8)).join(", ")
+                                {(r.dataset_version_ids?.length ?? 0) > 0
+                                  ? r.dataset_version_ids!.map((id) => id.slice(0, 8)).join(", ")
                                   : "None"}
                               </Text>
                             </TableCell>

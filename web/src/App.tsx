@@ -33,6 +33,9 @@ export function App() {
     if (isDomainTab(tabParam)) {
       return tabParam;
     }
+    if (params.get("variant")) {
+      return "backtest";
+    }
     return "datasets";
   });
   const [projects, setProjects] = useState<Project[]>([]);

@@ -23,11 +23,15 @@ import {
 } from "@astryxdesign/core";
 import {
   api,
+  type CompositeDownloadRequest,
   type CoverageResponse,
+  type DownloadSnapshotResponse,
 } from "../api/client";
 import { ImportDataDialog } from "../components/ImportDataDialog";
 import { DownloadProviderDialog } from "../components/DownloadProviderDialog";
 import { PitQueryDialog } from "../components/PitQueryDialog";
+
+const ACTIVE_DOWNLOAD_STORAGE_KEY = "active_download_id";
 
 export function DataView() {
   const [datasetVersions, setDatasetVersions] = useState<CoverageResponse[]>([]);
@@ -37,6 +41,14 @@ export function DataView() {
   const [isLoading, setIsLoading] = useState(true);
   const [isInspectorLoading, setIsInspectorLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Background Download Progress State
+  const [activeDownloadId, setActiveDownloadId] = useState<string | null>(() =>
+    localStorage.getItem(ACTIVE_DOWNLOAD_STORAGE_KEY)
+  );
+  const [activeSnapshot, setActiveSnapshot] = useState<DownloadSnapshotResponse | null>(null);
+  const [isStartingDownload, setIsStartingDownload] = useState(false);
+  const [isCancellingDownload, setIsCancellingDownload] = useState(false);
 
   // Dialogs
   const [isImportOpen, setIsImportOpen] = useState(false);
@@ -82,11 +94,126 @@ export function DataView() {
     }
   }
 
+  // Check for active download on mount
   useEffect(() => {
     void loadDatasets();
+
+    const savedId = localStorage.getItem(ACTIVE_DOWNLOAD_STORAGE_KEY);
+    if (savedId) {
+      api
+        .getDownloadStatus(savedId)
+        .then((snap) => {
+          setActiveSnapshot(snap);
+          if (
+            snap.state === "succeeded" ||
+            snap.state === "failed" ||
+            snap.state === "cancelled"
+          ) {
+            localStorage.removeItem(ACTIVE_DOWNLOAD_STORAGE_KEY);
+          } else {
+            setActiveDownloadId(savedId);
+          }
+        })
+        .catch(() => {
+          localStorage.removeItem(ACTIVE_DOWNLOAD_STORAGE_KEY);
+        });
+    } else {
+      api
+        .getLatestDownload()
+        .then((snap) => {
+          if (
+            snap.state === "running" ||
+            snap.state === "queued" ||
+            snap.state === "cancelling"
+          ) {
+            setActiveDownloadId(snap.download_id);
+            setActiveSnapshot(snap);
+            localStorage.setItem(ACTIVE_DOWNLOAD_STORAGE_KEY, snap.download_id);
+          }
+        })
+        .catch(() => {
+          // No latest download found
+        });
+    }
   }, []);
 
+  // Poll active download
+  useEffect(() => {
+    if (!activeDownloadId) return;
+
+    let isMounted = true;
+    const interval = setInterval(async () => {
+      try {
+        const snap = await api.getDownloadStatus(activeDownloadId);
+        if (!isMounted) return;
+        setActiveSnapshot(snap);
+
+        if (snap.state === "succeeded") {
+          localStorage.removeItem(ACTIVE_DOWNLOAD_STORAGE_KEY);
+          setActiveDownloadId(null);
+          void loadDatasets();
+        } else if (snap.state === "failed" || snap.state === "cancelled") {
+          localStorage.removeItem(ACTIVE_DOWNLOAD_STORAGE_KEY);
+          setActiveDownloadId(null);
+        }
+      } catch {
+        localStorage.removeItem(ACTIVE_DOWNLOAD_STORAGE_KEY);
+        if (isMounted) setActiveDownloadId(null);
+      }
+    }, 750);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [activeDownloadId]);
+
+  async function handleStartDownload(req: CompositeDownloadRequest) {
+    setIsStartingDownload(true);
+    try {
+      const resp = await api.startDownload(req);
+      setActiveDownloadId(resp.download_id);
+      setActiveSnapshot(resp.snapshot);
+      localStorage.setItem(ACTIVE_DOWNLOAD_STORAGE_KEY, resp.download_id);
+    } finally {
+      setIsStartingDownload(false);
+    }
+  }
+
+  async function handleCancelDownload() {
+    if (!activeSnapshot?.download_id) return;
+    setIsCancellingDownload(true);
+    try {
+      const snap = await api.cancelDownload(activeSnapshot.download_id);
+      setActiveSnapshot(snap);
+    } catch {
+      // If cancellation call fails (e.g. 409 already finished), refresh current status immediately
+      try {
+        const currentSnap = await api.getDownloadStatus(activeSnapshot.download_id);
+        setActiveSnapshot(currentSnap);
+        if (
+          currentSnap.state === "succeeded" ||
+          currentSnap.state === "failed" ||
+          currentSnap.state === "cancelled"
+        ) {
+          localStorage.removeItem(ACTIVE_DOWNLOAD_STORAGE_KEY);
+          setActiveDownloadId(null);
+        }
+      } catch {
+        // ignore secondary error
+      }
+    } finally {
+      setIsCancellingDownload(false);
+    }
+  }
+
   const previewCols = previewRows.length > 0 ? Object.keys(previewRows[0]).slice(0, 6) : [];
+
+  const isDownloadRunning =
+    Boolean(activeSnapshot) &&
+    (activeSnapshot?.state === "running" ||
+      activeSnapshot?.state === "queued" ||
+      activeSnapshot?.state === "cancelling");
 
   return (
     <>
@@ -111,8 +238,8 @@ export function DataView() {
                   isDisabled={datasetVersions.length === 0}
                 />
                 <Button
-                  label="Download Provider Data"
-                  variant="secondary"
+                  label={isDownloadRunning ? "View Download Progress" : "Download Provider Data"}
+                  variant={isDownloadRunning ? "primary" : "secondary"}
                   size="sm"
                   onClick={() => setIsDownloadOpen(true)}
                 />
@@ -128,6 +255,50 @@ export function DataView() {
         }
         content={
           <LayoutContent padding={0} isScrollable>
+            {/* Background Download Status Notification */}
+            {isDownloadRunning && activeSnapshot && (
+              <VStack
+                style={{
+                  padding: "10px 16px",
+                  backgroundColor: "var(--color-background-muted)",
+                  borderBottom: "1px solid var(--color-border)",
+                }}
+              >
+                <HStack justify="between" align="center">
+                  <HStack gap={3} align="center">
+                    <Spinner size="sm" />
+                    <Text style={{ fontWeight: 600 }}>
+                      Downloading {activeSnapshot.security_list_id ?? "Composite"}:
+                    </Text>
+                    <Token label={activeSnapshot.phase} color="blue" />
+                    <Text type="supporting">
+                      ({activeSnapshot.completed_requests}/{activeSnapshot.total_requests || "?"} reqs)
+                    </Text>
+                    {activeSnapshot.active_operation && (
+                      <Text
+                        type="supporting"
+                        style={{
+                          fontSize: "12px",
+                          maxWidth: "300px",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {activeSnapshot.active_operation}
+                      </Text>
+                    )}
+                  </HStack>
+                  <Button
+                    label="Open Progress Dialog"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setIsDownloadOpen(true)}
+                  />
+                </HStack>
+              </VStack>
+            )}
+
             {error && (
               <div style={{ padding: "var(--spacing-3, 12px)" }}>
                 <Banner status="error" title="Data Catalogue Error" description={error} />
@@ -142,190 +313,225 @@ export function DataView() {
             ) : datasetVersions.length === 0 ? (
               <EmptyState
                 title="No Market Datasets Available"
-                description="Import CSV, JSON, or Parquet files, or download data from Tiingo or SEC EDGAR to populate the DuckDB catalogue."
+                description="Import CSV, JSON, or Parquet files, or download data from Tiingo, Massive, or SEC EDGAR to populate the DuckDB catalogue."
                 actions={
-                  <Button
-                    label="Import Dataset File"
-                    variant="primary"
-                    onClick={() => setIsImportOpen(true)}
-                  />
+                  <HStack gap={2}>
+                    <Button
+                      label="Download Provider Data"
+                      variant="primary"
+                      onClick={() => setIsDownloadOpen(true)}
+                    />
+                    <Button
+                      label="Import Dataset File"
+                      variant="secondary"
+                      onClick={() => setIsImportOpen(true)}
+                    />
+                  </HStack>
                 }
               />
             ) : (
-              <Table>
+              <Table isStriped>
                 <TableHeader>
                   <TableRow>
+                    <TableHeaderCell>Dataset ID</TableHeaderCell>
                     <TableHeaderCell>Source</TableHeaderCell>
-                    <TableHeaderCell>Version ID</TableHeaderCell>
                     <TableHeaderCell>Dataset Type</TableHeaderCell>
-                    <TableHeaderCell>Valid Rows</TableHeaderCell>
-                    <TableHeaderCell>Date Coverage</TableHeaderCell>
+                    <TableHeaderCell>Coverage Range</TableHeaderCell>
+                    <TableHeaderCell>Row Count</TableHeaderCell>
+                    <TableHeaderCell>Security List</TableHeaderCell>
                     <TableHeaderCell>Temporal Provenance</TableHeaderCell>
-                    <TableHeaderCell>Retrieved At</TableHeaderCell>
+                    <TableHeaderCell>Retrieval Time</TableHeaderCell>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {datasetVersions.map((v) => {
-                    const isSelected = v.id === selectedVersionId;
-                    return (
-                      <TableRow
-                        key={v.id}
-                        onClick={() => void selectVersion(v.id)}
-                        style={{
-                          cursor: "pointer",
-                          backgroundColor: isSelected
-                            ? "var(--color-background-wash, rgba(255, 255, 255, 0.08))"
+                  {datasetVersions.map((version) => (
+                    <TableRow
+                      key={version.id}
+                      onClick={() => void selectVersion(version.id)}
+                      style={{
+                        cursor: "pointer",
+                        backgroundColor:
+                          selectedVersionId === version.id
+                            ? "var(--color-background-muted)"
                             : undefined,
-                        }}
-                      >
-                        <TableCell>
-                          <Text weight="medium">{v.source}</Text>
-                        </TableCell>
-                        <TableCell>
-                          <Text hasTabularNumbers>
-                            {v.id.slice(0, 8)}
-                          </Text>
-                        </TableCell>
-                        <TableCell>
-                          <HStack gap={1}>
-                            {v.is_corporate_actions ? (
-                              <Token label="Corporate Actions" color="purple" />
-                            ) : v.is_fundamentals ? (
-                              <Token label="Fundamentals" color="blue" />
-                            ) : (
-                              <Token label="Daily Bars" color="green" />
-                            )}
-                          </HStack>
-                        </TableCell>
-                        <TableCell>{v.row_count.toLocaleString()}</TableCell>
-                        <TableCell>
-                          {v.coverage_start && v.coverage_end
-                            ? `${v.coverage_start} → ${v.coverage_end}`
-                            : "—"}
-                        </TableCell>
-                        <TableCell>
-                          {v.has_temporal_provenance ? (
-                            <Token label="Eligible (PIT)" color="green" />
-                          ) : (
-                            <Token label="Research Only" color="yellow" />
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Text type="supporting">
-                            {new Date(v.retrieval_time).toLocaleString()}
-                          </Text>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
+                      }}
+                    >
+                      <TableCell>
+                        <Text style={{ fontFamily: "var(--font-mono, monospace)", fontSize: "12px" }}>
+                          {version.id.slice(0, 8)}…
+                        </Text>
+                      </TableCell>
+                      <TableCell>
+                        <Badge label={version.source} variant="neutral" />
+                      </TableCell>
+                      <TableCell>
+                        <Token label={version.dataset_type || "daily_bars"} />
+                      </TableCell>
+                      <TableCell>
+                        <Text type="supporting">
+                          {version.coverage_start && version.coverage_end
+                            ? `${version.coverage_start} to ${version.coverage_end}`
+                            : "N/A"}
+                        </Text>
+                      </TableCell>
+                      <TableCell>
+                        <Text style={{ fontVariantNumeric: "tabular-nums" }}>
+                          {version.row_count.toLocaleString()}
+                        </Text>
+                      </TableCell>
+                      <TableCell>
+                        {version.security_list_id ? (
+                          <Badge label={version.security_list_id} variant="purple" />
+                        ) : (
+                          <Text type="supporting">—</Text>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {version.has_temporal_provenance ? (
+                          <Badge label="Complete" variant="green" />
+                        ) : (
+                          <Badge label="Incomplete" variant="orange" />
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Text type="supporting" style={{ fontSize: "12px" }}>
+                          {new Date(version.retrieval_time).toLocaleString()}
+                        </Text>
+                      </TableCell>
+                    </TableRow>
+                  ))}
                 </TableBody>
               </Table>
             )}
           </LayoutContent>
         }
         end={
-          <LayoutPanel
-            width={400}
-            hasDivider
-            isScrollable
-            label="Dataset Details"
-          >
+          <LayoutPanel width={400} isScrollable>
             {isInspectorLoading ? (
               <VStack align="center" justify="center" style={{ height: "200px" }}>
                 <Spinner size="md" />
-                <Text type="supporting">Loading version details…</Text>
               </VStack>
             ) : selectedCoverage ? (
-              <VStack gap={4} style={{ padding: "16px" }}>
-                <VStack gap={1}>
-                  <Heading level={3}>
-                    {selectedCoverage.source}
-                  </Heading>
-                  <Text type="supporting" hasTabularNumbers>
-                    ID: {selectedCoverage.id}
-                  </Text>
+              <VStack gap={4}>
+                <Heading level={3}>Dataset Version Inspector</Heading>
+                <VStack gap={2}>
+                  <HStack justify="between">
+                    <Text type="supporting">ID</Text>
+                    <Text style={{ fontFamily: "var(--font-mono, monospace)", fontSize: "12px" }}>
+                      {selectedCoverage.id}
+                    </Text>
+                  </HStack>
+                  <HStack justify="between">
+                    <Text type="supporting">Source</Text>
+                    <Token label={selectedCoverage.source} />
+                  </HStack>
+                  <HStack justify="between">
+                    <Text type="supporting">Type</Text>
+                    <Token label={selectedCoverage.dataset_type || "daily_bars"} />
+                  </HStack>
+                  {(selectedCoverage.coverage_start || selectedCoverage.coverage_end) && (
+                    <HStack justify="between">
+                      <Text type="supporting">Coverage Range</Text>
+                      <Text type="supporting">
+                        {selectedCoverage.coverage_start ?? "—"} to {selectedCoverage.coverage_end ?? "—"}
+                      </Text>
+                    </HStack>
+                  )}
+                  <HStack justify="between">
+                    <Text type="supporting">Temporal Provenance</Text>
+                    <Text type="supporting">
+                      {selectedCoverage.has_temporal_provenance ? "Complete" : "Incomplete"}
+                    </Text>
+                  </HStack>
+                  <HStack justify="between">
+                    <Text type="supporting">Row Count</Text>
+                    <Text>{selectedCoverage.row_count.toLocaleString()}</Text>
+                  </HStack>
+                  <HStack justify="between">
+                    <Text type="supporting">Rejected Rows</Text>
+                    <Text>{selectedCoverage.rejected_count}</Text>
+                  </HStack>
                 </VStack>
 
-                {/* Validation Banner */}
-                {selectedCoverage.rejected_count > 0 ? (
-                  <Banner
-                    status="warning"
-                    title={`${selectedCoverage.rejected_count} Rejected Rows Detected`}
-                    description={
-                      selectedCoverage.warnings && selectedCoverage.warnings.length > 0
-                        ? selectedCoverage.warnings.join("; ")
-                        : `${selectedCoverage.rejected_count} rows rejected during ingestion.`
-                    }
-                  />
-                ) : (
-                  <Banner
-                    status="success"
-                    title="Validated Point-in-Time Dataset"
-                    description={`All ${selectedCoverage.row_count.toLocaleString()} rows parsed and verified against point-in-time rules.`}
-                  />
+                {/* DATA-007: Missing Fields */}
+                {selectedCoverage.missing_fields &&
+                  Object.keys(selectedCoverage.missing_fields).length > 0 && (
+                  <VStack gap={2}>
+                    <Heading level={4}>Missing Fields</Heading>
+                    <HStack gap={1} style={{ flexWrap: "wrap" }}>
+                      {Object.entries(selectedCoverage.missing_fields).map(([field, count]) => (
+                        <Token key={field} label={`${field} (${count})`} color="yellow" />
+                      ))}
+                    </HStack>
+                  </VStack>
                 )}
 
-                {/* Record Summary Table */}
-                <VStack gap={2}>
-                  <Text weight="semibold">
-                    Record Breakdown
-                  </Text>
-                  <Table>
-                    <TableBody>
-                      <TableRow>
-                        <TableCell><Text weight="medium">Total Rows</Text></TableCell>
-                        <TableCell>{selectedCoverage.row_count.toLocaleString()}</TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell><Text weight="medium">Rejected Rows</Text></TableCell>
-                        <TableCell>{selectedCoverage.rejected_count.toLocaleString()}</TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell><Text weight="medium">Total Warnings</Text></TableCell>
-                        <TableCell>{selectedCoverage.total_warnings}</TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell><Text weight="medium">Dataset Type</Text></TableCell>
-                        <TableCell>{selectedCoverage.dataset_type}</TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-                </VStack>
+                {/* DATA-007: Validation Warnings */}
+                {selectedCoverage.warnings && selectedCoverage.warnings.length > 0 && (
+                  <VStack gap={2}>
+                    <Heading level={4}>Validation Warnings</Heading>
+                    <VStack gap={2}>
+                      {selectedCoverage.warnings.map((warning, idx) => (
+                        <Banner
+                          key={idx}
+                          status="warning"
+                          title={`Warning ${idx + 1}`}
+                          description={warning}
+                        />
+                      ))}
+                    </VStack>
+                  </VStack>
+                )}
 
-                {/* Time Coverage */}
-                <VStack gap={2}>
-                  <Text weight="semibold">
-                    Temporal Provenance Bounds
-                  </Text>
-                  <Table>
-                    <TableBody>
-                      <TableRow>
-                        <TableCell><Text type="supporting">Coverage Start</Text></TableCell>
-                        <TableCell><Text>{selectedCoverage.coverage_start || "—"}</Text></TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell><Text type="supporting">Coverage End</Text></TableCell>
-                        <TableCell><Text>{selectedCoverage.coverage_end || "—"}</Text></TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell><Text type="supporting">Retrieval Time</Text></TableCell>
-                        <TableCell><Text>{new Date(selectedCoverage.retrieval_time).toLocaleString()}</Text></TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-                </VStack>
+                {selectedCoverage.parts && selectedCoverage.parts.length > 0 && (
+                  <VStack gap={2}>
+                    <Heading level={4}>Composite Parts</Heading>
+                    {selectedCoverage.parts.map((part) => (
+                      <VStack
+                        key={part.id}
+                        gap={1}
+                        style={{
+                          padding: "8px",
+                          borderRadius: "var(--radius-sm, 4px)",
+                          backgroundColor: "var(--color-background-muted)",
+                          border: "1px solid var(--color-border)",
+                        }}
+                      >
+                        <HStack justify="between">
+                          <Token label={part.source} />
+                          <Token label={part.dataset_type} />
+                        </HStack>
+                        <HStack justify="between">
+                          <Text type="supporting">Rows</Text>
+                          <Text type="supporting">{part.row_count.toLocaleString()}</Text>
+                        </HStack>
+                        {(part.coverage_start || part.coverage_end) && (
+                          <HStack justify="between">
+                            <Text type="supporting">Coverage</Text>
+                            <Text type="supporting">
+                              {part.coverage_start ?? "—"} to {part.coverage_end ?? "—"}
+                            </Text>
+                          </HStack>
+                        )}
+                        {part.warnings && part.warnings.length > 0 && (
+                          <VStack gap={1}>
+                            <Text type="supporting" style={{ fontWeight: 600 }}>Part Warnings:</Text>
+                            {part.warnings.map((w, wIdx) => (
+                              <Text key={wIdx} type="supporting" style={{ fontSize: "11px" }}>• {w}</Text>
+                            ))}
+                          </VStack>
+                        )}
+                      </VStack>
+                    ))}
+                  </VStack>
+                )}
 
-                {/* Raw Preview Rows */}
                 <VStack gap={2}>
-                  <HStack justify="between" align="center">
-                    <Text weight="semibold">Data Preview</Text>
-                    <Text type="supporting">{previewRows.length} sample rows</Text>
-                  </HStack>
-
+                  <Heading level={4}>Data Preview</Heading>
                   {previewRows.length === 0 ? (
-                    <Text type="supporting">No preview records available.</Text>
+                    <Text type="supporting">No preview rows available.</Text>
                   ) : (
-                    <div style={{ overflow: "auto", maxHeight: "200px" }}>
+                    <div style={{ overflowX: "auto" }}>
                       <Table>
                         <TableHeader>
                           <TableRow>
@@ -371,6 +577,11 @@ export function DataView() {
       <DownloadProviderDialog
         isOpen={isDownloadOpen}
         onClose={() => setIsDownloadOpen(false)}
+        activeSnapshot={activeSnapshot}
+        onStartDownload={handleStartDownload}
+        onCancelDownload={handleCancelDownload}
+        isStarting={isStartingDownload}
+        isCancelling={isCancellingDownload}
         onSuccess={() => void loadDatasets()}
       />
 
@@ -382,4 +593,3 @@ export function DataView() {
     </>
   );
 }
-

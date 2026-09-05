@@ -66,6 +66,20 @@ class StrategyTarget:
 
 
 @dataclass(frozen=True)
+class RankingRecord:
+    """Point-in-time cross-sectional score and selection observation."""
+
+    session_date: str
+    decision_time: str
+    security_id: str
+    score: float | None
+    rank: int | None
+    selected: bool
+    target_weight: float
+    rationale: str
+
+
+@dataclass(frozen=True)
 class LongFlatDecision:
     """Long or flat target weight with the indicator state that produced it."""
 
@@ -84,6 +98,7 @@ class StrategyEvaluation:
     indicator_name: str | None = None
     latest_session_date: str | None = None
     warnings: tuple[str, ...] = ()
+    ranking_records: tuple[RankingRecord, ...] = ()
 
 
 class MovingAverageStrategyParams(BaseModel):
@@ -92,6 +107,98 @@ class MovingAverageStrategyParams(BaseModel):
     fast_period: int = Field(default=20, ge=1, le=250)
     slow_period: int = Field(default=50, ge=2, le=500)
     ma_type: Literal["sma", "ema"] = "sma"
+
+
+class TopNMomentumParams(BaseModel):
+    """Validated parameters for the cross-sectional momentum Strategy."""
+
+    lookback_period: int = Field(default=20, ge=1)
+    top_n: int = Field(default=10, ge=1)
+    weighting: Literal["equal"] = "equal"
+
+
+def _validated_top_n_parameters(parameters: Mapping[str, JsonValue]) -> TopNMomentumParams:
+    try:
+        return TopNMomentumParams.model_validate(dict(parameters))
+    except ValueError as error:
+        raise StrategyParameterValidationError(str(error)) from error
+
+
+def _momentum_score(view: MarketView, lookback_period: int) -> float | None:
+    if len(view.prices) <= lookback_period:
+        return None
+    start = view.prices[-lookback_period - 1]
+    end = view.prices[-1]
+    if start == 0:
+        return None
+    return (end / start) - 1.0
+
+
+def evaluate_top_n_momentum(
+    market_views: Mapping[str, MarketView],
+    parameters: Mapping[str, JsonValue],
+    *,
+    decision_time: str,
+    session_date: str,
+) -> StrategyEvaluation:
+    """Rank eligible Securities by trailing return and emit equal weights."""
+    config = _validated_top_n_parameters(parameters)
+    scored = {
+        security_id: _momentum_score(view, config.lookback_period)
+        for security_id, view in market_views.items()
+    }
+    ranked = sorted(
+        ((security_id, score) for security_id, score in scored.items() if score is not None),
+        key=lambda item: (-item[1], item[0]),
+    )
+    selected_ids = {
+        security_id for security_id, score in ranked[: config.top_n] if score > 0
+    }
+    weight = 1.0 / len(selected_ids) if selected_ids else 0.0
+    rank_by_id = {security_id: rank for rank, (security_id, _) in enumerate(ranked, 1)}
+    records = tuple(
+        RankingRecord(
+            session_date=session_date,
+            decision_time=decision_time,
+            security_id=security_id,
+            score=score,
+            rank=rank_by_id.get(security_id),
+            selected=security_id in selected_ids,
+            target_weight=weight if security_id in selected_ids else 0.0,
+            rationale=(
+                "Selected among top positive momentum scores with equal weighting."
+                if security_id in selected_ids
+                else "Not selected by the top-N positive momentum rule."
+            ),
+        )
+        for security_id, score in sorted(scored.items())
+    )
+    targets = tuple(
+        StrategyTarget(
+            security_id=security_id,
+            weight=record.target_weight,
+            decision_time=decision_time,
+            rationale=record.rationale,
+        )
+        for security_id, record in ((r.security_id, r) for r in records)
+    )
+    return StrategyEvaluation(
+        strategy_name="top_n_momentum",
+        parameters={
+            "lookback_period": config.lookback_period,
+            "top_n": config.top_n,
+            "weighting": config.weighting,
+        },
+        decision_time=decision_time,
+        targets=targets,
+        latest_session_date=session_date,
+        ranking_records=records,
+    )
+
+
+CROSS_SECTIONAL_STRATEGIES: dict[str, Callable[..., StrategyEvaluation]] = {
+    "top_n_momentum": evaluate_top_n_momentum,
+}
 
 
 def _validated_long_flat_parameters(
@@ -357,6 +464,19 @@ def evaluate_rsi_strategy(
 
 
 BUILTIN_STRATEGIES: dict[str, StrategyMetadata] = {
+    "top_n_momentum": StrategyMetadata(
+        name="top_n_momentum",
+        display_name="Top-N Momentum",
+        description="Selects the top positive trailing-return Securities in the active universe.",
+        parameters=[
+            StrategyParameter("lookback_period", "int", 20, "Trailing daily bars", min_value=1),
+            StrategyParameter("top_n", "int", 10, "Maximum selected Securities", min_value=1),
+            StrategyParameter(
+                "weighting", "str", "equal", "Portfolio weighting", options=["equal"]
+            ),
+        ],
+        outputs=["score", "rank", "selected", "target_weight", "rationale"],
+    ),
     "long_flat_moving_average": StrategyMetadata(
         name="long_flat_moving_average",
         display_name="Long/Flat Moving Average",
@@ -598,6 +718,8 @@ def validate_strategy_parameters(
     get_strategy_spec(name)
     if name in {"long_flat_moving_average", "ma_crossover", "trend_exhaustion"}:
         _validated_long_flat_parameters(parameters)
+    elif name == "top_n_momentum":
+        _validated_top_n_parameters(parameters)
 
 
 def evaluate_put_credit_spread_strategy(

@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+from collections.abc import Callable
+from typing import TYPE_CHECKING, cast
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from ..download_jobs import MarketDataDownloadService
 
 from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
@@ -32,6 +36,7 @@ from ..projects import (
     RunNotFoundError,
 )
 from ..providers import JsonFetcher, ProviderCredentials
+from ..security_lists import SecurityListNotFoundError
 from ..strategies import (
     StrategyEvaluationError,
     StrategyParameterValidationError,
@@ -101,6 +106,15 @@ def get_provider_credentials(request: Request) -> ProviderCredentials:
 
 def get_provider_fetch_json(request: Request) -> JsonFetcher | None:
     return getattr(request.app.state, "provider_fetch_json", None)
+
+
+def get_provider_wait(request: Request) -> Callable[[float], None]:
+    import time
+    return getattr(request.app.state, "provider_wait", None) or time.sleep
+
+
+def get_download_service(request: Request) -> MarketDataDownloadService:
+    return cast("MarketDataDownloadService", request.app.state.download_service)
 
 
 def non_blank_name(value: str) -> str:
@@ -356,3 +370,17 @@ def register_domain_exception_handlers(app: FastAPI) -> None:
                 details={},
             ).model_dump(),
         )
+
+    @app.exception_handler(SecurityListNotFoundError)
+    async def security_list_not_found(_: Request, error: SecurityListNotFoundError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=ErrorResponse(
+                code="security_list_not_found",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+
+

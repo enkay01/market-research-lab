@@ -447,6 +447,7 @@ export function BacktestView({ project }: BacktestViewProps) {
         benchmark_symbol: benchmarkInput.trim() ? benchmarkInput.trim().toUpperCase() : undefined,
         start_date: startDate,
         end_date: endDate,
+        calendar: "US",
         starting_cash: parseFloat(startingCash) || 100000.0,
         price_field: "close",
         parameters: {
@@ -613,7 +614,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                 variant="primary"
                 size="sm"
                 onClick={handleRunBacktest}
-                disabled={isRunning || isLoadingDatasets}
+                isDisabled={isRunning || isLoadingDatasets}
               />
             </HStack>
           </HStack>
@@ -901,6 +902,7 @@ export function BacktestView({ project }: BacktestViewProps) {
 
                 {/* Sub-tabs for deep replay analysis */}
                 <SegmentedControl
+                  label="Results View Mode"
                   value={activeTab}
                   onChange={(v) => {
                     // SAFETY: Value is constrained by SegmentedControlItem options
@@ -1197,7 +1199,7 @@ export function BacktestView({ project }: BacktestViewProps) {
                                 <TableCell style={{ maxWidth: "none", whiteSpace: "nowrap" }}>{row.session_date}</TableCell>
                                 <TableCell style={{ maxWidth: "none", minWidth: "300px" }}>
                                   {posEntries.length > 0 ? (
-                                    <HStack gap={2} wrap align="center">
+                                    <HStack gap={2} wrap="wrap" align="center">
                                       {posEntries.map(([sym, pos]) => (
                                         <HStack key={sym} gap={1} align="center">
                                           <Token
@@ -1541,8 +1543,8 @@ export function BacktestView({ project }: BacktestViewProps) {
               </VStack>
             ) : (
               <EmptyState
-                heading="No Backtest Executed"
-                body="Configure your strategy parameters above and click 'Execute Backtest Run' to replay the simulation."
+                title="No Backtest Executed"
+                description="Configure your strategy parameters above and click 'Execute Backtest Run' to replay the simulation."
               />
             )}
           </VStack>

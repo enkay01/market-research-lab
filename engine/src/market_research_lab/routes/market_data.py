@@ -7,15 +7,17 @@ import shutil
 import tempfile
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Literal
 from uuid import UUID
 
 from fastapi import (
     APIRouter,
     Depends,
+    FastAPI,
     File,
     Form,
     Query,
+    Request,
     UploadFile,
     status,
 )
@@ -25,29 +27,37 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from ..downloads import download_provider
+from ..download_jobs import (
+    ActiveDownloadConflictError,
+    DownloadCannotBeCancelledError,
+    DownloadNotFoundError,
+    DownloadSnapshot,
+    MarketDataDownloadService,
+)
+from ..downloads import (
+    DatasetDownloadSpec,
+    ProviderDownloadChoice,
+)
 from ..json_types import JsonValue
 from ..market_data import (
     CoverageReport,
+    DatasetPartReport,
     IngestionRequest,
     MarketDataStore,
 )
 from ..projects import ProjectNotFoundError, ProjectStore
 from ..providers import (
     AlpacaDownloadSpec,
-    JsonFetcher,
     MassiveDownloadSpec,
-    ProviderCredentials,
-    ProviderDownloadError,
     SecEdgarDownloadSpec,
     TiingoDownloadSpec,
 )
+from ..security_lists import list_security_lists
 from .deps import (
     SecurityNotFoundError,
+    get_download_service,
     get_market_store,
     get_project_store,
-    get_provider_credentials,
-    get_provider_fetch_json,
 )
 
 router = APIRouter()
@@ -86,26 +96,54 @@ class SecuritySummaryResponse(BaseModel):
     alerts: list[dict[str, JsonValue]] = Field(default_factory=list)
 
 
+class SecurityListSummaryResponse(BaseModel):
+    id: str
+    name: str
+    member_count: int
+    as_of_date: str
+    source_url: str
+
+
 class DatasetImportResponse(BaseModel):
     dataset_version_id: str
+
+
+class DatasetPartResponse(BaseModel):
+    id: str
+    source: str
+    dataset_type: str
+    coverage_start: str | None = None
+    coverage_end: str | None = None
+    row_count: int = 0
+    rejected_count: int = 0
+    missing_fields: dict[str, int] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    total_warnings: int = 0
+    files: list[str] = Field(default_factory=list)
+    has_temporal_provenance: bool = False
+    is_fundamentals: bool = False
+    is_corporate_actions: bool = False
 
 
 class CoverageResponse(BaseModel):
     id: str
     source: str
     retrieval_time: str
-    coverage_start: str | None
-    coverage_end: str | None
-    row_count: int
-    rejected_count: int
-    missing_fields: dict[str, int]
-    warnings: list[str]
-    total_warnings: int
-    files: list[str]
+    coverage_start: str | None = None
+    coverage_end: str | None = None
+    row_count: int = 0
+    rejected_count: int = 0
+    missing_fields: dict[str, int] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    total_warnings: int = 0
+    files: list[str] = Field(default_factory=list)
     has_temporal_provenance: bool = False
     is_fundamentals: bool = False
     is_corporate_actions: bool = False
     dataset_type: str = "daily_bars"
+    security_list_id: str | None = None
+    security_list_as_of_date: str | None = None
+    parts: list[DatasetPartResponse] = Field(default_factory=list)
 
 
 class DailyBarResponse(BaseModel):
@@ -260,18 +298,76 @@ class MassiveDownloadRequest(ProviderDownloadRequestBase):
         )
 
 
-ProviderDownloadRequest = Annotated[
-    TiingoDownloadRequest
+class ProviderDownloadItem(BaseModel):
+    provider: Literal["tiingo", "massive", "sec_edgar", "alpaca"]
+    data_types: list[str] = Field(default_factory=list)
+
+
+class CompositeDownloadRequest(BaseModel):
+    security_list_id: str
+    start_date: date
+    end_date: date
+    downloads: list[ProviderDownloadItem] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_dates(self) -> CompositeDownloadRequest:
+        if self.start_date > self.end_date:
+            raise ValueError("Start date must be on or before end date")
+        return self
+
+    def to_spec(self) -> DatasetDownloadSpec:
+        return DatasetDownloadSpec(
+            security_list_id=self.security_list_id,
+            start_date=self.start_date,
+            end_date=self.end_date,
+            downloads=tuple(
+                ProviderDownloadChoice(
+                    provider=item.provider,
+                    data_types=tuple(item.data_types),
+                )
+                for item in self.downloads
+            ),
+        )
+
+
+ProviderDownloadRequest = (
+    CompositeDownloadRequest
+    | TiingoDownloadRequest
     | SecEdgarDownloadRequest
     | AlpacaDownloadRequest
-    | MassiveDownloadRequest,
-    Field(discriminator="provider"),
-]
+    | MassiveDownloadRequest
+)
+
+
+class CompositeDownloadResponse(BaseModel):
+    dataset_version_id: str
+    security_list_id: str
+    parts: list[DatasetPartResponse]
+    dataset_version_ids: list[str] = Field(default_factory=list)
 
 
 class ProviderDownloadResponse(BaseModel):
     dataset_version_id: str
     dataset_version_ids: list[str]
+
+
+def _part_response(part: DatasetPartReport) -> DatasetPartResponse:
+    return DatasetPartResponse(
+        id=part.id,
+        source=part.source,
+        dataset_type=part.dataset_type,
+        coverage_start=part.coverage_start,
+        coverage_end=part.coverage_end,
+        row_count=part.row_count,
+        rejected_count=part.rejected_count,
+        missing_fields=part.missing_fields,
+        warnings=part.warnings,
+        total_warnings=part.total_warnings,
+        files=part.files,
+        has_temporal_provenance=part.has_temporal_provenance,
+        is_fundamentals=part.is_fundamentals,
+        is_corporate_actions=part.is_corporate_actions,
+    )
 
 
 def _coverage_response(coverage: CoverageReport) -> CoverageResponse:
@@ -291,7 +387,28 @@ def _coverage_response(coverage: CoverageReport) -> CoverageResponse:
         is_fundamentals=coverage.is_fundamentals,
         is_corporate_actions=coverage.is_corporate_actions,
         dataset_type=coverage.dataset_type,
+        security_list_id=coverage.security_list_id,
+        security_list_as_of_date=coverage.security_list_as_of_date,
+        parts=[_part_response(p) for p in coverage.parts],
     )
+
+
+@router.get(
+    "/api/security-lists",
+    response_model=list[SecurityListSummaryResponse],
+    tags=["security_lists"],
+)
+def get_security_lists() -> list[SecurityListSummaryResponse]:
+    return [
+        SecurityListSummaryResponse(
+            id=s.id,
+            name=s.name,
+            member_count=s.member_count,
+            as_of_date=s.as_of_date,
+            source_url=s.source_url,
+        )
+        for s in list_security_lists()
+    ]
 
 
 @router.get(
@@ -507,36 +624,169 @@ def get_dataset_corporate_actions(
     ]
 
 
+def register_download_exception_handlers(app: FastAPI) -> None:
+    """Register route-level exception handlers for download operations."""
+
+    @app.exception_handler(ActiveDownloadConflictError)
+    async def active_download_conflict(
+        _: Request, error: ActiveDownloadConflictError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=ErrorResponse(
+                code="active_download_conflict",
+                message=str(error),
+                details={"active_download_id": error.active_download_id},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(DownloadNotFoundError)
+    async def download_not_found(_: Request, error: DownloadNotFoundError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=ErrorResponse(
+                code="download_not_found",
+                message=str(error),
+                details={"download_id": error.download_id},
+            ).model_dump(),
+        )
+
+    @app.exception_handler(DownloadCannotBeCancelledError)
+    async def download_cannot_be_cancelled(
+        _: Request, error: DownloadCannotBeCancelledError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=ErrorResponse(
+                code="download_cannot_be_cancelled",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
+
+
+class DownloadEventResponse(BaseModel):
+    timestamp: str
+    phase: str
+    message: str
+    details: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class DownloadSnapshotResponse(BaseModel):
+    download_id: str
+    state: str
+    phase: str
+    started_at: str
+    updated_at: str
+    dataset_version_id: str | None = None
+    security_list_id: str | None = None
+    error_message: str | None = None
+    total_logical_units: int = 0
+    completed_logical_units: int = 0
+    total_requests: int = 0
+    completed_requests: int = 0
+    active_provider: str | None = None
+    active_operation: str | None = None
+    rate_limit_wait_seconds: float = 0.0
+    recent_events: list[DownloadEventResponse] = Field(default_factory=list)
+
+
+class DownloadStartResponse(BaseModel):
+    download_id: str
+    status_url: str
+    snapshot: DownloadSnapshotResponse
+
+
+def _snapshot_response(snap: DownloadSnapshot) -> DownloadSnapshotResponse:
+    return DownloadSnapshotResponse(
+        download_id=snap.download_id,
+        state=snap.state.value,
+        phase=snap.phase.value,
+        started_at=snap.started_at,
+        updated_at=snap.updated_at,
+        dataset_version_id=snap.dataset_version_id,
+        security_list_id=snap.security_list_id,
+        error_message=snap.error_message,
+        total_logical_units=snap.total_logical_units,
+        completed_logical_units=snap.completed_logical_units,
+        total_requests=snap.total_requests,
+        completed_requests=snap.completed_requests,
+        active_provider=snap.active_provider,
+        active_operation=snap.active_operation,
+        rate_limit_wait_seconds=snap.rate_limit_wait_seconds,
+        recent_events=[
+            DownloadEventResponse(
+                timestamp=e.timestamp,
+                phase=e.phase,
+                message=e.message,
+                details=e.details,
+            )
+            for e in snap.recent_events
+        ],
+    )
+
+
 @router.post(
     "/api/datasets/download",
-    response_model=ProviderDownloadResponse,
-    status_code=status.HTTP_201_CREATED,
-    tags=["datasets"],
+    response_model=DownloadStartResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["downloads"],
 )
-def download_dataset(
-    request: ProviderDownloadRequest,
-    market_store: MarketDataStore = Depends(get_market_store),
-    credentials: ProviderCredentials = Depends(get_provider_credentials),
-    provider_fetch_json: JsonFetcher | None = Depends(get_provider_fetch_json),
-) -> ProviderDownloadResponse | JSONResponse:
-    try:
-        versions = download_provider(
-            market_store,
-            request.to_spec(),
-            credentials=credentials,
-            fetch_json=provider_fetch_json,
-        )
-    except ProviderDownloadError as error:
-        return JSONResponse(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            content={"code": "provider_error", "message": str(error), "details": {}},
-        )
-    except ValueError as error:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"code": "import_error", "message": str(error), "details": {}},
-        )
-    return ProviderDownloadResponse(
-        dataset_version_id=versions[0].id,
-        dataset_version_ids=[version.id for version in versions],
+@router.post(
+    "/api/downloads",
+    response_model=DownloadStartResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["downloads"],
+)
+def start_download(
+    request: CompositeDownloadRequest,
+    service: MarketDataDownloadService = Depends(get_download_service),
+) -> DownloadStartResponse:
+    spec = request.to_spec()
+    download_id = service.start(spec)
+    snap = service.get(download_id)
+    return DownloadStartResponse(
+        download_id=download_id,
+        status_url=f"/api/downloads/{download_id}",
+        snapshot=_snapshot_response(snap),
     )
+
+
+@router.get(
+    "/api/downloads/latest",
+    response_model=DownloadSnapshotResponse,
+    tags=["downloads"],
+)
+def get_latest_download(
+    service: MarketDataDownloadService = Depends(get_download_service),
+) -> DownloadSnapshotResponse:
+    snap = service.get_latest()
+    return _snapshot_response(snap)
+
+
+@router.get(
+    "/api/downloads/{download_id}",
+    response_model=DownloadSnapshotResponse,
+    tags=["downloads"],
+)
+def get_download_status(
+    download_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
+    service: MarketDataDownloadService = Depends(get_download_service),
+) -> DownloadSnapshotResponse:
+    snap = service.get(download_id)
+    return _snapshot_response(snap)
+
+
+@router.post(
+    "/api/downloads/{download_id}/cancel",
+    response_model=DownloadSnapshotResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["downloads"],
+)
+def cancel_download(
+    download_id: str = FastAPIPath(pattern=r"^[a-zA-Z0-9_-]{1,64}$"),
+    service: MarketDataDownloadService = Depends(get_download_service),
+) -> DownloadSnapshotResponse:
+    snap = service.cancel(download_id)
+    return _snapshot_response(snap)
+
