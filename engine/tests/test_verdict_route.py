@@ -88,9 +88,12 @@ def test_post_verdict_success(test_client: TestClient) -> None:
     assert "overall_passed" in data
     assert "headline_verdict" in data
     assert "gates" in data
-    assert len(data["gates"]) == 1
-    assert data["gates"][0]["gate_number"] == 1
+    assert len(data["gates"]) == 4
+    assert [g["gate_number"] for g in data["gates"]] == [1, 3, 4, 5]
     assert data["gates"][0]["name"] == "Benchmark Hurdle"
+    assert data["gates"][1]["name"] == "Sample Size"
+    assert data["gates"][2]["name"] == "Probabilistic Sharpe Ratio"
+    assert data["gates"][3]["name"] == "Random Timing Luck"
 
     assert "in_sample_metrics" in data
     assert "out_of_sample_metrics" in data
