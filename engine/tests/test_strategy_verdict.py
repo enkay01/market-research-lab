@@ -11,7 +11,6 @@ from market_research_lab.market_data import DailyBar
 from market_research_lab.strategy_verdict import (
     MonteCarloOptions,
     MonteCarloSimulationInput,
-    PartitionMetrics,
     PsrMomentsInput,
     StrategyVerdictResult,
     StrategyVerdictSpecification,

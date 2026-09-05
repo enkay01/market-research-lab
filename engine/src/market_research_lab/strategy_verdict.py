@@ -879,3 +879,4 @@ def evaluate_strategy_verdict(
         friction_ladder=tuple(friction_results),
     )
 
+
