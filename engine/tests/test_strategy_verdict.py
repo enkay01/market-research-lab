@@ -7,7 +7,12 @@ from datetime import date, timedelta
 
 import pytest
 
-from market_research_lab.backtest import BacktestError, ExecutionModelAssumptions
+from market_research_lab.backtest import (
+    BacktestError,
+    BacktestSpecification,
+    ExecutionModelAssumptions,
+    run_backtest,
+)
 from market_research_lab.market_data import DailyBar
 from market_research_lab.strategy_verdict import (
     FrictionTier,
@@ -227,3 +232,65 @@ def test_strategy_verdict_full_execution_fail() -> None:
     assert result.gates[0].verdict_note == "Loses to benchmark after costs"
     assert result.rejection_reason == "Loses to benchmark after costs"
     assert "Loses to benchmark after costs" in result.headline_verdict
+
+def test_friction_ladder_reports_realized_costs_for_scaled_short_replays() -> None:
+    """Verify each ladder row matches an independent replay, including borrow overrides."""
+    dates = _make_dates(20)
+    bars = [
+        _make_bar(d, security_id="AAPL", open_price=20.0 - i * 0.5, close_price=20.0 - i * 0.5)
+        for i, d in enumerate(dates)
+    ]
+    bars.extend(_make_bar(d, security_id="SPY", open_price=100.0, close_price=100.0) for d in dates)
+    execution = ExecutionModelAssumptions(
+        commission_rate=0.001,
+        slippage_rate=0.0005,
+        borrow_fee_rate=0.25,
+        hard_to_borrow_rates={"AAPL": 1.0},
+        cash_interest_rate=0.04,
+    )
+    spec = StrategyVerdictSpecification(
+        strategy_name="long_short_moving_average",
+        universe=("AAPL",),
+        benchmark_security_id="SPY",
+        start_date=dates[0],
+        end_date=dates[-1],
+        starting_cash=100_000.0,
+        parameters={"fast_period": 2, "slow_period": 4},
+        execution=execution,
+    )
+
+    verdict = evaluate_strategy_verdict(spec, bars=bars)
+    assert len(verdict.friction_ladder) == 3
+    assert verdict.specification.execution.cash_interest_rate == 0.04
+
+    for multiplier, tier in enumerate(verdict.friction_ladder, start=1):
+        scaled_execution = replace(
+            execution,
+            commission_rate=execution.commission_rate * multiplier,
+            slippage_rate=execution.slippage_rate * multiplier,
+            borrow_fee_rate=execution.borrow_fee_rate * multiplier,
+            hard_to_borrow_rates={"AAPL": execution.hard_to_borrow_rates["AAPL"] * multiplier},
+        )
+        expected = run_backtest(
+            BacktestSpecification(
+                strategy_name=spec.strategy_name,
+                strategy_revision=spec.strategy_revision,
+                dataset_version_id=spec.dataset_version_id,
+                universe=spec.universe,
+                benchmark_security_id=spec.benchmark_security_id,
+                start_date=spec.start_date,
+                end_date=spec.end_date,
+                starting_cash=spec.starting_cash,
+                parameters=spec.parameters,
+                execution=scaled_execution,
+            ),
+            bars=bars,
+        )
+        costs = expected.manifest["costs"]
+        assert tier.commission_paid_usd == costs["total_commission"]
+        assert tier.slippage_drag_usd == costs["total_slippage"]
+        assert tier.borrow_paid_usd == costs["total_borrow_fees"]
+
+    assert verdict.friction_ladder[0].borrow_paid_usd > 0.0
+    assert verdict.friction_ladder[1].borrow_paid_usd > verdict.friction_ladder[0].borrow_paid_usd
+    assert verdict.friction_ladder[2].borrow_paid_usd > verdict.friction_ladder[1].borrow_paid_usd
