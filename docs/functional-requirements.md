@@ -48,6 +48,9 @@ Completion criterion: a Project can be created, receive a revised definition, ex
 | DATA-009 | Data lacking sufficient temporal provenance may support current research but must be rejected from affected historical Runs. |
 | DATA-010 | Raw prices, adjusted values, and corporate actions must remain distinguishable. |
 | DATA-011 | The Analyst must be able to delete an imported or downloaded Dataset Version. The application must remove its catalogue record and owned Parquet files, and must reject deletion while a Project Run references the Dataset Version. |
+| DATA-012 | The standard equity Backtest must accept daily-bar Dataset Versions only. The interface must hide incompatible Dataset Versions, and the application interface must reject them. |
+| DATA-013 | A broad-market daily download must show its acquisition shape, planned work count, and provider-paced minimum duration before it starts. Minute data must remain a separate intraday choice. |
+| DATA-014 | Completed daily provider responses may be reused from a local cache when their provider, request, and retrieval inputs match. Cancellation must preserve completed cache entries without publishing a partial Dataset Version. |
 
 Completion criterion: an imported or downloaded dataset can be inspected, versioned, queried as of a historical time, and rejected by a synthetic future-data test.
 
@@ -112,8 +115,13 @@ Completion criterion: a code-defined Indicator can be graphed and used by a Stra
 | BT-009 | A completed Backtest Run must produce trades, fills, positions, equity curve, drawdown curve, exposure, turnover, cost breakdown, warnings, and a manifest. |
 | BT-010 | Summary metrics must include total and annualized return, annualized volatility, Sharpe ratio, Sortino ratio, maximum drawdown, Calmar ratio, hit rate, turnover, gross/net exposure, and benchmark-relative return where applicable. |
 | BT-011 | Tests must cover future-data leakage, next-bar execution, fees, slippage, splits, dividends, shorts, borrow cost, leverage rejection, and deterministic replay using small synthetic datasets. |
+| BT-012 | A Strategy must declare whether it evaluates each Security independently or compares the eligible universe cross-sectionally. |
+| BT-013 | A cross-sectional Strategy must rank only Securities eligible at its decision time, use deterministic tie-breaking, and apply an explicit selection and weighting rule. |
+| BT-014 | A cross-sectional Backtest Run must record each candidate's score, rank, selected state, rationale, and resulting target weight at every evaluation time. |
+| BT-015 | A Universe Snapshot used by a historical Run must identify its effective date and source. Missing historical membership must be reported rather than replaced silently with current membership. |
+| BT-016 | Omitting a symbol filter must evaluate every eligible Security in the selected daily Dataset Version. |
 
-Completion criterion: the target Epic can reproducibly simulate the same long/short portfolio twice with identical ledger entries and can prove that future observations change no earlier decisions.
+Completion criterion: the target Epic can reproducibly simulate the same long/short portfolio twice with identical rankings and ledger entries, and can prove that future observations change no earlier decisions.
 
 ## Dashboards and reports
 

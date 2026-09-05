@@ -65,13 +65,18 @@ export function CreateStrategyView({ project }: CreateStrategyViewProps) {
           api.getStrategyTemplate(),
         ]);
 
-        setStrategies(stratList);
+        // SAFETY: stratList matches StrategyMetadata[] schema
+        setStrategies(stratList as StrategyMetadata[]);
         if (stratList.length > 0) {
           const initial = stratList[0];
           setSelectedStrategyName(initial.name);
           const defaults: Record<string, string | number | boolean> = {};
           for (const param of initial.parameters) {
-            defaults[param.name] = parseParamValue(param.default, param.param_type);
+            // SAFETY: Strategy parameter default is JSON primitive or null
+            defaults[param.name] = parseParamValue(
+              param.default as string | number | boolean | null | undefined,
+              param.param_type,
+            );
           }
           setParameters(defaults);
         }
@@ -103,7 +108,11 @@ export function CreateStrategyView({ project }: CreateStrategyViewProps) {
     if (strat) {
       const defaults: Record<string, string | number | boolean> = {};
       for (const param of strat.parameters) {
-        defaults[param.name] = parseParamValue(param.default, param.param_type);
+        // SAFETY: Strategy parameter default is JSON primitive or null
+        defaults[param.name] = parseParamValue(
+          param.default as string | number | boolean | null | undefined,
+          param.param_type,
+        );
       }
       setParameters(defaults);
     }
@@ -125,6 +134,7 @@ export function CreateStrategyView({ project }: CreateStrategyViewProps) {
         dataset_version_id: selectedDatasetId,
         symbol: targetSymbol,
         parameters,
+        price_field: "close",
       });
       setEvaluationResult(result);
       setStatusMessage({
@@ -157,6 +167,7 @@ export function CreateStrategyView({ project }: CreateStrategyViewProps) {
         dataset_version_id: selectedDatasetId,
         symbol: targetSymbol,
         parameters,
+        price_field: "close",
       });
       setStatusMessage({
         text: `Strategy '${selectedStrategy?.display_name}' saved to project '${project.name}'.`,
@@ -310,7 +321,7 @@ export function CreateStrategyView({ project }: CreateStrategyViewProps) {
                 {evaluationResult && (
                   <Card style={{ padding: "20px" }}>
                     <VStack gap={3}>
-                      <HStack justify="space-between" align="center">
+                      <HStack justify="between" align="center">
                         <Text weight="bold" size="lg">Evaluation Results &amp; Target Allocations</Text>
                         <Badge
                           label={`${evaluationResult.targets.length} Target(s)`}
@@ -357,7 +368,7 @@ export function CreateStrategyView({ project }: CreateStrategyViewProps) {
 
                 <Card style={{ padding: "20px" }}>
                   <VStack gap={3}>
-                    <HStack justify="space-between" align="center">
+                    <HStack justify="between" align="center">
                       <Text weight="bold" size="lg">Add a new Strategy</Text>
                       <Button
                         label={copied ? "Copied!" : "Copy Python Template"}

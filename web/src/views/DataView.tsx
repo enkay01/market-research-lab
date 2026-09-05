@@ -110,6 +110,8 @@ export function DataView() {
             snap.state === "cancelled"
           ) {
             localStorage.removeItem(ACTIVE_DOWNLOAD_STORAGE_KEY);
+          } else {
+            setActiveDownloadId(savedId);
           }
         })
         .catch(() => {
@@ -184,6 +186,22 @@ export function DataView() {
     try {
       const snap = await api.cancelDownload(activeSnapshot.download_id);
       setActiveSnapshot(snap);
+    } catch {
+      // If cancellation call fails (e.g. 409 already finished), refresh current status immediately
+      try {
+        const currentSnap = await api.getDownloadStatus(activeSnapshot.download_id);
+        setActiveSnapshot(currentSnap);
+        if (
+          currentSnap.state === "succeeded" ||
+          currentSnap.state === "failed" ||
+          currentSnap.state === "cancelled"
+        ) {
+          localStorage.removeItem(ACTIVE_DOWNLOAD_STORAGE_KEY);
+          setActiveDownloadId(null);
+        }
+      } catch {
+        // ignore secondary error
+      }
     } finally {
       setIsCancellingDownload(false);
     }
@@ -239,11 +257,11 @@ export function DataView() {
           <LayoutContent padding={0} isScrollable>
             {/* Background Download Status Notification */}
             {isDownloadRunning && activeSnapshot && (
-              <div
+              <VStack
                 style={{
                   padding: "10px 16px",
-                  backgroundColor: "rgba(59, 130, 246, 0.1)",
-                  borderBottom: "1px solid rgba(59, 130, 246, 0.25)",
+                  backgroundColor: "var(--color-background-muted)",
+                  borderBottom: "1px solid var(--color-border)",
                 }}
               >
                 <HStack justify="between" align="center">
@@ -252,8 +270,8 @@ export function DataView() {
                     <Text style={{ fontWeight: 600 }}>
                       Downloading {activeSnapshot.security_list_id ?? "Composite"}:
                     </Text>
-                    <Badge label={activeSnapshot.phase} variant="blue" />
-                    <Text type="caption">
+                    <Token label={activeSnapshot.phase} color="blue" />
+                    <Text type="supporting">
                       ({activeSnapshot.completed_requests}/{activeSnapshot.total_requests || "?"} reqs)
                     </Text>
                     {activeSnapshot.active_operation && (
@@ -278,7 +296,7 @@ export function DataView() {
                     onClick={() => setIsDownloadOpen(true)}
                   />
                 </HStack>
-              </div>
+              </VStack>
             )}
 
             {error && (
@@ -329,9 +347,14 @@ export function DataView() {
                   {datasetVersions.map((version) => (
                     <TableRow
                       key={version.id}
-                      isSelected={selectedVersionId === version.id}
                       onClick={() => void selectVersion(version.id)}
-                      style={{ cursor: "pointer" }}
+                      style={{
+                        cursor: "pointer",
+                        backgroundColor:
+                          selectedVersionId === version.id
+                            ? "var(--color-background-muted)"
+                            : undefined,
+                      }}
                     >
                       <TableCell>
                         <Text style={{ fontFamily: "var(--font-mono, monospace)", fontSize: "12px" }}>
@@ -382,7 +405,7 @@ export function DataView() {
             )}
           </LayoutContent>
         }
-        panel={
+        end={
           <LayoutPanel width={400} isScrollable>
             {isInspectorLoading ? (
               <VStack align="center" justify="center" style={{ height: "200px" }}>
@@ -393,28 +416,72 @@ export function DataView() {
                 <Heading level={3}>Dataset Version Inspector</Heading>
                 <VStack gap={2}>
                   <HStack justify="between">
-                    <Text type="caption">ID</Text>
+                    <Text type="supporting">ID</Text>
                     <Text style={{ fontFamily: "var(--font-mono, monospace)", fontSize: "12px" }}>
                       {selectedCoverage.id}
                     </Text>
                   </HStack>
                   <HStack justify="between">
-                    <Text type="caption">Source</Text>
-                    <Badge label={selectedCoverage.source} variant="neutral" />
+                    <Text type="supporting">Source</Text>
+                    <Token label={selectedCoverage.source} />
                   </HStack>
                   <HStack justify="between">
-                    <Text type="caption">Type</Text>
+                    <Text type="supporting">Type</Text>
                     <Token label={selectedCoverage.dataset_type || "daily_bars"} />
                   </HStack>
+                  {(selectedCoverage.coverage_start || selectedCoverage.coverage_end) && (
+                    <HStack justify="between">
+                      <Text type="supporting">Coverage Range</Text>
+                      <Text type="supporting">
+                        {selectedCoverage.coverage_start ?? "—"} to {selectedCoverage.coverage_end ?? "—"}
+                      </Text>
+                    </HStack>
+                  )}
                   <HStack justify="between">
-                    <Text type="caption">Row Count</Text>
+                    <Text type="supporting">Temporal Provenance</Text>
+                    <Text type="supporting">
+                      {selectedCoverage.has_temporal_provenance ? "Complete" : "Incomplete"}
+                    </Text>
+                  </HStack>
+                  <HStack justify="between">
+                    <Text type="supporting">Row Count</Text>
                     <Text>{selectedCoverage.row_count.toLocaleString()}</Text>
                   </HStack>
                   <HStack justify="between">
-                    <Text type="caption">Rejected Rows</Text>
+                    <Text type="supporting">Rejected Rows</Text>
                     <Text>{selectedCoverage.rejected_count}</Text>
                   </HStack>
                 </VStack>
+
+                {/* DATA-007: Missing Fields */}
+                {selectedCoverage.missing_fields &&
+                  Object.keys(selectedCoverage.missing_fields).length > 0 && (
+                  <VStack gap={2}>
+                    <Heading level={4}>Missing Fields</Heading>
+                    <HStack gap={1} style={{ flexWrap: "wrap" }}>
+                      {Object.entries(selectedCoverage.missing_fields).map(([field, count]) => (
+                        <Token key={field} label={`${field} (${count})`} color="yellow" />
+                      ))}
+                    </HStack>
+                  </VStack>
+                )}
+
+                {/* DATA-007: Validation Warnings */}
+                {selectedCoverage.warnings && selectedCoverage.warnings.length > 0 && (
+                  <VStack gap={2}>
+                    <Heading level={4}>Validation Warnings</Heading>
+                    <VStack gap={2}>
+                      {selectedCoverage.warnings.map((warning, idx) => (
+                        <Banner
+                          key={idx}
+                          status="warning"
+                          title={`Warning ${idx + 1}`}
+                          description={warning}
+                        />
+                      ))}
+                    </VStack>
+                  </VStack>
+                )}
 
                 {selectedCoverage.parts && selectedCoverage.parts.length > 0 && (
                   <VStack gap={2}>
@@ -425,19 +492,35 @@ export function DataView() {
                         gap={1}
                         style={{
                           padding: "8px",
-                          borderRadius: "4px",
-                          backgroundColor: "rgba(255, 255, 255, 0.03)",
-                          border: "1px solid rgba(255, 255, 255, 0.08)",
+                          borderRadius: "var(--radius-sm, 4px)",
+                          backgroundColor: "var(--color-background-muted)",
+                          border: "1px solid var(--color-border)",
                         }}
                       >
                         <HStack justify="between">
-                          <Badge label={part.source} variant="neutral" />
+                          <Token label={part.source} />
                           <Token label={part.dataset_type} />
                         </HStack>
                         <HStack justify="between">
-                          <Text type="caption">Rows</Text>
-                          <Text type="caption">{part.row_count.toLocaleString()}</Text>
+                          <Text type="supporting">Rows</Text>
+                          <Text type="supporting">{part.row_count.toLocaleString()}</Text>
                         </HStack>
+                        {(part.coverage_start || part.coverage_end) && (
+                          <HStack justify="between">
+                            <Text type="supporting">Coverage</Text>
+                            <Text type="supporting">
+                              {part.coverage_start ?? "—"} to {part.coverage_end ?? "—"}
+                            </Text>
+                          </HStack>
+                        )}
+                        {part.warnings && part.warnings.length > 0 && (
+                          <VStack gap={1}>
+                            <Text type="supporting" style={{ fontWeight: 600 }}>Part Warnings:</Text>
+                            {part.warnings.map((w, wIdx) => (
+                              <Text key={wIdx} type="supporting" style={{ fontSize: "11px" }}>• {w}</Text>
+                            ))}
+                          </VStack>
+                        )}
                       </VStack>
                     ))}
                   </VStack>
@@ -449,7 +532,7 @@ export function DataView() {
                     <Text type="supporting">No preview rows available.</Text>
                   ) : (
                     <div style={{ overflowX: "auto" }}>
-                      <Table isCompact>
+                      <Table>
                         <TableHeader>
                           <TableRow>
                             {previewCols.map((col) => (

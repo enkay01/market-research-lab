@@ -3,18 +3,25 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Sequence
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import Literal, Protocol, TypeVar
 from uuid import uuid4
 
 import pandas as pd
 
-from .download_jobs import CancellationToken, DownloadPhase, ProgressRecorder
+from .download_jobs import (
+    CancellationToken,
+    DatasetDownloadSpec,
+    DownloadPhase,
+    ProgressRecorder,
+    ProviderDownloadChoice,
+)
 from .json_types import JsonValue
 from .market_data import (
     _INGESTION_VALIDATORS,
@@ -51,29 +58,11 @@ from .providers import (
     fetch_sec_edgar_cik,
     fetch_tiingo_symbol,
 )
-from .request_control import ControlledJsonFetcher, RateGate
+from .request_control import ControlledJsonFetcher, RateGate, RequestResultCache
 from .security_lists import DatedSecurityList, get_security_list
 
 T = TypeVar("T")
 R = TypeVar("R")
-
-
-@dataclass(frozen=True)
-class ProviderDownloadChoice:
-    """Requested provider and data types within a composite download."""
-
-    provider: Literal["tiingo", "massive", "sec_edgar", "alpaca"]
-    data_types: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class DatasetDownloadSpec:
-    """Frozen parameter object for one composite dataset download operation."""
-
-    security_list_id: str
-    start_date: date
-    end_date: date
-    downloads: tuple[ProviderDownloadChoice, ...]
 
 
 @dataclass(frozen=True)
@@ -122,6 +111,40 @@ class CompositeDownloadContext:
     wait: Callable[[float], None] = time.sleep
     recorder: ProgressRecorder | None = None
     token: CancellationToken | None = None
+    cache: RequestResultCache | None = None
+
+
+@dataclass(frozen=True)
+class DownloadPlanEstimate:
+    logical_units: int
+    minimum_paced_seconds: float
+    acquisition_shape: str
+    note: str = "Pagination may add HTTP requests."
+
+
+def estimate_download_plan(spec: DatasetDownloadSpec, security_count: int) -> DownloadPlanEstimate:
+    """Estimate logical work and minimum provider pacing before a download starts."""
+    weekdays = len(_count_weekdays(spec.start_date, spec.end_date))
+    units = 0
+    massive_units = 0
+    shapes: list[str] = []
+    for choice in spec.downloads:
+        for data_type in choice.data_types or ("daily_bars",):
+            if (
+                choice.provider == "massive"
+                and data_type in ("daily_bars", "stocks_daily")
+                and 0 < weekdays < security_count
+            ):
+                planned_units = weekdays
+                shapes.append("Massive grouped daily by date")
+            else:
+                planned_units = security_count
+                shapes.append(f"{choice.provider} per-security range")
+            units += planned_units
+            if choice.provider == "massive":
+                massive_units += planned_units
+    minimum_seconds = max(0, massive_units - 1) * 12.25
+    return DownloadPlanEstimate(units, minimum_seconds, "; ".join(dict.fromkeys(shapes)))
 
 
 @dataclass(frozen=True)
@@ -133,28 +156,76 @@ class _RawPartData:
     retrieval_time: str
 
 
+@dataclass(frozen=True)
+class DatasetPublishContext:
+    """Parameter object grouping inputs for dataset staging and publishing."""
+
+    store: MarketDataStore
+    spec: DatasetDownloadSpec
+    security_list: DatedSecurityList
+    version_id: str
+    retrieval_time: str
+    all_parts_data: list[_RawPartData]
+    all_securities: list[Security]
+    recorder: ProgressRecorder | None = None
+    is_cancelled: Callable[[], bool] | None = None
+    begin_publication: Callable[[], bool] | None = None
+
+
 def map_bounded(
     fn: Callable[[T], R],
     items: Sequence[T],
-    max_workers: int = 16,
+    max_workers: int = 4,
     is_cancelled: Callable[[], bool] | None = None,
 ) -> list[tuple[T, R]]:
-    """Execute a function across items with bounded worker concurrency."""
+    """Execute a function across items with bounded worker concurrency and bounded replenishment."""
     if not items:
         return []
 
     results: list[tuple[T, R]] = []
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_item = {executor.submit(fn, item): item for item in items}
-        for future in as_completed(future_to_item):
+    item_iter = iter(items)
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    cancelled = False
+    try:
+        in_flight: dict[Future[R], T] = {}
+
+        for item in item_iter:
             if is_cancelled and is_cancelled():
-                for f in future_to_item:
-                    f.cancel()
+                cancelled = True
                 raise TimeoutError("Download cancelled.")
-            item = future_to_item[future]
-            res = future.result()
-            results.append((item, res))
-    return results
+            future = executor.submit(fn, item)
+            in_flight[future] = item
+            if len(in_flight) >= max_workers:
+                break
+
+        while in_flight:
+            if is_cancelled and is_cancelled():
+                for f in in_flight:
+                    f.cancel()
+                cancelled = True
+                raise TimeoutError("Download cancelled.")
+
+            done, _ = wait(in_flight.keys(), return_when=FIRST_COMPLETED)
+            for completed_future in done:
+                item = in_flight.pop(completed_future)
+                res = completed_future.result()
+                results.append((item, res))
+
+                try:
+                    next_item = next(item_iter)
+                    if is_cancelled and is_cancelled():
+                        for f in in_flight:
+                            f.cancel()
+                        cancelled = True
+                        raise TimeoutError("Download cancelled.")
+                    new_future = executor.submit(fn, next_item)
+                    in_flight[new_future] = next_item
+                except StopIteration:
+                    pass
+
+        return results
+    finally:
+        executor.shutdown(wait=not cancelled, cancel_futures=cancelled)
 
 
 def _count_weekdays(start_date: date, end_date: date) -> list[date]:
@@ -167,178 +238,135 @@ def _count_weekdays(start_date: date, end_date: date) -> list[date]:
     return days
 
 
-def _plan_work_items(
-    spec: DatasetDownloadSpec,
-    security_list: DatedSecurityList,
-    recorder: ProgressRecorder | None = None,
-) -> list[ProviderWorkItem]:
-    """Construct all ordered ProviderWorkItem units for the composite request."""
-    work_items: list[ProviderWorkItem] = []
-    weekdays = _count_weekdays(spec.start_date, spec.end_date)
-    d_count = len(weekdays)
-    s_count = len(security_list.members)
-    all_symbols = tuple(m.symbol for m in security_list.members)
+class ProviderDriver(Protocol):
+    """Driver protocol planning and executing work items for one provider."""
 
-    for p_idx, choice in enumerate(spec.downloads):
-        provider = choice.provider
-        data_types = choice.data_types or (
-            ("daily_bars",) if provider in ("tiingo", "massive") else ("fundamentals",)
-        )
+    def plan(
+        self,
+        p_idx: int,
+        choice: ProviderDownloadChoice,
+        security_list: DatedSecurityList,
+        spec: DatasetDownloadSpec,
+        recorder: ProgressRecorder | None = None,
+    ) -> list[ProviderWorkItem]: ...
 
-        if provider == "tiingo":
-            for s_idx, member in enumerate(security_list.members):
-                work_items.append(
-                    ProviderWorkItem(
-                        ordinal=WorkItemOrdinal(p_idx, s_idx, 0, 0),
-                        provider="tiingo",
-                        dataset_type=DATASET_TYPE_DAILY_BARS,
-                        symbol=member.symbol,
-                        start_date=spec.start_date,
-                        end_date=spec.end_date,
-                    )
-                )
-        elif provider == "sec_edgar":
-            for s_idx, member in enumerate(security_list.members):
-                if member.cik:
-                    work_items.append(
-                        ProviderWorkItem(
-                            ordinal=WorkItemOrdinal(p_idx, s_idx, 0, 0),
-                            provider="sec_edgar",
-                            dataset_type=DATASET_TYPE_FUNDAMENTALS,
-                            symbol=member.symbol,
-                            cik=member.cik,
-                            start_date=spec.start_date,
-                            end_date=spec.end_date,
-                        )
-                    )
-        elif provider == "alpaca":
-            for s_idx, member in enumerate(security_list.members):
-                work_items.append(
-                    ProviderWorkItem(
-                        ordinal=WorkItemOrdinal(p_idx, s_idx, 0, 0),
-                        provider="alpaca",
-                        dataset_type=DATASET_TYPE_OPTIONS,
-                        symbol=member.symbol,
-                        start_date=spec.start_date,
-                        end_date=spec.end_date,
-                    )
-                )
-        elif provider == "massive":
-            for dt_idx, dt in enumerate(data_types):
-                # Massive Daily Request Planning (D < S guard)
-                # Static estimate: grouped daily ~500 KB per day, per-ticker ~15 KB per ticker
-                use_grouped_daily = (
-                    dt in ("daily_bars", "stocks_daily")
-                    and d_count < s_count
-                    and (d_count * 500_000 <= 50_000_000)  # Max 50 MB payload threshold
-                )
-
-                if recorder:
-                    shape_desc = "grouped_daily" if use_grouped_daily else "per_ticker"
-                    est_reqs = d_count if use_grouped_daily else s_count
-                    est_bytes = (
-                        d_count * 500_000 if use_grouped_daily else s_count * 15_000
-                    )
-                    recorder.record_progress(
-                        message=(
-                            f"Massive planner selected {shape_desc} for {dt} "
-                            f"(D={d_count}, S={s_count}, est_requests={est_reqs}, "
-                            f"est_bytes={est_bytes})."
-                        ),
-                        details={
-                            "strategy": shape_desc,
-                            "estimated_requests": est_reqs,
-                            "estimated_bytes": est_bytes,
-                        },
-                    )
-
-                if use_grouped_daily:
-                    for sub_idx, day in enumerate(weekdays):
-                        work_items.append(
-                            ProviderWorkItem(
-                                ordinal=WorkItemOrdinal(p_idx, 0, dt_idx, sub_idx),
-                                provider="massive",
-                                dataset_type=DATASET_TYPE_DAILY_BARS,
-                                target_date=day,
-                                is_grouped_daily=True,
-                                selected_symbols=all_symbols,
-                            )
-                        )
-                else:
-                    for s_idx, member in enumerate(security_list.members):
-                        work_items.append(
-                            ProviderWorkItem(
-                                ordinal=WorkItemOrdinal(p_idx, s_idx, dt_idx, 0),
-                                provider="massive",
-                                dataset_type=dt,
-                                symbol=member.symbol,
-                                start_date=spec.start_date,
-                                end_date=spec.end_date,
-                            )
-                        )
-
-    return work_items
+    def execute(
+        self,
+        item: ProviderWorkItem,
+        credentials: ProviderCredentials,
+        fetchers: dict[str, ControlledJsonFetcher],
+        retrieval_time: str,
+    ) -> ProviderDownload: ...
 
 
-def _create_provider_gates(
-    credentials: ProviderCredentials,
-    wait_fn: Callable[[float], None],
-) -> dict[str, RateGate]:
-    """Build rate limiter gates per provider policy."""
-    massive_cred = credentials.massive
-    is_massive_paid = (
-        massive_cred.stocks_plan_profile == "paid"
-        or massive_cred.options_plan_profile == "paid"
-    )
+class TiingoDriver:
+    def plan(
+        self,
+        p_idx: int,
+        choice: ProviderDownloadChoice,
+        security_list: DatedSecurityList,
+        spec: DatasetDownloadSpec,
+        recorder: ProgressRecorder | None = None,
+    ) -> list[ProviderWorkItem]:
+        return [
+            ProviderWorkItem(
+                ordinal=WorkItemOrdinal(p_idx, s_idx, 0, 0),
+                provider="tiingo",
+                dataset_type=DATASET_TYPE_DAILY_BARS,
+                symbol=member.symbol,
+                start_date=spec.start_date,
+                end_date=spec.end_date,
+            )
+            for s_idx, member in enumerate(security_list.members)
+        ]
 
-    interval_sec = (
-        0.01 if is_massive_paid else max(12.0, massive_cred.request_interval_seconds)
-    )
-    massive_gate = RateGate(
-        min_interval_seconds=interval_sec,
-        max_requests_per_window=None if is_massive_paid else 5,
-        window_seconds=60.0,
-        sleep=wait_fn,
-    )
-    tiingo_gate = RateGate(min_interval_seconds=0.0, sleep=wait_fn)
-    sec_gate = RateGate(min_interval_seconds=0.1, sleep=wait_fn)  # SEC 10 req/s limit
-    alpaca_gate = RateGate(min_interval_seconds=0.0, sleep=wait_fn)
-
-    return {
-        "massive": massive_gate,
-        "tiingo": tiingo_gate,
-        "sec_edgar": sec_gate,
-        "alpaca": alpaca_gate,
-    }
-
-
-def _execute_work_item(
-    item: ProviderWorkItem,
-    credentials: ProviderCredentials,
-    fetchers: dict[str, ControlledJsonFetcher],
-    retrieval_time: str,
-) -> ProviderDownload:
-    """Execute exactly one work item using the appropriate provider adapter."""
-    fetcher = fetchers[item.provider]
-    if item.provider == "tiingo":
+    def execute(
+        self,
+        item: ProviderWorkItem,
+        credentials: ProviderCredentials,
+        fetchers: dict[str, ControlledJsonFetcher],
+        retrieval_time: str,
+    ) -> ProviderDownload:
         return fetch_tiingo_symbol(
             item.symbol,
             start_date=item.start_date,
             end_date=item.end_date,
             token=credentials.tiingo_api_token,
             retrieval_time=retrieval_time,
-            fetch_json=fetcher,
+            fetch_json=fetchers["tiingo"],
         )
-    if item.provider == "sec_edgar":
+
+
+class SecEdgarDriver:
+    def plan(
+        self,
+        p_idx: int,
+        choice: ProviderDownloadChoice,
+        security_list: DatedSecurityList,
+        spec: DatasetDownloadSpec,
+        recorder: ProgressRecorder | None = None,
+    ) -> list[ProviderWorkItem]:
+        items: list[ProviderWorkItem] = []
+        for s_idx, member in enumerate(security_list.members):
+            if member.cik:
+                items.append(
+                    ProviderWorkItem(
+                        ordinal=WorkItemOrdinal(p_idx, s_idx, 0, 0),
+                        provider="sec_edgar",
+                        dataset_type=DATASET_TYPE_FUNDAMENTALS,
+                        symbol=member.symbol,
+                        cik=member.cik,
+                        start_date=spec.start_date,
+                        end_date=spec.end_date,
+                    )
+                )
+        return items
+
+    def execute(
+        self,
+        item: ProviderWorkItem,
+        credentials: ProviderCredentials,
+        fetchers: dict[str, ControlledJsonFetcher],
+        retrieval_time: str,
+    ) -> ProviderDownload:
         return fetch_sec_edgar_cik(
             item.cik,
             start_date=item.start_date,
             end_date=item.end_date,
             user_agent=credentials.sec_edgar_user_agent,
             retrieval_time=retrieval_time,
-            fetch_json=fetcher,
+            fetch_json=fetchers["sec_edgar"],
         )
-    if item.provider == "alpaca":
+
+
+class AlpacaDriver:
+    def plan(
+        self,
+        p_idx: int,
+        choice: ProviderDownloadChoice,
+        security_list: DatedSecurityList,
+        spec: DatasetDownloadSpec,
+        recorder: ProgressRecorder | None = None,
+    ) -> list[ProviderWorkItem]:
+        return [
+            ProviderWorkItem(
+                ordinal=WorkItemOrdinal(p_idx, s_idx, 0, 0),
+                provider="alpaca",
+                dataset_type=DATASET_TYPE_OPTIONS,
+                symbol=member.symbol,
+                start_date=spec.start_date,
+                end_date=spec.end_date,
+            )
+            for s_idx, member in enumerate(security_list.members)
+        ]
+
+    def execute(
+        self,
+        item: ProviderWorkItem,
+        credentials: ProviderCredentials,
+        fetchers: dict[str, ControlledJsonFetcher],
+        retrieval_time: str,
+    ) -> ProviderDownload:
         return download_alpaca(
             AlpacaDownloadSpec(
                 symbol=item.symbol,
@@ -347,17 +375,84 @@ def _execute_work_item(
             ),
             credentials=credentials.alpaca,
             retrieval_time=retrieval_time,
-            fetch_json=fetcher,
+            fetch_json=fetchers["alpaca"],
         )
-    if item.provider == "massive":
+
+
+class MassiveDriver:
+    def plan(
+        self,
+        p_idx: int,
+        choice: ProviderDownloadChoice,
+        security_list: DatedSecurityList,
+        spec: DatasetDownloadSpec,
+        recorder: ProgressRecorder | None = None,
+    ) -> list[ProviderWorkItem]:
+        items: list[ProviderWorkItem] = []
+        weekdays = _count_weekdays(spec.start_date, spec.end_date)
+        d_count = len(weekdays)
+        s_count = len(security_list.members)
+        all_symbols = tuple(m.symbol for m in security_list.members)
+        data_types = choice.data_types or ("daily_bars",)
+
+        for dt_idx, dt in enumerate(data_types):
+            use_grouped_daily = (
+                dt in ("daily_bars", "stocks_daily")
+                and d_count < s_count
+                and d_count > 0
+            )
+
+            if use_grouped_daily:
+                if recorder:
+                    saved_requests = s_count - d_count
+                    recorder.record_progress(
+                        message=(
+                            f"Massive planner selected Grouped Daily: {d_count} date requests "
+                            f"instead of {s_count} per-security range requests "
+                            f"(saving {saved_requests} requests)."
+                        )
+                    )
+                for day_idx, day in enumerate(weekdays):
+                    items.append(
+                        ProviderWorkItem(
+                            ordinal=WorkItemOrdinal(p_idx, 0, dt_idx, day_idx),
+                            provider="massive",
+                            dataset_type="stocks_daily_grouped",
+                            target_date=day,
+                            is_grouped_daily=True,
+                            selected_symbols=all_symbols,
+                        )
+                    )
+            else:
+                for s_idx, member in enumerate(security_list.members):
+                    items.append(
+                        ProviderWorkItem(
+                            ordinal=WorkItemOrdinal(p_idx, s_idx, dt_idx, 0),
+                            provider="massive",
+                            dataset_type=dt,
+                            symbol=member.symbol,
+                            start_date=spec.start_date,
+                            end_date=spec.end_date,
+                        )
+                    )
+        return items
+
+    def execute(
+        self,
+        item: ProviderWorkItem,
+        credentials: ProviderCredentials,
+        fetchers: dict[str, ControlledJsonFetcher],
+        retrieval_time: str,
+    ) -> ProviderDownload:
         if item.is_grouped_daily and item.target_date:
             return fetch_massive_grouped_daily(
                 item.target_date,
-                selected_symbols=set(item.selected_symbols),
+                selected_symbols=item.selected_symbols,
                 credentials=credentials.massive,
                 retrieval_time=retrieval_time,
-                fetch_json=fetcher,
+                fetch_json=fetchers["massive_stocks"],
             )
+
         massive_type: Literal["stocks_daily", "stocks_minute", "options"] = (
             "stocks_minute"
             if item.dataset_type in ("minute_bars", DATASET_TYPE_MINUTE_BARS)
@@ -366,6 +461,11 @@ def _execute_work_item(
                 if item.dataset_type in ("options", DATASET_TYPE_OPTIONS)
                 else "stocks_daily"
             )
+        )
+        fetcher = (
+            fetchers["massive_options"]
+            if massive_type == "options"
+            else fetchers["massive_stocks"]
         )
         return download_massive(
             MassiveDownloadSpec(
@@ -379,7 +479,96 @@ def _execute_work_item(
             fetch_json=fetcher,
         )
 
-    raise ProviderDownloadError(f"Unsupported provider: {item.provider}")
+
+PROVIDER_DRIVERS: dict[str, ProviderDriver] = {
+    "tiingo": TiingoDriver(),
+    "sec_edgar": SecEdgarDriver(),
+    "alpaca": AlpacaDriver(),
+    "massive": MassiveDriver(),
+}
+
+
+def _plan_work_items(
+    spec: DatasetDownloadSpec,
+    security_list: DatedSecurityList,
+    recorder: ProgressRecorder | None = None,
+) -> list[ProviderWorkItem]:
+    """Construct all ordered ProviderWorkItem units for the composite request."""
+    work_items: list[ProviderWorkItem] = []
+    for p_idx, choice in enumerate(spec.downloads):
+        driver = PROVIDER_DRIVERS.get(choice.provider)
+        if driver is None:
+            raise ProviderDownloadError(f"Unsupported provider: {choice.provider}")
+        work_items.extend(driver.plan(p_idx, choice, security_list, spec, recorder))
+    return work_items
+
+
+def _create_provider_gates(
+    credentials: ProviderCredentials,
+    wait_fn: Callable[[float], None],
+    on_wait: Callable[[float], None] | None = None,
+) -> dict[str, RateGate]:
+    """Build rate limiter gates per provider policy."""
+    massive_cred = credentials.massive
+
+    # Massive Stocks Gate
+    if massive_cred.stocks_plan_profile == "paid":
+        massive_stocks_gate = RateGate(
+            min_interval_seconds=1.0 / 95.0,  # 95 req/s safety margin under 100/s
+            max_requests_per_window=None,
+            sleep=wait_fn,
+            on_wait=on_wait,
+        )
+    else:
+        massive_stocks_gate = RateGate(
+            min_interval_seconds=12.25,  # 12.25s safety margin for 5 req/min window
+            max_requests_per_window=5,
+            window_seconds=60.0,
+            sleep=wait_fn,
+            on_wait=on_wait,
+        )
+
+    # Massive Options Gate
+    if massive_cred.options_plan_profile == "paid":
+        massive_options_gate = RateGate(
+            min_interval_seconds=1.0 / 95.0,
+            max_requests_per_window=None,
+            sleep=wait_fn,
+            on_wait=on_wait,
+        )
+    else:
+        massive_options_gate = RateGate(
+            min_interval_seconds=12.25,
+            max_requests_per_window=5,
+            window_seconds=60.0,
+            sleep=wait_fn,
+            on_wait=on_wait,
+        )
+
+    tiingo_gate = RateGate(min_interval_seconds=0.0, sleep=wait_fn, on_wait=on_wait)
+    sec_gate = RateGate(min_interval_seconds=0.1, sleep=wait_fn, on_wait=on_wait)  # 10 req/s limit
+    alpaca_gate = RateGate(min_interval_seconds=0.0, sleep=wait_fn, on_wait=on_wait)
+
+    return {
+        "massive_stocks": massive_stocks_gate,
+        "massive_options": massive_options_gate,
+        "tiingo": tiingo_gate,
+        "sec_edgar": sec_gate,
+        "alpaca": alpaca_gate,
+    }
+
+
+def _execute_work_item(
+    item: ProviderWorkItem,
+    credentials: ProviderCredentials,
+    fetchers: dict[str, ControlledJsonFetcher],
+    retrieval_time: str,
+) -> ProviderDownload:
+    """Execute exactly one work item using the appropriate provider driver."""
+    driver = PROVIDER_DRIVERS.get(item.provider)
+    if driver is None:
+        raise ProviderDownloadError(f"Unsupported provider: {item.provider}")
+    return driver.execute(item, credentials, fetchers, retrieval_time)
 
 
 def _stage_part(
@@ -486,62 +675,51 @@ def _aggregate_download_results(
     return all_parts_data, all_securities
 
 
-def _stage_and_publish_dataset(
-    store: MarketDataStore,
-    spec: DatasetDownloadSpec,
-    security_list: DatedSecurityList,
-    version_id: str,
-    retrieval_time: str,
-    all_parts_data: list[_RawPartData],
-    all_securities: list[Security],
-    recorder: ProgressRecorder | None,
-    is_cancelled: Callable[[], bool] | None,
-) -> None:
+def _stage_and_publish_dataset(context: DatasetPublishContext) -> None:
     """Stage validated Parquet parts and atomically publish to MarketDataStore."""
-    if recorder:
-        recorder.transition_phase(
+    if context.recorder:
+        context.recorder.transition_phase(
             DownloadPhase.STAGING,
-            message=f"Staging {len(all_parts_data)} dataset parts.",
+            message=f"Staging {len(context.all_parts_data)} dataset parts.",
         )
 
     with tempfile.TemporaryDirectory() as temp_dir_str:
         temp_dir = Path(temp_dir_str)
-        staged_parts = [_stage_part(store, raw_part, temp_dir) for raw_part in all_parts_data]
+        staged_parts = [
+            _stage_part(context.store, raw_part, temp_dir)
+            for raw_part in context.all_parts_data
+        ]
 
-        if is_cancelled and is_cancelled():
+        if context.is_cancelled and context.is_cancelled():
             raise TimeoutError("Download was cancelled before publishing.")
 
-        if recorder:
-            recorder.transition_phase(
+        if context.begin_publication and not context.begin_publication():
+            raise TimeoutError("Download was cancelled before publishing.")
+        if context.recorder:
+            context.recorder.transition_phase(
                 DownloadPhase.PUBLISHING,
                 message="Publishing Composite Dataset Version to storage.",
             )
 
         req_payload = {
-            "security_list_id": spec.security_list_id,
-            "start_date": spec.start_date.isoformat(),
-            "end_date": spec.end_date.isoformat(),
+            "security_list_id": context.spec.security_list_id,
+            "start_date": context.spec.start_date.isoformat(),
+            "end_date": context.spec.end_date.isoformat(),
             "downloads": [
                 {"provider": c.provider, "data_types": list(c.data_types)}
-                for c in spec.downloads
+                for c in context.spec.downloads
             ],
         }
-        store.publish_composite(
+        context.store.publish_composite(
             CompositePublishPlan(
-                version_id=version_id,
-                retrieval_time=retrieval_time,
-                security_list_id=spec.security_list_id,
-                security_list_as_of_date=security_list.as_of_date,
+                version_id=context.version_id,
+                retrieval_time=context.retrieval_time,
+                security_list_id=context.security_list.id,
+                security_list_as_of_date=context.security_list.as_of_date,
                 request_payload=req_payload,
                 parts=staged_parts,
-                securities=all_securities,
+                securities=context.all_securities,
             )
-        )
-
-    if recorder:
-        recorder.finish_success(
-            dataset_version_id=version_id,
-            message="Composite dataset published successfully.",
         )
 
 
@@ -572,7 +750,7 @@ def download_composite(
     if recorder:
         recorder.record_progress(
             total_logical_units=total_units,
-            total_requests=total_units,
+            total_requests=0,
             completed_logical_units=0,
             completed_requests=0,
         )
@@ -583,18 +761,31 @@ def download_composite(
 
     # 2. Setup Controlled Fetchers with Provider Rate Gates
     base_fetch = context.fetch_json or _fetch_json
-    gates = _create_provider_gates(context.credentials, context.wait)
+    on_wait_cb = (
+        (lambda s: recorder.record_progress(rate_limit_wait_seconds=s))
+        if recorder
+        else None
+    )
+    gates = _create_provider_gates(context.credentials, context.wait, on_wait=on_wait_cb)
     completed_requests = 0
+    started_requests = 0
+    request_lock = threading.Lock()
 
     def on_req_start(url: str) -> None:
+        nonlocal started_requests
+        with request_lock:
+            started_requests += 1
+            observed_total = started_requests
         if recorder:
             recorder.record_progress(
+                total_requests=observed_total,
                 active_operation=f"Fetching {url[:60]}...",
             )
 
     def on_req_end(url: str, size_bytes: int) -> None:
         nonlocal completed_requests
-        completed_requests += 1
+        with request_lock:
+            completed_requests += 1
         if recorder:
             recorder.record_progress(
                 completed_requests=completed_requests,
@@ -608,32 +799,42 @@ def download_composite(
             is_cancelled=is_cancelled,
             on_request_start=on_req_start,
             on_request_end=on_req_end,
+            cache=context.cache,
         )
         for name, gate in gates.items()
     }
 
-    # 3. Concurrent execution with map_bounded
+    # 3. Execution Phase with bounded worker concurrency and progress streaming
     completed_units = 0
 
     def run_item(item: ProviderWorkItem) -> ProviderDownload:
         nonlocal completed_units
         if recorder:
+            item_desc = f"{item.provider} [{item.dataset_type}]"
+            if item.symbol:
+                item_desc += f" {item.symbol}"
+            elif item.target_date:
+                item_desc += f" {item.target_date.isoformat()}"
             recorder.record_progress(
                 active_provider=item.provider,
-                active_operation=f"Downloading {item.symbol or item.cik or item.target_date}",
+                active_operation=item_desc,
             )
-        res = _execute_work_item(item, context.credentials, fetchers, retrieval_time)
-        completed_units += 1
+
+        result = _execute_work_item(item, context.credentials, fetchers, retrieval_time)
+
+        with request_lock:
+            completed_units += 1
+            observed_completed_units = completed_units
         if recorder:
             recorder.record_progress(
-                completed_logical_units=completed_units,
+                completed_logical_units=observed_completed_units,
             )
-        return res
+        return result
 
     raw_results = map_bounded(
         run_item,
         work_items,
-        max_workers=16,
+        max_workers=4,
         is_cancelled=is_cancelled,
     )
 
@@ -652,7 +853,7 @@ def download_composite(
         raise ProviderDownloadError("Providers returned no records for the requested downloads.")
 
     # 5. Staging & Publishing Phase
-    _stage_and_publish_dataset(
+    pub_context = DatasetPublishContext(
         store=store,
         spec=spec,
         security_list=security_list,
@@ -662,7 +863,15 @@ def download_composite(
         all_securities=all_securities,
         recorder=recorder,
         is_cancelled=is_cancelled,
+        begin_publication=(token.begin_publication if token else None),
     )
+    _stage_and_publish_dataset(pub_context)
+
+    if recorder:
+        recorder.finish_success(
+            dataset_version_id=version_id,
+            message=f"Composite dataset version '{version_id}' successfully created.",
+        )
 
     return store.coverage(version_id)
 

@@ -7,6 +7,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from market_research_lab.api import ExecutionModelAssumptionsRequest, create_app
+from market_research_lab.downloads import download_provider
+from market_research_lab.market_data import MarketDataStore
+from market_research_lab.providers import ProviderCredentials, TiingoDownloadSpec
 
 
 def test_cash_interest_request_rejects_non_finite_values():
@@ -481,10 +484,12 @@ def test_dataset_catalogue_lists_file_and_provider_versions_in_one_view(tmp_path
     )
     assert file_res.status_code == 201
 
-    download_res = client.post(
-        "/api/datasets/download", json={"provider": "tiingo", "symbols": ["AAPL"]}
+    download_provider(
+        MarketDataStore(tmp_path),
+        TiingoDownloadSpec(symbols=("AAPL",)),
+        credentials=ProviderCredentials(tiingo_api_token="private-token"),
+        fetch_json=_tiingo_prices_fetch_json,
     )
-    assert download_res.status_code == 201
 
     catalogue = client.get("/api/datasets")
     assert catalogue.status_code == 200
@@ -564,12 +569,13 @@ def test_epic2_workflow_ingest_inspect_and_query_historically(tmp_path):
     assert replayed.status_code == 200
     assert [bar["session_date"] for bar in replayed.json()] == ["2023-01-01"]
 
-    # Provider download adds versions to the same catalogue.
-    downloaded = client.post(
-        "/api/datasets/download", json={"provider": "tiingo", "symbols": ["AAPL"]}
+    downloaded_versions = download_provider(
+        MarketDataStore(tmp_path),
+        TiingoDownloadSpec(symbols=("AAPL",)),
+        credentials=ProviderCredentials(tiingo_api_token="private-token"),
+        fetch_json=_tiingo_prices_fetch_json,
     )
-    assert downloaded.status_code == 201
-    downloaded_ids = set(downloaded.json()["dataset_version_ids"])
+    downloaded_ids = {v.id for v in downloaded_versions}
 
     catalogue = client.get("/api/datasets")
     assert catalogue.status_code == 200
@@ -991,6 +997,82 @@ def test_backtest_run_end_to_end_returns_ledger_and_metrics(tmp_path):
     single = client.get(f"/api/projects/{project['id']}/backtests/{result['run_id']}")
     assert single.status_code == 200
     assert single.json()["run_id"] == result["run_id"]
+
+
+def test_backtest_empty_symbol_filter_ranks_every_daily_security(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Market ranking"}).json()
+    csv_content = (
+        "symbol,date,open,high,low,close,volume,available_at\n"
+        "AAA,2024-01-02,10,10,10,10,1000,2024-01-02T20:00:00Z\n"
+        "BBB,2024-01-02,10,10,10,10,1000,2024-01-02T20:00:00Z\n"
+        "AAA,2024-01-03,11,11,11,11,1000,2024-01-03T20:00:00Z\n"
+        "BBB,2024-01-03,10,10,10,10,1000,2024-01-03T20:00:00Z\n"
+        "AAA,2024-01-04,13,13,13,13,1000,2024-01-04T20:00:00Z\n"
+        "BBB,2024-01-04,9,9,9,9,1000,2024-01-04T20:00:00Z\n"
+        "AAA,2024-01-05,14,14,14,14,1000,2024-01-05T20:00:00Z\n"
+        "BBB,2024-01-05,8,8,8,8,1000,2024-01-05T20:00:00Z\n"
+    )
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "market-test"},
+        files={"file": ("bars.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
+    )
+    dataset_version_id = imported.json()["dataset_version_id"]
+
+    response = client.post(
+        f"/api/projects/{project['id']}/backtests",
+        json={
+            "strategy_name": "top_n_momentum",
+            "strategy_revision": "top_n_momentum:v1",
+            "dataset_version_id": dataset_version_id,
+            "start_date": "2024-01-02",
+            "end_date": "2024-01-05",
+            "starting_cash": 100000,
+            "parameters": {"lookback_period": 2, "top_n": 1, "weighting": "equal"},
+        },
+    )
+
+    assert response.status_code == 201
+    result = response.json()
+    assert result["specification"]["universe"] == ["AAA", "BBB"]
+    decision_rows = [row for row in result["rankings"] if row["session_date"] == "2024-01-04"]
+    assert [(row["security_id"], row["rank"], row["selected"]) for row in decision_rows] == [
+        ("AAA", 1, True),
+        ("BBB", 2, False),
+    ]
+
+
+def test_standard_backtest_rejects_minute_dataset_before_history_lookup(tmp_path):
+    client = TestClient(create_app(workspace_root=tmp_path))
+    project = client.post("/api/projects", json={"name": "Daily only"}).json()
+    csv_content = (
+        "symbol,timestamp,open,high,low,close,volume,available_at\n"
+        "AAPL,2024-01-02T14:30:00Z,100,101,99,100.5,1000,2024-01-02T14:31:00Z\n"
+    )
+    imported = client.post(
+        "/api/datasets",
+        data={"source": "minute-test"},
+        files={"file": ("minute.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
+    )
+    assert imported.status_code == 201
+
+    response = client.post(
+        f"/api/projects/{project['id']}/backtests",
+        json={
+            "strategy_name": "long_flat_moving_average",
+            "strategy_revision": "long_flat_moving_average:v1",
+            "dataset_version_id": imported.json()["dataset_version_id"],
+            "symbol": "AAPL",
+            "start_date": "2024-01-02",
+            "end_date": "2024-01-03",
+            "starting_cash": 100000,
+            "parameters": {"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+        },
+    )
+
+    assert response.status_code == 422
+    assert "daily_bars" in response.json()["detail"]
 
 
 def test_backtest_run_rejects_start_after_end(tmp_path):

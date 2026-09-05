@@ -6,19 +6,42 @@ import json
 import logging
 import threading
 import time
+import traceback
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Literal
 from uuid import uuid4
 
+from pydantic import BaseModel, Field, ValidationError
+
 from .json_types import JsonValue
+from .market_data import MarketDataStore
+from .providers import ProviderCredentials
+from .request_control import FileRequestResultCache
+from .transport import JsonFetcherProtocol
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ProviderDownloadChoice:
+    provider: Literal["tiingo", "massive", "sec_edgar", "alpaca"]
+    data_types: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DatasetDownloadSpec:
+    """Frozen parameter object for one composite dataset download operation."""
+
+    security_list_id: str
+    start_date: date
+    end_date: date
+    downloads: tuple[ProviderDownloadChoice, ...]
 
 
 class DownloadState(str, Enum):
@@ -71,20 +94,34 @@ class DownloadCannotBeCancelledError(Exception):
 
 
 class CancellationToken:
-    """Thread-safe cancellation token."""
+    """Thread-safe cancellation token backed by threading.Event."""
 
     def __init__(self) -> None:
-        self._is_cancelled = False
+        self._event = threading.Event()
         self._lock = threading.Lock()
+        self._publication_started = False
 
-    def cancel(self) -> None:
+    def cancel(self) -> bool:
         with self._lock:
-            self._is_cancelled = True
+            if self._publication_started:
+                return False
+            self._event.set()
+            return True
+
+    def begin_publication(self) -> bool:
+        with self._lock:
+            if self._event.is_set():
+                return False
+            self._publication_started = True
+            return True
 
     @property
     def is_cancelled(self) -> bool:
-        with self._lock:
-            return self._is_cancelled
+        return self._event.is_set()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        """Wait until cancelled or timeout expires. Returns True if cancelled."""
+        return self._event.wait(timeout)
 
 
 @dataclass(frozen=True)
@@ -142,99 +179,127 @@ class DownloadSnapshot:
             "recent_events": [e.to_dict() for e in self.recent_events],
         }
 
-    @classmethod
-    def from_dict(
-        cls, data: dict[str, Any], events: list[DownloadEvent] | None = None
-    ) -> DownloadSnapshot:
-        raw_events = events or [
-            DownloadEvent(
-                timestamp=e["timestamp"],
-                phase=e["phase"],
-                message=e["message"],
-                details=e.get("details", {}),
-            )
-            for e in data.get("recent_events", [])
-        ]
-        return cls(
-            download_id=data["download_id"],
-            state=DownloadState(data["state"]),
-            phase=DownloadPhase(data["phase"]),
-            started_at=data["started_at"],
-            updated_at=data["updated_at"],
-            dataset_version_id=data.get("dataset_version_id"),
-            security_list_id=data.get("security_list_id"),
-            error_message=data.get("error_message"),
-            total_logical_units=data.get("total_logical_units", 0),
-            completed_logical_units=data.get("completed_logical_units", 0),
-            total_requests=data.get("total_requests", 0),
-            completed_requests=data.get("completed_requests", 0),
-            active_provider=data.get("active_provider"),
-            active_operation=data.get("active_operation"),
-            rate_limit_wait_seconds=data.get("rate_limit_wait_seconds", 0.0),
-            recent_events=raw_events,
+
+class PersistedDownloadEvent(BaseModel):
+    timestamp: str
+    phase: str
+    message: str
+    details: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class PersistedDownloadSnapshot(BaseModel):
+    """Pydantic boundary model validating status files from disk."""
+
+    download_id: str
+    state: DownloadState
+    phase: DownloadPhase
+    started_at: str
+    updated_at: str
+    dataset_version_id: str | None = None
+    security_list_id: str | None = None
+    error_message: str | None = None
+    total_logical_units: int = 0
+    completed_logical_units: int = 0
+    total_requests: int = 0
+    completed_requests: int = 0
+    active_provider: str | None = None
+    active_operation: str | None = None
+    rate_limit_wait_seconds: float = 0.0
+    recent_events: list[PersistedDownloadEvent] = Field(default_factory=list)
+
+    def to_domain(self) -> DownloadSnapshot:
+        return DownloadSnapshot(
+            download_id=self.download_id,
+            state=self.state,
+            phase=self.phase,
+            started_at=self.started_at,
+            updated_at=self.updated_at,
+            dataset_version_id=self.dataset_version_id,
+            security_list_id=self.security_list_id,
+            error_message=self.error_message,
+            total_logical_units=self.total_logical_units,
+            completed_logical_units=self.completed_logical_units,
+            total_requests=self.total_requests,
+            completed_requests=self.completed_requests,
+            active_provider=self.active_provider,
+            active_operation=self.active_operation,
+            rate_limit_wait_seconds=self.rate_limit_wait_seconds,
+            recent_events=[
+                DownloadEvent(
+                    timestamp=e.timestamp,
+                    phase=e.phase,
+                    message=e.message,
+                    details=e.details,
+                )
+                for e in self.recent_events
+            ],
         )
 
 
 class ProgressRecorder:
-    """Thread-safe recorder managing bounded persistence writes and recent events."""
+    """Thread-safe recorder managing bounded disk persistence and in-memory progress."""
 
     def __init__(
         self,
         download_id: str,
         storage_dir: Path,
-        min_write_interval_seconds: float = 0.25,
         security_list_id: str | None = None,
         clock: Callable[[], float] = time.monotonic,
+        write_interval_seconds: float = 0.25,  # <= 4 writes/second
     ) -> None:
         self.download_id = download_id
         self.storage_dir = storage_dir
-        self.min_write_interval_seconds = min_write_interval_seconds
-        self.clock = clock
         self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self.clock = clock
+        self.write_interval_seconds = write_interval_seconds
 
         self._lock = threading.Lock()
+        self._state = DownloadState.QUEUED
+        self._phase = DownloadPhase.PLANNING
         now_iso = datetime.now(UTC).isoformat()
         self._started_at = now_iso
         self._updated_at = now_iso
-        self._state = DownloadState.QUEUED
-        self._phase = DownloadPhase.PLANNING
         self._dataset_version_id: str | None = None
         self._security_list_id: str | None = security_list_id
         self._error_message: str | None = None
-        self._total_logical_units = 0
-        self._completed_logical_units = 0
-        self._total_requests = 0
-        self._completed_requests = 0
+
+        self._total_logical_units: int = 0
+        self._completed_logical_units: int = 0
+        self._total_requests: int = 0
+        self._completed_requests: int = 0
         self._active_provider: str | None = None
         self._active_operation: str | None = None
-        self._rate_limit_wait_seconds = 0.0
+        self._rate_limit_wait_seconds: float = 0.0
 
         self._events: deque[DownloadEvent] = deque(maxlen=200)
         self._last_disk_write_time: float = 0.0
         self.disk_write_count: int = 0
 
-        self._append_event_unlocked("queued", "Download queued for execution.")
+        # Initial forced write for queued state
+        self._append_event_unlocked(
+            self._phase.value,
+            f"Download queued for security list: {security_list_id or 'unknown'}",
+        )
         self._persist_unlocked(force=True)
 
     def _append_event_unlocked(
-        self, phase: str, message: str, details: dict[str, JsonValue] | None = None
+        self,
+        phase: str,
+        message: str,
+        details: dict[str, JsonValue] | None = None,
     ) -> None:
-        now_iso = datetime.now(UTC).isoformat()
-        event = DownloadEvent(
-            timestamp=now_iso,
+        evt = DownloadEvent(
+            timestamp=datetime.now(UTC).isoformat(),
             phase=phase,
             message=message,
             details=details or {},
         )
-        self._events.append(event)
-        self._updated_at = now_iso
-        events_file = self.storage_dir / "events.jsonl"
-        with events_file.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(event.to_dict()) + "\n")
+        self._events.append(evt)
+        self._updated_at = evt.timestamp
 
     def _persist_unlocked(self, force: bool = False) -> None:
         now = self.clock()
-        if not force and (now - self._last_disk_write_time < self.min_write_interval_seconds):
+        if not force and (now - self._last_disk_write_time < self.write_interval_seconds):
             return
 
         snapshot_data = {
@@ -253,6 +318,7 @@ class ProgressRecorder:
             "active_provider": self._active_provider,
             "active_operation": self._active_operation,
             "rate_limit_wait_seconds": self._rate_limit_wait_seconds,
+            "recent_events": [e.to_dict() for e in self._events],
         }
 
         status_file = self.storage_dir / "status.json"
@@ -318,32 +384,40 @@ class ProgressRecorder:
     ) -> None:
         with self._lock:
             self._state = DownloadState.SUCCEEDED
+            self._dataset_version_id = dataset_version_id
             self._phase = DownloadPhase.COMPLETE
-            if dataset_version_id:
-                self._dataset_version_id = dataset_version_id
-            self._append_event_unlocked(DownloadPhase.COMPLETE.value, message)
-            self._persist_unlocked(force=True)
-
-    def finish_failed(self, error_message: str) -> None:
-        with self._lock:
-            self._state = DownloadState.FAILED
-            self._error_message = error_message
-            self._append_event_unlocked(
-                self._phase.value, f"Download failed: {error_message}"
-            )
-            self._persist_unlocked(force=True)
-
-    def finish_cancelled(self, message: str = "Download was cancelled.") -> None:
-        with self._lock:
-            self._state = DownloadState.CANCELLED
             self._append_event_unlocked(self._phase.value, message)
             self._persist_unlocked(force=True)
 
-    def set_cancelling(self) -> None:
+    def finish_failed(
+        self,
+        error_message: str,
+        message: str = "Download failed.",
+        traceback: str | None = None,
+    ) -> None:
         with self._lock:
-            self._state = DownloadState.CANCELLING
-            self._append_event_unlocked(self._phase.value, "Cancellation requested.")
+            self._state = DownloadState.FAILED
+            self._error_message = error_message
+            self._phase = DownloadPhase.COMPLETE
+            details: dict[str, JsonValue] = {"error": error_message}
+            if traceback:
+                details["traceback"] = traceback
+            self._append_event_unlocked(self._phase.value, message, details)
             self._persist_unlocked(force=True)
+
+    def finish_cancelled(self, message: str = "Download cancelled by user.") -> None:
+        with self._lock:
+            self._state = DownloadState.CANCELLED
+            self._phase = DownloadPhase.COMPLETE
+            self._append_event_unlocked(self._phase.value, message)
+            self._persist_unlocked(force=True)
+
+    def set_cancelling(self, message: str = "Cancellation requested.") -> None:
+        with self._lock:
+            if not self._state.is_terminal:
+                self._state = DownloadState.CANCELLING
+                self._append_event_unlocked(self._phase.value, message)
+                self._persist_unlocked(force=True)
 
     def snapshot(self) -> DownloadSnapshot:
         with self._lock:
@@ -366,6 +440,16 @@ class ProgressRecorder:
                 recent_events=list(self._events),
             )
 
+    @classmethod
+    def read_snapshot(cls, run_dir: Path) -> DownloadSnapshot:
+        """Validate and construct DownloadSnapshot from status.json (CORE-003)."""
+        status_file = run_dir / "status.json"
+        if not status_file.exists():
+            raise FileNotFoundError(f"Status file not found in {run_dir}")
+        raw_text = status_file.read_text(encoding="utf-8")
+        persisted = PersistedDownloadSnapshot.model_validate_json(raw_text)
+        return persisted.to_domain()
+
 
 class MarketDataDownloadService:
     """Service managing background download worker threads and progress persistence."""
@@ -373,46 +457,38 @@ class MarketDataDownloadService:
     def __init__(
         self,
         workspace_root: Path,
-        market_store: Any | None = None,
-        credentials: Any | None = None,
-        fetch_json: Any | None = None,
-        wait: Callable[[float], None] | None = None,
+        market_store: MarketDataStore,
+        credentials: ProviderCredentials,
+        fetch_json: (
+            JsonFetcherProtocol | Callable[[str, Mapping[str, str]], JsonValue] | None
+        ) = None,
+        wait: Callable[[float], None] = time.sleep,
         executor: ThreadPoolExecutor | None = None,
-        app_state: Any | None = None,
+        job_executor: (
+            Callable[[DatasetDownloadSpec, ProgressRecorder, CancellationToken], None] | None
+        ) = None,
     ) -> None:
         self.workspace_root = workspace_root
         self.market_store = market_store
         self.credentials = credentials
         self.fetch_json = fetch_json
-        self._wait = wait
-        self.app_state = app_state
+        self.wait = wait
+        self._job_executor = job_executor
         self.runs_dir = workspace_root / "download-runs"
+        self.request_cache = FileRequestResultCache(workspace_root / "download-cache")
         self.runs_dir.mkdir(parents=True, exist_ok=True)
         self._executor = executor or ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="download-worker"
         )
         self._lock = threading.Lock()
-        self._active_job: tuple[str, ProgressRecorder, CancellationToken, Future[Any]] | None = None
+        self._active_job: (
+            tuple[str, ProgressRecorder, CancellationToken, Future[None]] | None
+        ) = None
 
         self._recover_incomplete_runs()
 
-    @property
-    def wait(self) -> Callable[[float], None]:
-        if self._wait is not None:
-            return self._wait
-        if (
-            self.app_state is not None
-            and getattr(self.app_state, "provider_wait", None) is not None
-        ):
-            return self.app_state.provider_wait
-        return time.sleep
-
-    @wait.setter
-    def wait(self, fn: Callable[[float], None] | None) -> None:
-        self._wait = fn
-
     def _recover_incomplete_runs(self) -> None:
-        """Startup check: mark any non-terminal runs from previous runs as failed."""
+        """Startup check: validate status files and mark non-terminal runs as failed (CORE-003)."""
         if not self.runs_dir.exists():
             return
         for run_dir in self.runs_dir.iterdir():
@@ -422,22 +498,26 @@ class MarketDataDownloadService:
             if not status_file.exists():
                 continue
             try:
-                data = json.loads(status_file.read_text(encoding="utf-8"))
-                state = DownloadState(data["state"])
-                if not state.is_terminal:
-                    data["state"] = DownloadState.FAILED.value
-                    data["error_message"] = (
-                        "Process was terminated unexpectedly before completion."
+                raw_text = status_file.read_text(encoding="utf-8")
+                persisted = PersistedDownloadSnapshot.model_validate_json(raw_text)
+                if not persisted.state.is_terminal:
+                    updated = persisted.model_copy(
+                        update={
+                            "state": DownloadState.FAILED,
+                            "error_message": (
+                                "Process was terminated unexpectedly before completion."
+                            ),
+                            "updated_at": datetime.now(UTC).isoformat(),
+                        }
                     )
-                    data["updated_at"] = datetime.now(UTC).isoformat()
                     tmp_file = run_dir / f"status.{uuid4().hex}.tmp"
                     with tmp_file.open("w", encoding="utf-8") as f:
-                        json.dump(data, f, indent=2)
+                        f.write(updated.model_dump_json(indent=2))
                     tmp_file.replace(status_file)
-            except Exception as err:
+            except (ValidationError, json.JSONDecodeError, OSError) as err:
                 logger.warning("Failed to recover run status for %s: %s", run_dir.name, err)
 
-    def start(self, spec: Any) -> str:
+    def start(self, spec: DatasetDownloadSpec) -> str:
         """Start a new background download job."""
         with self._lock:
             if self._active_job is not None:
@@ -447,12 +527,10 @@ class MarketDataDownloadService:
 
             download_id = f"dl-{uuid4().hex[:12]}"
             run_dir = self.runs_dir / download_id
-            raw_sec_id = getattr(spec, "security_list_id", None)
-            security_list_id = str(raw_sec_id) if isinstance(raw_sec_id, str) else None
             recorder = ProgressRecorder(
                 download_id=download_id,
                 storage_dir=run_dir,
-                security_list_id=security_list_id,
+                security_list_id=spec.security_list_id,
             )
             token = CancellationToken()
 
@@ -465,47 +543,39 @@ class MarketDataDownloadService:
     def _run_job_wrapper(
         self,
         download_id: str,
-        spec: Any,
+        spec: DatasetDownloadSpec,
         recorder: ProgressRecorder,
         token: CancellationToken,
     ) -> None:
         try:
-            self._execute_job(spec, recorder, token)
+            if self._job_executor:
+                self._job_executor(spec, recorder, token)
+            else:
+                self._execute_job(spec, recorder, token)
         except Exception as error:
+            tb_str = traceback.format_exc()
+            logger.exception("Download job %s failed unexpectedly: %s", download_id, error)
             if token.is_cancelled:
                 recorder.finish_cancelled(f"Download cancelled: {error}")
             else:
-                recorder.finish_failed(str(error))
-        finally:
-            with self._lock:
-                if self._active_job and self._active_job[0] == download_id:
-                    pass  # Keep reference so get() / latest() works seamlessly
+                recorder.finish_failed(str(error), traceback=tb_str)
 
     def _execute_job(
         self,
-        spec: Any,
+        spec: DatasetDownloadSpec,
         recorder: ProgressRecorder,
         token: CancellationToken,
     ) -> None:
         """Hook method executing download_composite."""
         from .downloads import CompositeDownloadContext, download_composite
 
-        if not self.market_store:
-            raise NotImplementedError(
-                "Job execution hook not provided and market_store is missing."
-            )
-
-        creds = self.credentials
-        if creds is None:
-            from .configuration import load_provider_credentials
-            creds = load_provider_credentials()
-
         context = CompositeDownloadContext(
-            credentials=creds,
+            credentials=self.credentials,
             fetch_json=self.fetch_json,
             wait=self.wait,
             recorder=recorder,
             token=token,
+            cache=self.request_cache,
         )
         download_composite(self.market_store, spec, context)
 
@@ -516,56 +586,57 @@ class MarketDataDownloadService:
                 return self._active_job[1].snapshot()
 
         run_dir = self.runs_dir / download_id
-        status_file = run_dir / "status.json"
-        if not status_file.exists():
+        if not run_dir.exists():
             raise DownloadNotFoundError(download_id)
 
         try:
-            data = json.loads(status_file.read_text(encoding="utf-8"))
-            events: list[DownloadEvent] = []
-            events_file = run_dir / "events.jsonl"
-            if events_file.exists():
-                lines = events_file.read_text(encoding="utf-8").strip().splitlines()
-                for line in lines[-200:]:
-                    if line.strip():
-                        e = json.loads(line)
-                        events.append(
-                            DownloadEvent(
-                                timestamp=e["timestamp"],
-                                phase=e["phase"],
-                                message=e["message"],
-                                details=e.get("details", {}),
-                            )
-                        )
-            return DownloadSnapshot.from_dict(data, events=events)
-        except Exception as err:
+            return ProgressRecorder.read_snapshot(run_dir)
+        except (FileNotFoundError, ValidationError) as err:
             raise DownloadNotFoundError(download_id) from err
 
-    def latest(self) -> DownloadSnapshot | None:
-        """Retrieve snapshot of active or most recent historical download."""
+    def get_latest(self) -> DownloadSnapshot:
+        """Retrieve the most recent download snapshot."""
         with self._lock:
-            if self._active_job:
+            if self._active_job is not None:
                 return self._active_job[1].snapshot()
 
         if not self.runs_dir.exists():
-            return None
+            raise DownloadNotFoundError("latest")
 
-        candidates: list[Path] = [
-            p for p in self.runs_dir.iterdir() if p.is_dir() and (p / "status.json").exists()
-        ]
-        if not candidates:
-            return None
+        candidate_dirs = [d for d in self.runs_dir.iterdir() if d.is_dir()]
+        if not candidate_dirs:
+            raise DownloadNotFoundError("latest")
 
-        # Sort by status.json modification time descending
-        candidates.sort(key=lambda p: (p / "status.json").stat().st_mtime, reverse=True)
-        return self.get(candidates[0].name)
+        candidate_dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        for run_dir in candidate_dirs:
+            try:
+                return ProgressRecorder.read_snapshot(run_dir)
+            except (FileNotFoundError, ValidationError):
+                continue
+
+        raise DownloadNotFoundError("latest")
+
+    latest = get_latest
 
     def cancel(self, download_id: str) -> DownloadSnapshot:
-        """Cancel an in-flight download."""
+        """Cooperative cancellation of an active download job."""
         with self._lock:
             if not self._active_job or self._active_job[0] != download_id:
-                raise DownloadCannotBeCancelledError("Download is not currently active.")
+                active = False
+            else:
+                active = True
 
+        if not active:
+            snap = self.get(download_id)
+            if snap.state.is_terminal:
+                raise DownloadCannotBeCancelledError("Download has already finished.")
+            raise DownloadCannotBeCancelledError(
+                "Download is not currently active in memory to cancel."
+            )
+
+        with self._lock:
+            if not self._active_job or self._active_job[0] != download_id:
+                raise DownloadCannotBeCancelledError("Download is no longer active.")
             _, recorder, token, future = self._active_job
             snap = recorder.snapshot()
             if snap.phase == DownloadPhase.PUBLISHING:
@@ -575,17 +646,32 @@ class MarketDataDownloadService:
             if snap.state.is_terminal:
                 raise DownloadCannotBeCancelledError("Download has already finished.")
 
-            token.cancel()
+            if not token.cancel():
+                raise DownloadCannotBeCancelledError(
+                    "Download is publishing to dataset storage and cannot be cancelled."
+                )
             recorder.set_cancelling()
             return recorder.snapshot()
 
     def shutdown(self, wait: bool = True, timeout: float = 5.0) -> None:
         """Gracefully shut down background workers and signal cancellation."""
+        timed_out = False
         with self._lock:
             if self._active_job:
                 _, recorder, token, future = self._active_job
                 token.cancel()
                 if not future.done():
                     recorder.set_cancelling()
+                    if wait:
+                        try:
+                            future.result(timeout=timeout)
+                        except (TimeoutError, Exception) as err:
+                            timed_out = True
+                            logger.warning(
+                                "Active download did not terminate within %.1fs timeout: %s",
+                                timeout,
+                                err,
+                            )
 
-        self._executor.shutdown(wait=wait, cancel_futures=True)
+        executor_wait = wait and not timed_out
+        self._executor.shutdown(wait=executor_wait, cancel_futures=True)

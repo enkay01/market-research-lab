@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import shutil
 import tempfile
-from collections.abc import Callable
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Literal
@@ -14,9 +13,11 @@ from uuid import UUID
 from fastapi import (
     APIRouter,
     Depends,
+    FastAPI,
     File,
     Form,
     Query,
+    Request,
     UploadFile,
     status,
 )
@@ -27,16 +28,15 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..download_jobs import (
+    ActiveDownloadConflictError,
+    DownloadCannotBeCancelledError,
     DownloadNotFoundError,
     DownloadSnapshot,
     MarketDataDownloadService,
 )
 from ..downloads import (
-    CompositeDownloadContext,
     DatasetDownloadSpec,
     ProviderDownloadChoice,
-    download_composite,
-    download_provider,
 )
 from ..json_types import JsonValue
 from ..market_data import (
@@ -48,22 +48,16 @@ from ..market_data import (
 from ..projects import ProjectNotFoundError, ProjectStore
 from ..providers import (
     AlpacaDownloadSpec,
-    JsonFetcher,
     MassiveDownloadSpec,
-    ProviderCredentials,
-    ProviderDownloadError,
     SecEdgarDownloadSpec,
     TiingoDownloadSpec,
 )
-from ..security_lists import SecurityListNotFoundError, list_security_lists
+from ..security_lists import list_security_lists
 from .deps import (
     SecurityNotFoundError,
     get_download_service,
     get_market_store,
     get_project_store,
-    get_provider_credentials,
-    get_provider_fetch_json,
-    get_provider_wait,
 )
 
 router = APIRouter()
@@ -630,83 +624,45 @@ def get_dataset_corporate_actions(
     ]
 
 
-class DownloadDependencies:
-    """Consolidated FastAPI dependencies for provider downloads."""
+def register_download_exception_handlers(app: FastAPI) -> None:
+    """Register route-level exception handlers for download operations."""
 
-    def __init__(
-        self,
-        market_store: MarketDataStore = Depends(get_market_store),
-        credentials: ProviderCredentials = Depends(get_provider_credentials),
-        provider_fetch_json: JsonFetcher | None = Depends(get_provider_fetch_json),
-        provider_wait: Callable[[float], None] = Depends(get_provider_wait),
-    ) -> None:
-        self.market_store = market_store
-        self.credentials = credentials
-        self.provider_fetch_json = provider_fetch_json
-        self.provider_wait = provider_wait
-
-
-@router.post(
-    "/api/datasets/download",
-    response_model=CompositeDownloadResponse | ProviderDownloadResponse,
-    status_code=status.HTTP_201_CREATED,
-    tags=["datasets"],
-)
-def download_dataset(
-    request: ProviderDownloadRequest,
-    deps: DownloadDependencies = Depends(),
-) -> CompositeDownloadResponse | ProviderDownloadResponse | JSONResponse:
-    if isinstance(request, CompositeDownloadRequest):
-        try:
-            report = download_composite(
-                deps.market_store,
-                request.to_spec(),
-                CompositeDownloadContext(
-                    credentials=deps.credentials,
-                    fetch_json=deps.provider_fetch_json,
-                    wait=deps.provider_wait,
-                ),
-            )
-            return CompositeDownloadResponse(
-                dataset_version_id=report.id,
-                security_list_id=report.security_list_id or request.security_list_id,
-                parts=[_part_response(p) for p in report.parts],
-                dataset_version_ids=[report.id],
-            )
-        except SecurityListNotFoundError:
-            raise
-        except ProviderDownloadError as error:
-            return JSONResponse(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                content={"code": "provider_error", "message": str(error), "details": {}},
-            )
-        except ValueError as error:
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={"code": "import_error", "message": str(error), "details": {}},
-            )
-
-    try:
-        versions = download_provider(
-            deps.market_store,
-            request.to_spec(),
-            credentials=deps.credentials,
-            fetch_json=deps.provider_fetch_json,
-        )
-    except ProviderDownloadError as error:
+    @app.exception_handler(ActiveDownloadConflictError)
+    async def active_download_conflict(
+        _: Request, error: ActiveDownloadConflictError
+    ) -> JSONResponse:
         return JSONResponse(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            content={"code": "provider_error", "message": str(error), "details": {}},
+            status_code=status.HTTP_409_CONFLICT,
+            content=ErrorResponse(
+                code="active_download_conflict",
+                message=str(error),
+                details={"active_download_id": error.active_download_id},
+            ).model_dump(),
         )
-    except ValueError as error:
+
+    @app.exception_handler(DownloadNotFoundError)
+    async def download_not_found(_: Request, error: DownloadNotFoundError) -> JSONResponse:
         return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"code": "import_error", "message": str(error), "details": {}},
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=ErrorResponse(
+                code="download_not_found",
+                message=str(error),
+                details={"download_id": error.download_id},
+            ).model_dump(),
         )
-    return ProviderDownloadResponse(
-        dataset_version_id=versions[0].id,
-        dataset_version_ids=[version.id for version in versions],
-    )
+
+    @app.exception_handler(DownloadCannotBeCancelledError)
+    async def download_cannot_be_cancelled(
+        _: Request, error: DownloadCannotBeCancelledError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=ErrorResponse(
+                code="download_cannot_be_cancelled",
+                message=str(error),
+                details={},
+            ).model_dump(),
+        )
 
 
 class DownloadEventResponse(BaseModel):
@@ -771,6 +727,12 @@ def _snapshot_response(snap: DownloadSnapshot) -> DownloadSnapshotResponse:
 
 
 @router.post(
+    "/api/datasets/download",
+    response_model=DownloadStartResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["downloads"],
+)
+@router.post(
     "/api/downloads",
     response_model=DownloadStartResponse,
     status_code=status.HTTP_202_ACCEPTED,
@@ -798,9 +760,7 @@ def start_download(
 def get_latest_download(
     service: MarketDataDownloadService = Depends(get_download_service),
 ) -> DownloadSnapshotResponse:
-    snap = service.latest()
-    if snap is None:
-        raise DownloadNotFoundError("latest")
+    snap = service.get_latest()
     return _snapshot_response(snap)
 
 

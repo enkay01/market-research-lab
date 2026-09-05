@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from time import perf_counter
@@ -41,6 +42,7 @@ from .routes import (
 )
 from .routes.backtests import ExecutionModelAssumptionsRequest
 from .routes.deps import DatasetVersionInUseError, SecurityNotFoundError
+from .routes.market_data import register_download_exception_handlers
 
 logger = logging.getLogger(__name__)
 
@@ -97,12 +99,16 @@ def create_app(
     app.state.market_store = market_store
     app.state.provider_credentials = creds
     app.state.provider_fetch_json = provider_fetch_json
+    def dynamic_wait(seconds: float) -> None:
+        wait_fn = getattr(app.state, "provider_wait", None) or time.sleep
+        wait_fn(seconds)
+
     app.state.download_service = MarketDataDownloadService(
         workspace_root=workspace_root,
         market_store=market_store,
         credentials=creds,
         fetch_json=provider_fetch_json,
-        app_state=app.state,
+        wait=dynamic_wait,
     )
 
     @app.middleware("http")
@@ -137,6 +143,7 @@ def create_app(
             return response
 
     register_domain_exception_handlers(app)
+    register_download_exception_handlers(app)
 
     @app.get("/api/health", response_model=HealthResponse, tags=["application"])
     def health() -> HealthResponse:

@@ -14,7 +14,14 @@ from .exchange_calendar import get_trading_days
 from .json_types import JsonValue
 from .market_data import CorporateAction, DailyBar
 from .portfolio_ledger import PortfolioLedger, SnapshotMetrics
-from .strategies import MarketView, StrategyTarget, evaluate_strategy, get_strategy_spec
+from .strategies import (
+    CROSS_SECTIONAL_STRATEGIES,
+    MarketView,
+    RankingRecord,
+    StrategyTarget,
+    evaluate_strategy,
+    get_strategy_spec,
+)
 
 
 class BacktestError(Exception):
@@ -194,11 +201,14 @@ class BacktestResult:
     manifest: dict[str, JsonValue]
     benchmark_equity_curve: tuple[EquityPoint, ...] = ()
     rejections: tuple[ConstraintRejection, ...] = ()
+    ranking_records: tuple[RankingRecord, ...] = ()
 
     def to_json(self) -> dict[str, JsonValue]:
         from dataclasses import asdict
 
-        return asdict(self)
+        payload = asdict(self)
+        payload["rankings"] = payload.pop("ranking_records")
+        return payload
 
 
 @dataclass(frozen=True)
@@ -611,6 +621,7 @@ def run_backtest(
     trade_counter = 0
 
     signals: list[StrategyTarget] = []
+    ranking_records: list[RankingRecord] = []
     fills: list[Fill] = []
     trades: list[Trade] = []
     ledger: list[LedgerRow] = []
@@ -1178,6 +1189,32 @@ def run_backtest(
         active_universe = [s for s in universe if s not in delisted_securities]
         universe_size = len(active_universe)
 
+        cross_sectional_evaluation = None
+        if specification.strategy_name == "top_n_momentum":
+            current_bars = {
+                sym: bars_by_symbol[sym][date_str]
+                for sym in active_universe
+                if date_str in bars_by_symbol.get(sym, {})
+            }
+            decision_time = min((bar.available_at for bar in current_bars.values()), default=None)
+            cross_views = {
+                sym: _market_view(
+                    sym,
+                    sorted_all_bars,
+                    decision_time,
+                    specification.price_field,
+                )
+                for sym in current_bars
+            }
+            if cross_views and decision_time is not None:
+                cross_sectional_evaluation = CROSS_SECTIONAL_STRATEGIES["top_n_momentum"](
+                    cross_views,
+                    specification.parameters,
+                    decision_time=decision_time,
+                    session_date=date_str,
+                )
+                ranking_records.extend(cross_sectional_evaluation.ranking_records)
+
         for sym in active_universe:
             bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
             if bar_sym is None:
@@ -1185,19 +1222,31 @@ def run_backtest(
 
             last_known_close_prices[sym] = _price_value(bar_sym, specification.price_field)
 
-            view = _market_view(
-                sym, sorted_all_bars, bar_sym.available_at, specification.price_field
-            )
-            evaluation = evaluate_strategy(
-                specification.strategy_name,
-                view,
-                specification.parameters,
-                decision_time=bar_sym.available_at,
-            )
+            if cross_sectional_evaluation is not None:
+                evaluation = cross_sectional_evaluation
+            else:
+                view = _market_view(
+                    sym, sorted_all_bars, bar_sym.available_at, specification.price_field
+                )
+                evaluation = evaluate_strategy(
+                    specification.strategy_name,
+                    view,
+                    specification.parameters,
+                    decision_time=bar_sym.available_at,
+                )
 
             # In multi-security universe, normalize allocation by universe size
-            for raw_t in evaluation.targets:
-                norm_weight = raw_t.weight / universe_size if universe_size > 0 else 0.0
+            targets = (
+                (target for target in evaluation.targets if target.security_id == sym)
+                if cross_sectional_evaluation is not None
+                else evaluation.targets
+            )
+            for raw_t in targets:
+                norm_weight = (
+                    raw_t.weight
+                    if specification.strategy_name == "top_n_momentum"
+                    else raw_t.weight / universe_size if universe_size > 0 else 0.0
+                )
 
                 # Shorting & Borrow availability checks
                 if norm_weight < 0.0:
@@ -1601,4 +1650,5 @@ def run_backtest(
         manifest=manifest,
         benchmark_equity_curve=benchmark_equity_curve,
         rejections=tuple(rejections),
+        ranking_records=tuple(ranking_records),
     )

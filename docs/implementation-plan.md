@@ -82,6 +82,10 @@ Stories:
 7. Standard exchange calendars and missing-session behavior.
 8. Full metric set, cost attribution, exposure, turnover, and side-by-side Run comparison.
 9. Synthetic regression checks for every accounting and temporal rule.
+10. Daily Dataset Version compatibility checks in the interface and FastAPI.
+11. Cross-sectional Strategy evaluation with deterministic Candidate Rankings, top-N selection, and recorded weights.
+12. Dated Universe Snapshots with explicit coverage failures when historical membership is missing.
+13. Broad-market daily download estimates, reusable local response caching, and incremental refresh.
 
 Done when two identical long/short Runs produce identical ledgers and future observations cannot alter earlier Signals or fills.
 

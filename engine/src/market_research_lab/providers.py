@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from typing import Callable, Literal, Mapping
+from typing import Literal
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -339,7 +339,7 @@ def _call(
 ) -> JsonValue:
     try:
         return fetch_json(url, headers)
-    except ProviderHttpError:
+    except (ProviderHttpError, TimeoutError):
         raise
     except ProviderDownloadError as error:
         raise ProviderDownloadError(f"{provider} request failed.") from error
@@ -442,18 +442,46 @@ def download_alpaca(
         securities=[Security(security_id=symbol, symbol=symbol, name=symbol, currency="USD")]
     )
 
-    underlying_query = {
-        "timeframe": "1Min",
+    _fetch_alpaca_stock_bars(symbol, start, end, headers, fetch, retrieval_time, result)
+    _fetch_alpaca_option_contracts_and_trades(
+        symbol=symbol,
+        start=start,
+        end=end,
+        end_date=request.end_date,
+        headers=headers,
+        fetch=fetch,
+        retrieval_time=retrieval_time,
+        contract_available_at=contract_available_at,
+        result=result,
+    )
+
+    if not any(row.get("record_type") == "contract" for row in result.options_records):
+        raise ProviderDownloadError("Alpaca returned no valid option contract metadata.")
+    return result
+
+
+def _fetch_alpaca_stock_bars(
+    symbol: str,
+    start: str,
+    end: str,
+    headers: Mapping[str, str],
+    fetch: JsonFetcher,
+    retrieval_time: str,
+    result: ProviderDownload,
+) -> None:
+    base_query = {
         "start": start,
         "end": end,
         "limit": "10000",
         "feed": "iex",
         "sort": "asc",
     }
+    # 1. Minute bars
+    min_query = dict(base_query, timeframe="1Min")
     for payload in _alpaca_pages(
         fetch,
         "data.alpaca.markets/v2/stocks/" + quote(symbol, safe="") + "/bars",
-        underlying_query,
+        min_query,
         headers,
     ):
         try:
@@ -478,8 +506,8 @@ def download_alpaca(
                 }
             )
 
-    daily_query = dict(underlying_query)
-    daily_query["timeframe"] = "1Day"
+    # 2. Daily bars
+    daily_query = dict(base_query, timeframe="1Day")
     for payload in _alpaca_pages(
         fetch,
         "data.alpaca.markets/v2/stocks/" + quote(symbol, safe="") + "/bars",
@@ -508,10 +536,22 @@ def download_alpaca(
                 }
             )
 
+
+def _fetch_alpaca_option_contracts_and_trades(
+    symbol: str,
+    start: str,
+    end: str,
+    end_date: date,
+    headers: Mapping[str, str],
+    fetch: JsonFetcher,
+    retrieval_time: str,
+    contract_available_at: str,
+    result: ProviderDownload,
+) -> None:
     contract_query = {
         "underlying_symbols": symbol,
         "expiration_date_gte": start,
-        "expiration_date_lte": (request.end_date + timedelta(days=45)).isoformat(),
+        "expiration_date_lte": (end_date + timedelta(days=45)).isoformat(),
         "limit": "1000",
     }
     contracts: list[AlpacaOptionContractResponse] = []
@@ -591,10 +631,6 @@ def download_alpaca(
                             "retrieval_time": retrieval_time,
                         }
                     )
-
-    if not any(row.get("record_type") == "contract" for row in result.options_records):
-        raise ProviderDownloadError("Alpaca returned no valid option contract metadata.")
-    return result
 
 
 def _tiingo_available_at(raw_date: str, retrieval_time: str) -> str:
@@ -1001,78 +1037,71 @@ def download_massive(
     )
 
     if request.data_type in ("stocks_daily", "stocks_minute"):
-        timespan = "day" if request.data_type == "stocks_daily" else "minute"
-        url = (
-            f"https://api.polygon.io/v2/aggs/ticker/{quote(symbol, safe='')}/range/1/{timespan}/"
-            f"{start_str}/{end_str}?adjusted=true&sort=asc&limit=50000"
+        _download_massive_stocks(
+            symbol, start_str, end_str, request.data_type, headers, fetch, retrieval_time, result
         )
-        aggs: list[MassiveAggResponse] = []
-        for page_payload in _fetch_massive_pages(fetch, url, headers, "Massive"):
-            try:
-                aggs.extend(MassiveAggsResponse.model_validate(page_payload).results)
-            except ValidationError as error:
-                raise ProviderDownloadError(
-                    f"Massive returned invalid aggregates for {symbol}."
-                ) from error
-
-        if not aggs:
-            raise ProviderDownloadError(f"Massive returned no data for {symbol}.")
-
-        for agg in aggs:
-            if request.data_type == "stocks_daily":
-                session_date = _massive_ms_to_iso(agg.timestamp, daily=True)
-                available_at = _massive_available_at(agg.timestamp, daily=True)
-                result.daily_bars.append(
-                    {
-                        "security_id": symbol,
-                        "date": session_date,
-                        "open": agg.open,
-                        "high": agg.high,
-                        "low": agg.low,
-                        "close": agg.close,
-                        "volume": agg.volume,
-                        "adjusted_open": agg.open,
-                        "adjusted_high": agg.high,
-                        "adjusted_low": agg.low,
-                        "adjusted_close": agg.close,
-                        "units": "USD",
-                        "available_at": available_at,
-                        "eligibility_provenance": "completed_day",
-                        "source": "massive",
-                        "retrieval_time": retrieval_time,
-                    }
-                )
-            else:
-                ts_iso = _massive_ms_to_iso(agg.timestamp, daily=False)
-                available_at = _massive_available_at(agg.timestamp, daily=False)
-                result.options_records.append(
-                    {
-                        "record_type": "underlying_bar",
-                        "security_id": symbol,
-                        "timestamp": ts_iso,
-                        "open": agg.open,
-                        "high": agg.high,
-                        "low": agg.low,
-                        "close": agg.close,
-                        "volume": agg.volume,
-                        "available_at": available_at,
-                        "eligibility_provenance": "completed_minute",
-                        "source": "massive",
-                        "retrieval_time": retrieval_time,
-                    }
-                )
     elif request.data_type == "options":
-        # 1. Underlying minute bars
-        url = (
-            f"https://api.polygon.io/v2/aggs/ticker/{quote(symbol, safe='')}/range/1/minute/"
-            f"{start_str}/{end_str}?adjusted=true&sort=asc&limit=50000"
+        _download_massive_options(
+            symbol, start_str, end_str, request.end_date, headers, fetch, retrieval_time, result
         )
-        aggs: list[MassiveAggResponse] = []
-        for page_payload in _fetch_massive_pages(fetch, url, headers, "Massive"):
-            with contextlib.suppress(Exception):
-                aggs.extend(MassiveAggsResponse.model_validate(page_payload).results)
+    else:
+        raise ProviderDownloadError(f"Unsupported data type for Massive: {request.data_type}")
 
-        for agg in aggs:
+    return result
+
+
+def _download_massive_stocks(
+    symbol: str,
+    start_str: str,
+    end_str: str,
+    data_type: Literal["stocks_daily", "stocks_minute"],
+    headers: Mapping[str, str],
+    fetch: JsonFetcher,
+    retrieval_time: str,
+    result: ProviderDownload,
+) -> None:
+    timespan = "day" if data_type == "stocks_daily" else "minute"
+    url = (
+        f"https://api.polygon.io/v2/aggs/ticker/{quote(symbol, safe='')}/range/1/{timespan}/"
+        f"{start_str}/{end_str}?adjusted=true&sort=asc&limit=50000"
+    )
+    aggs: list[MassiveAggResponse] = []
+    for page_payload in _fetch_massive_pages(fetch, url, headers, "Massive"):
+        try:
+            aggs.extend(MassiveAggsResponse.model_validate(page_payload).results)
+        except ValidationError as error:
+            raise ProviderDownloadError(
+                f"Massive returned invalid aggregates for {symbol}."
+            ) from error
+
+    if not aggs:
+        raise ProviderDownloadError(f"Massive returned no data for {symbol}.")
+
+    for agg in aggs:
+        if data_type == "stocks_daily":
+            session_date = _massive_ms_to_iso(agg.timestamp, daily=True)
+            available_at = _massive_available_at(agg.timestamp, daily=True)
+            result.daily_bars.append(
+                {
+                    "security_id": symbol,
+                    "date": session_date,
+                    "open": agg.open,
+                    "high": agg.high,
+                    "low": agg.low,
+                    "close": agg.close,
+                    "volume": agg.volume,
+                    "adjusted_open": agg.open,
+                    "adjusted_high": agg.high,
+                    "adjusted_low": agg.low,
+                    "adjusted_close": agg.close,
+                    "units": "USD",
+                    "available_at": available_at,
+                    "eligibility_provenance": "completed_day",
+                    "source": "massive",
+                    "retrieval_time": retrieval_time,
+                }
+            )
+        else:
             ts_iso = _massive_ms_to_iso(agg.timestamp, daily=False)
             available_at = _massive_available_at(agg.timestamp, daily=False)
             result.options_records.append(
@@ -1091,98 +1120,157 @@ def download_massive(
                     "retrieval_time": retrieval_time,
                 }
             )
-            result.options_records.append(
-                {
-                    "record_type": "daily_bar",
-                    "security_id": symbol,
-                    "date": ts_iso[:10],
-                    "open": agg.open,
-                    "high": agg.high,
-                    "low": agg.low,
-                    "close": agg.close,
-                    "volume": agg.volume,
-                    "available_at": _massive_available_at(agg.timestamp, daily=True),
-                    "eligibility_provenance": "completed_day",
-                    "source": "massive",
-                    "retrieval_time": retrieval_time,
-                }
-            )
 
-        # 2. Put contracts
-        contract_url = (
-            f"https://api.polygon.io/v3/reference/options/contracts?"
-            f"underlying_ticker={quote(symbol, safe='')}&contract_type=put&"
-            f"expiration_date.gte={start_str}&"
-            f"expiration_date.lte={(request.end_date + timedelta(days=45)).isoformat()}&limit=1000"
-        )
-        contracts: list[MassiveOptionContractResponse] = []
-        for page_payload in _fetch_massive_pages(fetch, contract_url, headers, "Massive"):
-            try:
-                contracts.extend(
-                    MassiveOptionContractsResponse.model_validate(page_payload).results
-                )
-            except ValidationError as error:
-                raise ProviderDownloadError(
-                    "Massive returned invalid option contracts."
-                ) from error
 
-        contract_available_at = f"{start_str}T00:00:00+00:00"
-        for contract in contracts:
-            contract_ticker = contract.ticker.replace("O:", "")
-            result.options_records.append(
+def fetch_massive_option_contract_bars(
+    contract_ticker: str,
+    start_str: str,
+    end_str: str,
+    headers: Mapping[str, str],
+    fetch: JsonFetcher,
+    retrieval_time: str,
+) -> list[dict[str, JsonValue]]:
+    """Fetch 1-minute aggs for a single option contract ticker. Fails deterministically on error."""
+    safe_ticker = quote(contract_ticker, safe="")
+    trade_url = (
+        f"https://api.polygon.io/v2/aggs/ticker/O:{safe_ticker}/range/1/minute/"
+        f"{start_str}/{end_str}?sort=asc&limit=50000"
+    )
+    records: list[dict[str, JsonValue]] = []
+    for page_payload in _fetch_massive_pages(fetch, trade_url, headers, "Massive"):
+        try:
+            opt_aggs = MassiveAggsResponse.model_validate(page_payload).results
+        except ValidationError as error:
+            raise ProviderDownloadError(
+                f"Massive returned invalid option trade minute bars for {contract_ticker}."
+            ) from error
+        for opt_agg in opt_aggs:
+            ts_iso = _massive_ms_to_iso(opt_agg.timestamp, daily=False)
+            records.append(
                 {
-                    "record_type": "contract",
+                    "record_type": "trade",
                     "contract_id": contract_ticker,
-                    "contract_symbol": contract_ticker,
-                    "security_id": symbol,
-                    "expiration": contract.expiration_date,
-                    "strike": contract.strike_price,
-                    "right": contract.contract_type.lower(),
-                    "multiplier": contract.shares_per_contract,
-                    "exercise_style": contract.exercise_style.lower(),
-                    "settlement_type": "physical",
-                    "available_at": contract_available_at,
-                    "eligibility_provenance": "contract_snapshot",
+                    "timestamp": ts_iso,
+                    "price": opt_agg.close,
+                    "size": opt_agg.volume,
+                    "available_at": _massive_available_at(opt_agg.timestamp, daily=False),
+                    "eligibility_provenance": "completed_minute",
                     "source": "massive",
                     "retrieval_time": retrieval_time,
                 }
             )
-            # Minute bars for option contract
-            safe_ticker = quote(contract_ticker, safe="")
-            trade_url = (
-                f"https://api.polygon.io/v2/aggs/ticker/O:{safe_ticker}/range/1/minute/"
-                f"{start_str}/{end_str}?sort=asc&limit=50000"
-            )
-            for page_payload in _fetch_massive_pages(fetch, trade_url, headers, "Massive"):
-                try:
-                    opt_aggs = MassiveAggsResponse.model_validate(page_payload).results
-                    for opt_agg in opt_aggs:
-                        ts_iso = _massive_ms_to_iso(opt_agg.timestamp, daily=False)
-                        result.options_records.append(
-                            {
-                                "record_type": "trade",
-                                "contract_id": contract_ticker,
-                                "timestamp": ts_iso,
-                                "price": opt_agg.close,
-                                "size": opt_agg.volume,
-                                "available_at": _massive_available_at(
-                                    opt_agg.timestamp, daily=False
-                                ),
-                                "eligibility_provenance": "completed_minute",
-                                "source": "massive",
-                                "retrieval_time": retrieval_time,
-                            }
-                        )
-                except Exception:
-                    continue
+    return records
 
-    return result
+
+def _download_massive_options(
+    symbol: str,
+    start_str: str,
+    end_str: str,
+    end_date: date,
+    headers: Mapping[str, str],
+    fetch: JsonFetcher,
+    retrieval_time: str,
+    result: ProviderDownload,
+) -> None:
+    # 1. Underlying minute bars
+    url = (
+        f"https://api.polygon.io/v2/aggs/ticker/{quote(symbol, safe='')}/range/1/minute/"
+        f"{start_str}/{end_str}?adjusted=true&sort=asc&limit=50000"
+    )
+    aggs: list[MassiveAggResponse] = []
+    for page_payload in _fetch_massive_pages(fetch, url, headers, "Massive"):
+        try:
+            aggs.extend(MassiveAggsResponse.model_validate(page_payload).results)
+        except ValidationError as error:
+            raise ProviderDownloadError(
+                f"Massive returned invalid option underlying minute bars for {symbol}."
+            ) from error
+
+    for agg in aggs:
+        ts_iso = _massive_ms_to_iso(agg.timestamp, daily=False)
+        available_at = _massive_available_at(agg.timestamp, daily=False)
+        result.options_records.append(
+            {
+                "record_type": "underlying_bar",
+                "security_id": symbol,
+                "timestamp": ts_iso,
+                "open": agg.open,
+                "high": agg.high,
+                "low": agg.low,
+                "close": agg.close,
+                "volume": agg.volume,
+                "available_at": available_at,
+                "eligibility_provenance": "completed_minute",
+                "source": "massive",
+                "retrieval_time": retrieval_time,
+            }
+        )
+        result.options_records.append(
+            {
+                "record_type": "daily_bar",
+                "security_id": symbol,
+                "date": ts_iso[:10],
+                "open": agg.open,
+                "high": agg.high,
+                "low": agg.low,
+                "close": agg.close,
+                "volume": agg.volume,
+                "available_at": _massive_available_at(agg.timestamp, daily=True),
+                "eligibility_provenance": "completed_day",
+                "source": "massive",
+                "retrieval_time": retrieval_time,
+            }
+        )
+
+    # 2. Put contracts
+    contract_url = (
+        f"https://api.polygon.io/v3/reference/options/contracts?"
+        f"underlying_ticker={quote(symbol, safe='')}&contract_type=put&"
+        f"expiration_date.gte={start_str}&"
+        f"expiration_date.lte={(end_date + timedelta(days=45)).isoformat()}&limit=1000"
+    )
+    contracts: list[MassiveOptionContractResponse] = []
+    for page_payload in _fetch_massive_pages(fetch, contract_url, headers, "Massive"):
+        try:
+            contracts.extend(
+                MassiveOptionContractsResponse.model_validate(page_payload).results
+            )
+        except ValidationError as error:
+            raise ProviderDownloadError(
+                "Massive returned invalid option contracts."
+            ) from error
+
+    contract_available_at = f"{start_str}T00:00:00+00:00"
+    for contract in contracts:
+        contract_ticker = contract.ticker.replace("O:", "")
+        result.options_records.append(
+            {
+                "record_type": "contract",
+                "contract_id": contract_ticker,
+                "contract_symbol": contract_ticker,
+                "security_id": symbol,
+                "expiration": contract.expiration_date,
+                "strike": contract.strike_price,
+                "right": contract.contract_type.lower(),
+                "multiplier": contract.shares_per_contract,
+                "exercise_style": contract.exercise_style.lower(),
+                "settlement_type": "physical",
+                "available_at": contract_available_at,
+                "eligibility_provenance": "contract_snapshot",
+                "source": "massive",
+                "retrieval_time": retrieval_time,
+            }
+        )
+        trade_records = fetch_massive_option_contract_bars(
+            contract_ticker, start_str, end_str, headers, fetch, retrieval_time
+        )
+        result.options_records.extend(trade_records)
 
 
 def fetch_massive_grouped_daily(
     target_date: date,
     *,
-    selected_symbols: set[str],
+    selected_symbols: Sequence[str] | set[str],
     credentials: MassiveCredentials,
     retrieval_time: str,
     fetch_json: JsonFetcher | None = None,
@@ -1206,11 +1294,12 @@ def fetch_massive_grouped_daily(
         ) from error
 
     result = ProviderDownload()
-    upper_symbols = {s.upper() for s in selected_symbols}
+    results_by_sym = {item.ticker.upper(): item for item in response.results}
 
-    for item in response.results:
-        sym = item.ticker.upper()
-        if sym not in upper_symbols:
+    for sym_raw in selected_symbols:
+        sym = sym_raw.upper()
+        item = results_by_sym.get(sym)
+        if item is None:
             continue
 
         session_date = _massive_ms_to_iso(item.timestamp, daily=True)
@@ -1240,4 +1329,5 @@ def fetch_massive_grouped_daily(
         )
 
     return result
+
 

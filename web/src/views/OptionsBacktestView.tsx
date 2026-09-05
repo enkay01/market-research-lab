@@ -116,7 +116,7 @@ export function OptionsBacktestView({ project, onBackToStandard }: OptionsBackte
   return (
     <VStack gap={4} style={{ width: "100%", maxWidth: "1440px", margin: "0 auto", paddingBottom: "96px" }}>
       <Card padding={3}>
-        <HStack justify="between" align="center" wrap gap={3}>
+        <HStack justify="between" align="center" wrap="wrap" gap={3}>
           <VStack gap={1}>
             <HStack align="center" gap={2}>
               <Heading level={2}>Options credit spread Backtest</Heading>
@@ -181,7 +181,7 @@ export function OptionsBacktestView({ project, onBackToStandard }: OptionsBackte
           {selectedPosition && (
             <Card padding={3}>
               <VStack gap={3}>
-                <HStack justify="between" align="center" wrap gap={2}>
+                <HStack justify="between" align="center" wrap="wrap" gap={2}>
                   <VStack gap={1}>
                     <Heading level={3}>{selectedPosition.security_id} Put Credit</Heading>
                     <Text type="supporting">${selectedPosition.short_strike} / ${selectedPosition.long_strike} · Expiry {selectedPosition.expiration} · {selectedPosition.status}</Text>
@@ -192,7 +192,7 @@ export function OptionsBacktestView({ project, onBackToStandard }: OptionsBackte
                   </HStack>
                 </HStack>
                 <InteractiveCandlestickChart position={selectedPosition} />
-                <HStack gap={3} wrap>
+                <HStack gap={3} wrap="wrap">
                   <Text type="supporting">Entry {selectedPosition.open_timestamp}</Text>
                   <Text type="supporting">Credit ${selectedPosition.entry_credit.toFixed(2)}</Text>
                   <Text type="supporting">Full Possible Loss ${selectedPosition.full_possible_loss.toFixed(2)}</Text>

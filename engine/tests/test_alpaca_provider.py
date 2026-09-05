@@ -144,21 +144,24 @@ def test_alpaca_route_reads_credentials_from_local_env(tmp_path):
         encoding="utf-8",
     )
     calls: list[tuple[str, dict[str, str]]] = []
-    response = TestClient(
-        create_app(workspace_root=tmp_path, provider_fetch_json=_alpaca_fetcher(calls))
-    ).post(
-        "/api/datasets/download",
+    app = create_app(workspace_root=tmp_path, provider_fetch_json=_alpaca_fetcher(calls))
+    app.state.provider_wait = lambda _: None
+    client = TestClient(app)
+    response = client.post(
+        "/api/downloads",
         json={
-            "provider": "alpaca",
-            "symbol": "spy",
+            "security_list_id": "dow-30",
             "start_date": "2024-01-02",
             "end_date": "2024-01-03",
+            "downloads": [{"provider": "alpaca", "data_types": ["options"]}],
         },
     )
 
-    assert response.status_code == 201, response.text
+    assert response.status_code == 202, response.text
     assert "secret" not in response.text
-    assert response.json()["dataset_version_ids"]
+    download_id = response.json()["download_id"]
+    snap_res = client.get(f"/api/downloads/{download_id}")
+    assert "secret" not in snap_res.text
 
 
 def test_alpaca_requires_local_credentials():

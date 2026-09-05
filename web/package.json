@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "generate:client": "uv run --project ../engine python -m market_research_lab.export_openapi && openapi-typescript ../engine/openapi.json -o src/api/schema.ts",
+    "generate:client": "uv run --project ../engine python -m market_research_lab.export_openapi && openapi-typescript ../engine/openapi.json -o src/api/schema.ts && node scripts/fix_schema.js",
     "lint": "oxlint",
-    "check": "npm run generate:client && oxlint && tsc --noEmit",
-    "build": "npm run generate:client && tsc --noEmit && vite build"
+    "check": "npm run generate:client && oxlint && tsc --noEmit -p tsconfig.app.json",
+    "build": "npm run generate:client && tsc --noEmit -p tsconfig.app.json && vite build"
   },
   "dependencies": {
     "@astryxdesign/core": "^0.4.1",

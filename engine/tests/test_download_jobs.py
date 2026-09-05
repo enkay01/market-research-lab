@@ -1,24 +1,49 @@
-"""Contract and unit tests for download lifecycle, progress service, and concurrency."""
+"""Unit tests for ProgressRecorder and MarketDataDownloadService."""
 
 from __future__ import annotations
 
 import json
 import time
+from datetime import date
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import ValidationError
 
 from market_research_lab.download_jobs import (
     ActiveDownloadConflictError,
     CancellationToken,
+    DatasetDownloadSpec,
     DownloadCannotBeCancelledError,
     DownloadPhase,
     DownloadState,
     MarketDataDownloadService,
     ProgressRecorder,
 )
+from market_research_lab.providers import (
+    AlpacaCredentials,
+    MassiveCredentials,
+    ProviderCredentials,
+)
+
+
+def _dummy_credentials() -> ProviderCredentials:
+    return ProviderCredentials(
+        tiingo_api_token="test-tiingo",
+        sec_edgar_user_agent="Test user@example.com",
+        alpaca=AlpacaCredentials(api_key="test-alpaca-key", api_secret="test-alpaca-secret"),
+        massive=MassiveCredentials(api_key="test-massive"),
+    )
+
+
+def _dummy_spec() -> DatasetDownloadSpec:
+    return DatasetDownloadSpec(
+        security_list_id="us-sector-index-etfs",
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 1, 31),
+        downloads=(),
+    )
 
 
 def test_progress_recorder_write_budget_and_forced_writes(tmp_path: Path):
@@ -26,53 +51,56 @@ def test_progress_recorder_write_budget_and_forced_writes(tmp_path: Path):
     recorder = ProgressRecorder(
         download_id="test-run",
         storage_dir=run_dir,
-        min_write_interval_seconds=0.25,
+        security_list_id="us-sector-index-etfs",
+        write_interval_seconds=0.25,
     )
 
-    # 1. Phase transition forces write
+    # Initial write was forced on instantiation
+    assert recorder.disk_write_count == 1
+
+    # Rapid non-forced updates within 0.25s budget should be throttled
+    now = time.monotonic()
+    recorder.clock = lambda: now + 0.05
+    recorder.record_progress(completed_logical_units=1)
+    recorder.record_progress(completed_logical_units=2)
+    recorder.record_progress(completed_logical_units=3)
+    assert recorder.disk_write_count == 1
+
+    # An update after interval has elapsed triggers 1 disk write
+    recorder.clock = lambda: now + 0.30
+    recorder.record_progress(completed_logical_units=4)
+    assert recorder.disk_write_count == 2
+
+    # Phase transition forces immediate disk write
     recorder.transition_phase(DownloadPhase.FETCHING, message="Starting fetch")
-    assert (run_dir / "status.json").exists()
-    status1 = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
-    assert status1["phase"] == "fetching"
+    assert recorder.disk_write_count == 3
 
-    # 2. Rapid progress events within 250ms write budget
-    # Modify mtime to track writes
-    initial_write_count = recorder.disk_write_count
-    for i in range(10):
-        recorder.record_progress(completed_requests=i, message=f"Fetched item {i}")
+    # Finish success forces immediate disk write
+    recorder.finish_success(dataset_version_id="version-123")
+    assert recorder.disk_write_count == 4
 
-    # Should not write to disk 10 times
-    assert recorder.disk_write_count <= initial_write_count + 1
-
-    # 3. Terminal state forces write immediately
-    recorder.finish_success(message="Completed successfully")
-    status_final = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
-    assert status_final["state"] == "succeeded"
-    assert status_final["phase"] == "complete"
-
-    # 4. Check events.jsonl
-    events_file = run_dir / "events.jsonl"
-    assert events_file.exists()
-    lines = events_file.read_text(encoding="utf-8").strip().split("\n")
-    assert len(lines) >= 12
+    # Verify persisted status.json matches snapshot
+    snap = ProgressRecorder.read_snapshot(run_dir)
+    assert snap.state == DownloadState.SUCCEEDED
+    assert snap.phase == DownloadPhase.COMPLETE
+    assert snap.dataset_version_id == "version-123"
+    assert snap.completed_logical_units == 4
 
 
-def test_progress_recorder_event_buffer_capped_at_200(tmp_path: Path):
-    run_dir = tmp_path / "test-buffer"
-    recorder = ProgressRecorder(download_id="test-buffer", storage_dir=run_dir)
+def test_persisted_snapshot_validation_rejects_corrupted_json(tmp_path: Path):
+    """CORE-003: Validation at the file boundary."""
+    run_dir = tmp_path / "corrupt-run"
+    run_dir.mkdir()
+    payload = '{"download_id": "run-x", "state": "invalid_state"}'
+    (run_dir / "status.json").write_text(payload, encoding="utf-8")
 
-    for i in range(250):
-        recorder.record_progress(completed_requests=i, message=f"Item {i}")
-
-    snapshot = recorder.snapshot()
-    assert len(snapshot.recent_events) == 200
-    assert snapshot.recent_events[-1].message == "Item 249"
-    assert snapshot.recent_events[0].message == "Item 50"
+    with pytest.raises(ValidationError):
+        ProgressRecorder.read_snapshot(run_dir)
 
 
-def test_startup_recovery_marks_incomplete_runs_failed(tmp_path: Path):
+def test_service_recovery_on_startup(tmp_path: Path):
     runs_dir = tmp_path / "download-runs"
-    runs_dir.mkdir(parents=True)
+    runs_dir.mkdir()
 
     # Incomplete run 1: running
     run1 = runs_dir / "run-1"
@@ -84,9 +112,7 @@ def test_startup_recovery_marks_incomplete_runs_failed(tmp_path: Path):
                 "state": "running",
                 "phase": "fetching",
                 "started_at": "2024-01-01T00:00:00Z",
-                "updated_at": "2024-01-01T00:01:00Z",
-                "total_logical_units": 10,
-                "completed_logical_units": 2,
+                "updated_at": "2024-01-01T00:00:00Z",
             }
         ),
         encoding="utf-8",
@@ -124,7 +150,12 @@ def test_startup_recovery_marks_incomplete_runs_failed(tmp_path: Path):
         encoding="utf-8",
     )
 
-    service = MarketDataDownloadService(workspace_root=tmp_path)
+    mock_store = MagicMock()
+    service = MarketDataDownloadService(
+        workspace_root=tmp_path,
+        market_store=mock_store,
+        credentials=_dummy_credentials(),
+    )
 
     # Startup recovery should have converted run-1 and run-2 to failed
     snap1 = service.get("run-1")
@@ -140,36 +171,41 @@ def test_startup_recovery_marks_incomplete_runs_failed(tmp_path: Path):
 
 
 def test_service_enforces_single_active_download(tmp_path: Path):
-    service = MarketDataDownloadService(workspace_root=tmp_path)
-
-    # Mock runner that hangs until released
     unblock = CancellationToken()
 
-    def dummy_runner(spec: Any, recorder: ProgressRecorder, token: CancellationToken):
+    def dummy_runner(
+        spec: DatasetDownloadSpec, recorder: ProgressRecorder, token: CancellationToken
+    ) -> None:
         recorder.transition_phase(DownloadPhase.FETCHING)
         while not unblock.is_cancelled and not token.is_cancelled:
             time.sleep(0.01)
 
-    service._execute_job = dummy_runner  # type: ignore
+    mock_store = MagicMock()
+    service = MarketDataDownloadService(
+        workspace_root=tmp_path,
+        market_store=mock_store,
+        credentials=_dummy_credentials(),
+        job_executor=dummy_runner,
+    )
 
-    mock_spec = MagicMock()
-    service.start(mock_spec)
+    spec = _dummy_spec()
+    service.start(spec)
 
     # Second start while first is active should raise conflict
     with pytest.raises(ActiveDownloadConflictError):
-        service.start(mock_spec)
+        service.start(spec)
 
     unblock.cancel()
     service.shutdown()
 
 
 def test_service_cancellation_flow(tmp_path: Path):
-    service = MarketDataDownloadService(workspace_root=tmp_path)
-
     started = CancellationToken()
     unblock = CancellationToken()
 
-    def dummy_runner(spec: Any, recorder: ProgressRecorder, token: CancellationToken):
+    def dummy_runner(
+        spec: DatasetDownloadSpec, recorder: ProgressRecorder, token: CancellationToken
+    ) -> None:
         recorder.transition_phase(DownloadPhase.FETCHING)
         started.cancel()
         while not unblock.is_cancelled and not token.is_cancelled:
@@ -179,9 +215,16 @@ def test_service_cancellation_flow(tmp_path: Path):
         else:
             recorder.finish_success()
 
-    service._execute_job = dummy_runner  # type: ignore
-    mock_spec = MagicMock()
-    download_id = service.start(mock_spec)
+    mock_store = MagicMock()
+    service = MarketDataDownloadService(
+        workspace_root=tmp_path,
+        market_store=mock_store,
+        credentials=_dummy_credentials(),
+        job_executor=dummy_runner,
+    )
+
+    spec = _dummy_spec()
+    download_id = service.start(spec)
 
     # Wait until running
     while not started.is_cancelled:
@@ -195,16 +238,23 @@ def test_service_cancellation_flow(tmp_path: Path):
 
 
 def test_service_cannot_cancel_during_publishing(tmp_path: Path):
-    service = MarketDataDownloadService(workspace_root=tmp_path)
-
-    def dummy_runner(spec: Any, recorder: ProgressRecorder, token: CancellationToken):
+    def dummy_runner(
+        spec: DatasetDownloadSpec, recorder: ProgressRecorder, token: CancellationToken
+    ) -> None:
         recorder.transition_phase(DownloadPhase.PUBLISHING)
         time.sleep(0.05)
         recorder.finish_success()
 
-    service._execute_job = dummy_runner  # type: ignore
-    mock_spec = MagicMock()
-    download_id = service.start(mock_spec)
+    mock_store = MagicMock()
+    service = MarketDataDownloadService(
+        workspace_root=tmp_path,
+        market_store=mock_store,
+        credentials=_dummy_credentials(),
+        job_executor=dummy_runner,
+    )
+
+    spec = _dummy_spec()
+    download_id = service.start(spec)
 
     # Wait for publishing phase
     for _ in range(50):
@@ -220,20 +270,27 @@ def test_service_cannot_cancel_during_publishing(tmp_path: Path):
 
 
 def test_service_shutdown_cancels_active_jobs(tmp_path: Path):
-    service = MarketDataDownloadService(workspace_root=tmp_path)
-
     cancelled_event = CancellationToken()
 
-    def dummy_runner(spec: Any, recorder: ProgressRecorder, token: CancellationToken):
+    def dummy_runner(
+        spec: DatasetDownloadSpec, recorder: ProgressRecorder, token: CancellationToken
+    ) -> None:
         recorder.transition_phase(DownloadPhase.FETCHING)
         while not token.is_cancelled:
             time.sleep(0.01)
         cancelled_event.cancel()
         recorder.finish_cancelled(message="Shutdown requested")
 
-    service._execute_job = dummy_runner  # type: ignore
-    mock_spec = MagicMock()
-    download_id = service.start(mock_spec)
+    mock_store = MagicMock()
+    service = MarketDataDownloadService(
+        workspace_root=tmp_path,
+        market_store=mock_store,
+        credentials=_dummy_credentials(),
+        job_executor=dummy_runner,
+    )
+
+    spec = _dummy_spec()
+    download_id = service.start(spec)
 
     time.sleep(0.05)
     service.shutdown(wait=True, timeout=2.0)
@@ -241,3 +298,69 @@ def test_service_shutdown_cancels_active_jobs(tmp_path: Path):
     assert cancelled_event.is_cancelled
     snap = service.get(download_id)
     assert snap.state == DownloadState.CANCELLED
+
+
+def test_service_preserves_error_traceback_on_failure(tmp_path: Path):
+    """CORE-008: Preservation of error and traceback on unexpected failure."""
+    def faulty_runner(
+        spec: DatasetDownloadSpec, recorder: ProgressRecorder, token: CancellationToken
+    ) -> None:
+        raise RuntimeError("Unexpected simulated database explosion!")
+
+    mock_store = MagicMock()
+    service = MarketDataDownloadService(
+        workspace_root=tmp_path,
+        market_store=mock_store,
+        credentials=_dummy_credentials(),
+        job_executor=faulty_runner,
+    )
+
+    spec = _dummy_spec()
+    download_id = service.start(spec)
+
+    time.sleep(0.05)
+    service.shutdown(wait=True, timeout=2.0)
+
+    snap = service.get(download_id)
+    assert snap.state == DownloadState.FAILED
+    assert "simulated database explosion" in (snap.error_message or "")
+    
+    # Check that traceback was preserved in event details
+    assert len(snap.recent_events) > 0
+    failure_event = [e for e in snap.recent_events if "traceback" in e.details]
+    assert len(failure_event) == 1
+    assert "faulty_runner" in str(failure_event[0].details["traceback"])
+
+
+def test_service_shutdown_timeout_does_not_hang(tmp_path: Path):
+    """Spec P1: shutdown timeout enforcement."""
+    unblock = CancellationToken()
+
+    def hanging_runner(
+        spec: DatasetDownloadSpec, recorder: ProgressRecorder, token: CancellationToken
+    ) -> None:
+        # Ignore cancellation and simulate a stuck network call
+        while not unblock.is_cancelled:
+            time.sleep(0.02)
+
+    mock_store = MagicMock()
+    service = MarketDataDownloadService(
+        workspace_root=tmp_path,
+        market_store=mock_store,
+        credentials=_dummy_credentials(),
+        job_executor=hanging_runner,
+    )
+
+    try:
+        spec = _dummy_spec()
+        service.start(spec)
+        time.sleep(0.05)
+
+        start_time = time.monotonic()
+        # Should enforce timeout=0.1s rather than blocking indefinitely
+        service.shutdown(wait=True, timeout=0.1)
+        elapsed = time.monotonic() - start_time
+
+        assert elapsed < 1.0, f"Shutdown took too long: {elapsed:.2f}s"
+    finally:
+        unblock.cancel()

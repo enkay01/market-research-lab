@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, cast
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from ..download_jobs import MarketDataDownloadService
 
 from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
@@ -110,8 +113,8 @@ def get_provider_wait(request: Request) -> Callable[[float], None]:
     return getattr(request.app.state, "provider_wait", None) or time.sleep
 
 
-def get_download_service(request: Request) -> Any:
-    return request.app.state.download_service
+def get_download_service(request: Request) -> MarketDataDownloadService:
+    return cast("MarketDataDownloadService", request.app.state.download_service)
 
 
 def non_blank_name(value: str) -> str:
@@ -379,46 +382,5 @@ def register_domain_exception_handlers(app: FastAPI) -> None:
             ).model_dump(),
         )
 
-    from ..download_jobs import (
-        ActiveDownloadConflictError,
-        DownloadCannotBeCancelledError,
-        DownloadNotFoundError,
-    )
 
-    @app.exception_handler(ActiveDownloadConflictError)
-    async def active_download_conflict(
-        _: Request, error: ActiveDownloadConflictError
-    ) -> JSONResponse:
-        return JSONResponse(
-            status_code=status.HTTP_409_CONFLICT,
-            content=ErrorResponse(
-                code="active_download_conflict",
-                message=str(error),
-                details={"active_download_id": error.active_download_id},
-            ).model_dump(),
-        )
-
-    @app.exception_handler(DownloadNotFoundError)
-    async def download_not_found(_: Request, error: DownloadNotFoundError) -> JSONResponse:
-        return JSONResponse(
-            status_code=status.HTTP_404_NOT_FOUND,
-            content=ErrorResponse(
-                code="download_not_found",
-                message=str(error),
-                details={"download_id": error.download_id},
-            ).model_dump(),
-        )
-
-    @app.exception_handler(DownloadCannotBeCancelledError)
-    async def download_cannot_be_cancelled(
-        _: Request, error: DownloadCannotBeCancelledError
-    ) -> JSONResponse:
-        return JSONResponse(
-            status_code=status.HTTP_409_CONFLICT,
-            content=ErrorResponse(
-                code="download_cannot_be_cancelled",
-                message=str(error),
-                details={},
-            ).model_dump(),
-        )
 
