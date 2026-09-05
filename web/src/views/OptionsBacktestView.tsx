@@ -31,7 +31,7 @@ import { InteractiveCandlestickChart } from "../components/InteractiveCandlestic
 
 interface OptionsBacktestViewProps {
   project?: Project;
-  onBackToStandard?: () => void;
+  onBack?: () => void;
 }
 
 function money(value: number): string {
@@ -46,7 +46,7 @@ function datasetLabel(dataset: CoverageResponse): string {
   return `${dataset.source} · ${dataset.id.slice(0, 14)} · ${dataset.row_count} rows`;
 }
 
-export function OptionsBacktestView({ project, onBackToStandard }: OptionsBacktestViewProps) {
+export function OptionsBacktestView({ project, onBack }: OptionsBacktestViewProps) {
   const [datasets, setDatasets] = useState<CoverageResponse[]>([]);
   const [result, setResult] = useState<OptionsBacktestResult | null>(null);
   const [selectedPositionId, setSelectedPositionId] = useState("");
@@ -132,7 +132,7 @@ export function OptionsBacktestView({ project, onBackToStandard }: OptionsBackte
                 <Button label="Export JSON" variant="secondary" size="sm" onClick={() => window.open(api.getOptionsBacktestExportUrl(project.id, result.run_id!, "json"), "_blank")} />
               </>
             )}
-            {onBackToStandard && <Button label="Multi-Asset Backtest" variant="secondary" size="sm" onClick={onBackToStandard} />}
+            {onBack && <Button label="Strategy Verdict Lab" variant="secondary" size="sm" onClick={onBack} />}
           </HStack>
         </HStack>
       </Card>
