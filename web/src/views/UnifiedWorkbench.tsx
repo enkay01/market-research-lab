@@ -392,7 +392,7 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
                 {verdictResult.headline_verdict}
               </Text>
               <Text size="sm" type="supporting">
-                Universe: {universe.toUpperCase()} · Benchmark: {benchmark.toUpperCase()} ETF · Evaluated: Gate 1 (Benchmark Hurdle)
+                Universe: {universe.toUpperCase()} · Benchmark: {benchmark.toUpperCase()} ETF · Evaluated: Gates 1-2 (Benchmark + Fee Stress)
               </Text>
             </VStack>
           </HStack>
