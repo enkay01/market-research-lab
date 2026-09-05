@@ -62,6 +62,7 @@ export type StrategyVerdictResponse = components["schemas"]["StrategyVerdictResp
 export type GateResult = components["schemas"]["GateResultResponse"];
 export type PartitionMetrics = components["schemas"]["PartitionMetricsResponse"];
 export type VerdictEquityPoint = components["schemas"]["VerdictEquityPointResponse"];
+export type FrictionTier = components["schemas"]["FrictionTierResponse"];
 
 export interface OptionsGreeks {
   delta: number;

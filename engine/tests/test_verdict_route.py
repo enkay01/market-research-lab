@@ -88,7 +88,8 @@ def test_post_verdict_success(test_client: TestClient) -> None:
     assert "overall_passed" in data
     assert "headline_verdict" in data
     assert "gates" in data
-    assert len(data["gates"]) == 1
+    assert len(data["gates"]) == 2
+    assert [tier["multiplier"] for tier in data["friction_ladder"]] == [1, 2, 3]
     assert data["gates"][0]["gate_number"] == 1
     assert data["gates"][0]["name"] == "Benchmark Hurdle"
 

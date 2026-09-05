@@ -2,17 +2,25 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 
 import pytest
 
-from market_research_lab.backtest import BacktestError, ExecutionModelAssumptions
+from market_research_lab.backtest import (
+    BacktestError,
+    BacktestSpecification,
+    ExecutionModelAssumptions,
+    run_backtest,
+)
 from market_research_lab.market_data import DailyBar
 from market_research_lab.strategy_verdict import (
+    FrictionTier,
     PartitionMetrics,
     StrategyVerdictResult,
     StrategyVerdictSpecification,
     evaluate_gate_1,
+    evaluate_gate_2,
     evaluate_strategy_verdict,
     partition_chronological_data,
 )
@@ -118,6 +126,27 @@ def test_evaluate_gate_1_fail_on_tie() -> None:
     assert gate.verdict_note == "Loses to benchmark after costs"
 
 
+def test_evaluate_gate_2_requires_strict_positive_return_and_profit_factor() -> None:
+    tier = FrictionTier(
+        multiplier=3,
+        commission_bps=15.0,
+        slippage_bps=6.0,
+        borrow_fee_bps=0.0,
+        total_return_pct=0.0,
+        net_profit_usd=0.0,
+        profit_factor=1.01,
+        max_drawdown_pct=0.0,
+        commission_paid_usd=0.0,
+        slippage_drag_usd=0.0,
+        borrow_paid_usd=0.0,
+    )
+    assert evaluate_gate_2(tier).passed is False
+    assert evaluate_gate_2(replace(tier, total_return_pct=0.1, profit_factor=1.0)).verdict_note == (
+        "Edge disappears under realistic fee stress"
+    )
+    assert evaluate_gate_2(replace(tier, total_return_pct=0.1, profit_factor=1.01)).passed is True
+
+
 def test_strategy_verdict_full_execution_pass() -> None:
     """Full verdict execution on rising bars where moving average strategy beats benchmark."""
     dates = _make_dates(16)
@@ -148,12 +177,16 @@ def test_strategy_verdict_full_execution_pass() -> None:
     result = evaluate_strategy_verdict(spec, bars=bars)
 
     assert isinstance(result, StrategyVerdictResult)
-    assert len(result.gates) == 1
+    assert len(result.gates) == 2
     assert result.gates[0].gate_number == 1
     assert result.gates[0].passed is True
-    assert result.overall_passed is True
-    assert "Clears Gate 1" in result.headline_verdict
-    assert result.rejection_reason is None
+    assert result.gates[1].gate_number == 2
+    assert len(result.friction_ladder) == 3
+    assert [tier.multiplier for tier in result.friction_ladder] == [1, 2, 3]
+    assert result.overall_passed is result.gates[1].passed
+    assert result.rejection_reason == (
+        None if result.gates[1].passed else "Edge disappears under realistic fee stress"
+    )
 
     # Check partition metrics
     assert isinstance(result.in_sample_metrics, PartitionMetrics)
@@ -199,3 +232,65 @@ def test_strategy_verdict_full_execution_fail() -> None:
     assert result.gates[0].verdict_note == "Loses to benchmark after costs"
     assert result.rejection_reason == "Loses to benchmark after costs"
     assert "Loses to benchmark after costs" in result.headline_verdict
+
+def test_friction_ladder_reports_realized_costs_for_scaled_short_replays() -> None:
+    """Verify each ladder row matches an independent replay, including borrow overrides."""
+    dates = _make_dates(20)
+    bars = [
+        _make_bar(d, security_id="AAPL", open_price=20.0 - i * 0.5, close_price=20.0 - i * 0.5)
+        for i, d in enumerate(dates)
+    ]
+    bars.extend(_make_bar(d, security_id="SPY", open_price=100.0, close_price=100.0) for d in dates)
+    execution = ExecutionModelAssumptions(
+        commission_rate=0.001,
+        slippage_rate=0.0005,
+        borrow_fee_rate=0.25,
+        hard_to_borrow_rates={"AAPL": 1.0},
+        cash_interest_rate=0.04,
+    )
+    spec = StrategyVerdictSpecification(
+        strategy_name="long_short_moving_average",
+        universe=("AAPL",),
+        benchmark_security_id="SPY",
+        start_date=dates[0],
+        end_date=dates[-1],
+        starting_cash=100_000.0,
+        parameters={"fast_period": 2, "slow_period": 4},
+        execution=execution,
+    )
+
+    verdict = evaluate_strategy_verdict(spec, bars=bars)
+    assert len(verdict.friction_ladder) == 3
+    assert verdict.specification.execution.cash_interest_rate == 0.04
+
+    for multiplier, tier in enumerate(verdict.friction_ladder, start=1):
+        scaled_execution = replace(
+            execution,
+            commission_rate=execution.commission_rate * multiplier,
+            slippage_rate=execution.slippage_rate * multiplier,
+            borrow_fee_rate=execution.borrow_fee_rate * multiplier,
+            hard_to_borrow_rates={"AAPL": execution.hard_to_borrow_rates["AAPL"] * multiplier},
+        )
+        expected = run_backtest(
+            BacktestSpecification(
+                strategy_name=spec.strategy_name,
+                strategy_revision=spec.strategy_revision,
+                dataset_version_id=spec.dataset_version_id,
+                universe=spec.universe,
+                benchmark_security_id=spec.benchmark_security_id,
+                start_date=spec.start_date,
+                end_date=spec.end_date,
+                starting_cash=spec.starting_cash,
+                parameters=spec.parameters,
+                execution=scaled_execution,
+            ),
+            bars=bars,
+        )
+        costs = expected.manifest["costs"]
+        assert tier.commission_paid_usd == costs["total_commission"]
+        assert tier.slippage_drag_usd == costs["total_slippage"]
+        assert tier.borrow_paid_usd == costs["total_borrow_fees"]
+
+    assert verdict.friction_ladder[0].borrow_paid_usd > 0.0
+    assert verdict.friction_ladder[1].borrow_paid_usd > verdict.friction_ladder[0].borrow_paid_usd
+    assert verdict.friction_ladder[2].borrow_paid_usd > verdict.friction_ladder[1].borrow_paid_usd

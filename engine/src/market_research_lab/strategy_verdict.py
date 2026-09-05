@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import math
 import statistics
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import NamedTuple, Sequence
 
 from .backtest import (
     BacktestError,
+    BacktestResult,
     BacktestSpecification,
     EquityPoint,
     ExecutionModelAssumptions,
@@ -59,6 +60,57 @@ class GateResult:
 
 
 @dataclass(frozen=True)
+class FrictionTier:
+    """One cost multiplier replay in the Gate 2 friction ladder."""
+
+    multiplier: int
+    commission_bps: float
+    slippage_bps: float
+    borrow_fee_bps: float
+    total_return_pct: float
+    net_profit_usd: float
+    profit_factor: float
+    max_drawdown_pct: float
+    commission_paid_usd: float
+    slippage_drag_usd: float
+    borrow_paid_usd: float
+
+
+def _scale_execution_costs(
+    execution: ExecutionModelAssumptions,
+    multiplier: int,
+) -> ExecutionModelAssumptions:
+    """Scale friction rates while retaining every unrelated execution setting."""
+    return replace(
+        execution,
+        commission_rate=execution.commission_rate * multiplier,
+        slippage_rate=execution.slippage_rate * multiplier,
+        borrow_fee_rate=execution.borrow_fee_rate * multiplier,
+        hard_to_borrow_rates={
+            symbol: rate * multiplier
+            for symbol, rate in execution.hard_to_borrow_rates.items()
+        },
+    )
+
+
+def evaluate_gate_2(tier: FrictionTier) -> GateResult:
+    """Evaluate Gate 2 against the 3x friction tier."""
+    passed = tier.total_return_pct > 0.0 and tier.profit_factor > 1.0
+    return GateResult(
+        gate_number=2,
+        name="Fee Stress",
+        passed=passed,
+        metric_label="3x Total Return / Profit Factor",
+        metric_value=f"{tier.total_return_pct:+.1f}% / {tier.profit_factor:.2f}",
+        threshold_label="3x Threshold",
+        threshold_value="> 0.0% / > 1.00",
+        verdict_note="Passed realistic fee stress"
+        if passed
+        else "Edge disappears under realistic fee stress",
+    )
+
+
+@dataclass(frozen=True)
 class PartitionMetrics:
     """Headline performance and risk metrics evaluated on a specific time partition."""
 
@@ -97,6 +149,7 @@ class StrategyVerdictResult:
     out_of_sample_metrics: PartitionMetrics
     combined_metrics: PartitionMetrics
     equity_curve: tuple[VerdictEquityPoint, ...]
+    friction_ladder: tuple[FrictionTier, ...] = ()
     rejection_reason: str | None = None
     confidence_score: float | None = None
 
@@ -276,6 +329,33 @@ def _compute_metrics(
     )
 
 
+def _friction_tier(
+    *,
+    multiplier: int,
+    execution: ExecutionModelAssumptions,
+    result: BacktestResult,
+) -> FrictionTier:
+    """Extract the requested Gate 2 fields from one completed replay."""
+    costs = result.manifest.get("costs", {})
+    return FrictionTier(
+        multiplier=multiplier,
+        commission_bps=execution.commission_rate * 10_000.0,
+        slippage_bps=execution.slippage_rate * 10_000.0,
+        borrow_fee_bps=execution.borrow_fee_rate * 10_000.0,
+        total_return_pct=result.metrics.total_return * 100.0,
+        net_profit_usd=result.equity_curve[-1].equity - result.specification.starting_cash,
+        profit_factor=_compute_metrics(
+            result.equity_curve,
+            result.trades,
+            MetricContext(benchmark_return=0.0),
+        ).profit_factor,
+        max_drawdown_pct=result.metrics.max_drawdown * 100.0,
+        commission_paid_usd=float(costs.get("total_commission", 0.0)),
+        slippage_drag_usd=float(costs.get("total_slippage", 0.0)),
+        borrow_paid_usd=float(costs.get("total_borrow_fees", 0.0)),
+    )
+
+
 def evaluate_strategy_verdict(
     specification: StrategyVerdictSpecification,
     *,
@@ -285,6 +365,7 @@ def evaluate_strategy_verdict(
 ) -> StrategyVerdictResult:
     """Execute strategy evaluation, chronological partitioning, and Gate 1 verification."""
     all_bars: list[DailyBar] = list(bars)
+    all_corporate_actions: list[CorporateAction] = list(corporate_actions)
     if benchmark_bars:
         all_bars.extend(benchmark_bars)
 
@@ -310,8 +391,33 @@ def evaluate_strategy_verdict(
     backtest_result = run_backtest(
         backtest_spec,
         bars=all_bars,
-        corporate_actions=corporate_actions,
+        corporate_actions=all_corporate_actions,
     )
+
+    friction_results = [
+        _friction_tier(
+            multiplier=1,
+            execution=specification.execution,
+            result=backtest_result,
+        )
+    ]
+    for multiplier in (2, 3):
+        replay_spec = replace(
+            backtest_spec,
+            execution=_scale_execution_costs(specification.execution, multiplier),
+        )
+        replay_result = run_backtest(
+            replay_spec,
+            bars=all_bars,
+            corporate_actions=all_corporate_actions,
+        )
+        friction_results.append(
+            _friction_tier(
+                multiplier=multiplier,
+                execution=replay_spec.execution,
+                result=replay_result,
+            )
+        )
 
     session_dates = [pt.session_date for pt in backtest_result.equity_curve]
     in_sample_dates, out_of_sample_dates = partition_chronological_data(
@@ -389,13 +495,18 @@ def evaluate_strategy_verdict(
         benchmark_symbol=specification.benchmark_security_id or "SPY",
     )
 
-    overall_passed = gate1.passed
-    if overall_passed:
-        headline_verdict = "Strategy Clears Gate 1 (Benchmark Hurdle)"
-        rejection_reason = None
-    else:
+    gate2 = evaluate_gate_2(friction_results[-1])
+
+    overall_passed = gate1.passed and gate2.passed
+    if not gate1.passed:
         headline_verdict = "Strategy Rejected: Loses to benchmark after costs"
         rejection_reason = "Loses to benchmark after costs"
+    elif not gate2.passed:
+        headline_verdict = "Strategy Rejected: Edge disappears under realistic fee stress"
+        rejection_reason = "Edge disappears under realistic fee stress"
+    else:
+        headline_verdict = "Strategy Clears Gate 2 (Fee Stress)"
+        rejection_reason = None
 
     verdict_curve: list[VerdictEquityPoint] = []
     for pt in backtest_result.equity_curve:
@@ -416,9 +527,10 @@ def evaluate_strategy_verdict(
         headline_verdict=headline_verdict,
         rejection_reason=rejection_reason,
         confidence_score=None,
-        gates=(gate1,),
+        gates=(gate1, gate2),
         in_sample_metrics=in_sample_metrics,
         out_of_sample_metrics=out_of_sample_metrics,
         combined_metrics=combined_metrics,
         equity_curve=tuple(verdict_curve),
+        friction_ladder=tuple(friction_results),
     )

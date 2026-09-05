@@ -547,8 +547,8 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
             <Card padding={2}>
               <VStack gap={1}>
                 <Text size="sm" type="supporting">3x Cost Stress PF</Text>
-                <Text weight="bold" size="lg" style={{ color: "var(--color-text-secondary)" }}>
-                  Pending Gate 2 (#115)
+                <Text weight="bold" size="lg" style={{ color: "var(--color-text-primary)" }}>
+                  {verdictResult.friction_ladder.find((tier) => tier.multiplier === 3)?.profit_factor.toFixed(2) ?? "—"}
                 </Text>
               </VStack>
             </Card>
@@ -661,13 +661,72 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
         </VStack>
       )}
 
-      {/* TABS 2-5: PENDING FUTURE TICKETS (#115-#119) */}
-      {activeTab !== "summary" && (
+      {activeTab === "gates" && (
+        <VStack gap={4}>
+          <Card padding={3}>
+            <VStack gap={2}>
+              <HStack justify="between" align="center">
+                <Text weight="bold">Gate 2: Dynamic fee stress</Text>
+                <Token
+                  label={verdictResult.gates[1]?.passed ? "● PASS" : "● FAIL"}
+                  color={verdictResult.gates[1]?.passed ? "green" : "red"}
+                />
+              </HStack>
+              <Text size="sm" type="supporting">
+                Gate 2 requires total net return above 0.0% and profit factor above 1.00 at 3x friction.
+              </Text>
+              <Text>
+                Observed 3x PF: {verdictResult.friction_ladder.find((tier) => tier.multiplier === 3)?.profit_factor.toFixed(2) ?? "—"}
+              </Text>
+              {!verdictResult.gates[1]?.passed && (
+                <Text style={{ color: "var(--color-text-red)" }}>Edge disappears under realistic fee stress</Text>
+              )}
+            </VStack>
+          </Card>
+
+          <Card padding={3}>
+            <VStack gap={2}>
+              <Text weight="bold">Friction ladder</Text>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHeaderCell>Tier</TableHeaderCell>
+                    <TableHeaderCell>Commission / Slippage / Borrow</TableHeaderCell>
+                    <TableHeaderCell style={{ textAlign: "end" }}>Total Return</TableHeaderCell>
+                    <TableHeaderCell style={{ textAlign: "end" }}>Net Profit</TableHeaderCell>
+                    <TableHeaderCell style={{ textAlign: "end" }}>PF</TableHeaderCell>
+                    <TableHeaderCell style={{ textAlign: "end" }}>Max Drawdown</TableHeaderCell>
+                    <TableHeaderCell style={{ textAlign: "end" }}>Commissions</TableHeaderCell>
+                    <TableHeaderCell style={{ textAlign: "end" }}>Slippage Drag</TableHeaderCell>
+                    <TableHeaderCell style={{ textAlign: "end" }}>Borrow Fees</TableHeaderCell>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {verdictResult.friction_ladder.map((tier) => (
+                    <TableRow key={tier.multiplier}>
+                      <TableCell>{tier.multiplier}x</TableCell>
+                      <TableCell>{tier.commission_bps.toFixed(1)} / {tier.slippage_bps.toFixed(1)} / {tier.borrow_fee_bps.toFixed(1)} bps</TableCell>
+                      <TableCell style={{ textAlign: "end" }}>{tier.total_return_pct.toFixed(2)}%</TableCell>
+                      <TableCell style={{ textAlign: "end" }}>USD {tier.net_profit_usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                      <TableCell style={{ textAlign: "end" }}>{tier.profit_factor.toFixed(2)}</TableCell>
+                      <TableCell style={{ textAlign: "end" }}>{tier.max_drawdown_pct.toFixed(2)}%</TableCell>
+                      <TableCell style={{ textAlign: "end" }}>USD {tier.commission_paid_usd.toFixed(2)}</TableCell>
+                      <TableCell style={{ textAlign: "end" }}>USD {tier.slippage_drag_usd.toFixed(2)}</TableCell>
+                      <TableCell style={{ textAlign: "end" }}>USD {tier.borrow_paid_usd.toFixed(2)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </VStack>
+          </Card>
+        </VStack>
+      )}
+
+      {activeTab !== "summary" && activeTab !== "gates" && (
         <Card padding={4}>
           <VStack gap={3} align="center" style={{ textAlign: "center", padding: "32px 16px" }}>
             <Token label="AVAILABLE IN EPIC PHASE 2" color="purple" />
             <Text weight="bold" size="lg">
-              {activeTab === "gates" && "The 5 Sequential Statistical Hurdle Gates"}
               {activeTab === "replay" && "Interactive Simulation Replay Canvas"}
               {activeTab === "screener" && "Market-Wide Diagnostic Universe Screener"}
               {activeTab === "ledger" && "Daily Mark-to-Market Ledger Audit"}
