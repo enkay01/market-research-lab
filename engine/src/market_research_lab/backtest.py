@@ -203,6 +203,21 @@ class BacktestResult:
     rejections: tuple[ConstraintRejection, ...] = ()
     ranking_records: tuple[RankingRecord, ...] = ()
 
+    @property
+    def total_commission(self) -> float:
+        """Total commissions paid by the fills in this replay."""
+        return round(sum(fill.commission for fill in self.fills), 4)
+
+    @property
+    def total_slippage(self) -> float:
+        """Total slippage drag recorded by the fills in this replay."""
+        return round(sum(fill.slippage_cost for fill in self.fills), 4)
+
+    @property
+    def total_borrow_fees(self) -> float:
+        """Total borrow fees debited by the portfolio ledger in this replay."""
+        return round(sum(row.borrow_fees for row in self.ledger), 4)
+
     def to_json(self) -> dict[str, JsonValue]:
         from dataclasses import asdict
 

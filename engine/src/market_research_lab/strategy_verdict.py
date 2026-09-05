@@ -329,6 +329,22 @@ def _compute_metrics(
     )
 
 
+def calculate_profit_factor_with_borrow(
+    trades: Sequence[Trade],
+    borrow_fees: float,
+) -> float:
+    """Calculate realized PF after applying the replay's borrow debit once."""
+    gains = sum(trade.pnl for trade in trades if trade.pnl > 0.0)
+    losses = sum(abs(trade.pnl) for trade in trades if trade.pnl < 0.0)
+    adjusted_gains = max(0.0, gains - borrow_fees)
+    adjusted_losses = losses + max(0.0, borrow_fees - gains)
+    if adjusted_losses > 1e-9:
+        return adjusted_gains / adjusted_losses
+    if adjusted_gains > 0.0:
+        return INFINITE_PROFIT_FACTOR
+    return 0.0
+
+
 def _friction_tier(
     *,
     multiplier: int,
@@ -336,7 +352,8 @@ def _friction_tier(
     result: BacktestResult,
 ) -> FrictionTier:
     """Extract the requested Gate 2 fields from one completed replay."""
-    costs = result.manifest.get("costs", {})
+    borrow_fees = result.total_borrow_fees
+    profit_factor = calculate_profit_factor_with_borrow(result.trades, borrow_fees)
     return FrictionTier(
         multiplier=multiplier,
         commission_bps=execution.commission_rate * 10_000.0,
@@ -344,15 +361,11 @@ def _friction_tier(
         borrow_fee_bps=execution.borrow_fee_rate * 10_000.0,
         total_return_pct=result.metrics.total_return * 100.0,
         net_profit_usd=result.equity_curve[-1].equity - result.specification.starting_cash,
-        profit_factor=_compute_metrics(
-            result.equity_curve,
-            result.trades,
-            MetricContext(benchmark_return=0.0),
-        ).profit_factor,
+        profit_factor=profit_factor,
         max_drawdown_pct=result.metrics.max_drawdown * 100.0,
-        commission_paid_usd=float(costs.get("total_commission", 0.0)),
-        slippage_drag_usd=float(costs.get("total_slippage", 0.0)),
-        borrow_paid_usd=float(costs.get("total_borrow_fees", 0.0)),
+        commission_paid_usd=result.total_commission,
+        slippage_drag_usd=result.total_slippage,
+        borrow_paid_usd=borrow_fees,
     )
 
 

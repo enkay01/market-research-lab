@@ -11,6 +11,7 @@ from market_research_lab.backtest import (
     BacktestError,
     BacktestSpecification,
     ExecutionModelAssumptions,
+    Trade,
     run_backtest,
 )
 from market_research_lab.market_data import DailyBar
@@ -19,6 +20,7 @@ from market_research_lab.strategy_verdict import (
     PartitionMetrics,
     StrategyVerdictResult,
     StrategyVerdictSpecification,
+    calculate_profit_factor_with_borrow,
     evaluate_gate_1,
     evaluate_gate_2,
     evaluate_strategy_verdict,
@@ -145,6 +147,43 @@ def test_evaluate_gate_2_requires_strict_positive_return_and_profit_factor() -> 
         "Edge disappears under realistic fee stress"
     )
     assert evaluate_gate_2(replace(tier, total_return_pct=0.1, profit_factor=1.01)).passed is True
+
+
+def test_borrow_fees_change_profit_factor_and_gate_outcome_without_double_counting() -> None:
+    """Borrow debit lowers realized PF once and can fail the Gate 2 PF hurdle."""
+    trade = Trade(
+        trade_id="trade-1",
+        security_id="AAPL",
+        entry_date="2024-01-02",
+        exit_date="2024-01-03",
+        entry_price=10.0,
+        exit_price=11.0,
+        quantity=100.0,
+        entry_cost=1_000.0,
+        exit_proceeds=1_100.0,
+        pnl=100.0,
+        return_pct=0.1,
+    )
+
+    assert calculate_profit_factor_with_borrow((trade,), 0.0) == 100.0
+    stressed_pf = calculate_profit_factor_with_borrow((trade,), 150.0)
+    assert stressed_pf == 0.0
+    stressed_gate = evaluate_gate_2(
+        FrictionTier(
+            multiplier=3,
+            commission_bps=0.0,
+            slippage_bps=0.0,
+            borrow_fee_bps=1_500.0,
+            total_return_pct=1.0,
+            net_profit_usd=1.0,
+            profit_factor=stressed_pf,
+            max_drawdown_pct=0.0,
+            commission_paid_usd=0.0,
+            slippage_drag_usd=0.0,
+            borrow_paid_usd=150.0,
+        )
+    )
+    assert stressed_gate.passed is False
 
 
 def test_strategy_verdict_full_execution_pass() -> None:

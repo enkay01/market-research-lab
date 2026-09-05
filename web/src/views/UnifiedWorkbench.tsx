@@ -364,6 +364,8 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
   const isMetrics = verdictResult.in_sample_metrics;
   const oosMetrics = verdictResult.out_of_sample_metrics;
   const netEdge = combined.total_return - combined.benchmark_return;
+  const gate2 = verdictResult.gates.find((gate) => gate.gate_number === 2);
+  const stressTier = verdictResult.friction_ladder.find((tier) => tier.multiplier === 3);
 
   return (
     <VStack gap={4} style={{ maxWidth: "1200px", margin: "0 auto" }}>
@@ -387,9 +389,7 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
             />
             <VStack gap={1}>
               <Text weight="bold" size="lg">
-                {verdictResult.overall_passed
-                  ? "Strategy Clears Gate 1 (Benchmark Hurdle)"
-                  : `Strategy Rejected: ${verdictResult.rejection_reason ?? "Loses to benchmark after costs"}`}
+                {verdictResult.headline_verdict}
               </Text>
               <Text size="sm" type="supporting">
                 Universe: {universe.toUpperCase()} · Benchmark: {benchmark.toUpperCase()} ETF · Evaluated: Gate 1 (Benchmark Hurdle)
@@ -548,7 +548,7 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
               <VStack gap={1}>
                 <Text size="sm" type="supporting">3x Cost Stress PF</Text>
                 <Text weight="bold" size="lg" style={{ color: "var(--color-text-primary)" }}>
-                  {verdictResult.friction_ladder.find((tier) => tier.multiplier === 3)?.profit_factor.toFixed(2) ?? "—"}
+                  {stressTier?.profit_factor.toFixed(2) ?? "—"}
                 </Text>
               </VStack>
             </Card>
@@ -668,17 +668,20 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
               <HStack justify="between" align="center">
                 <Text weight="bold">Gate 2: Dynamic fee stress</Text>
                 <Token
-                  label={verdictResult.gates[1]?.passed ? "● PASS" : "● FAIL"}
-                  color={verdictResult.gates[1]?.passed ? "green" : "red"}
+                  label={gate2 ? (gate2.passed ? "● PASS" : "● FAIL") : "—"}
+                  color={gate2 ? (gate2.passed ? "green" : "red") : "blue"}
                 />
               </HStack>
               <Text size="sm" type="supporting">
                 Gate 2 requires total net return above 0.0% and profit factor above 1.00 at 3x friction.
               </Text>
               <Text>
-                Observed 3x PF: {verdictResult.friction_ladder.find((tier) => tier.multiplier === 3)?.profit_factor.toFixed(2) ?? "—"}
+                Threshold: {gate2 ? `${gate2.threshold_label} ${gate2.threshold_value}` : "—"}
               </Text>
-              {!verdictResult.gates[1]?.passed && (
+              <Text>
+                Observed 3x PF: {stressTier?.profit_factor.toFixed(2) ?? "—"}
+              </Text>
+              {gate2 && !gate2.passed && (
                 <Text style={{ color: "var(--color-text-red)" }}>Edge disappears under realistic fee stress</Text>
               )}
             </VStack>
@@ -691,7 +694,6 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
                 <TableHeader>
                   <TableRow>
                     <TableHeaderCell>Tier</TableHeaderCell>
-                    <TableHeaderCell>Commission / Slippage / Borrow</TableHeaderCell>
                     <TableHeaderCell style={{ textAlign: "end" }}>Total Return</TableHeaderCell>
                     <TableHeaderCell style={{ textAlign: "end" }}>Net Profit</TableHeaderCell>
                     <TableHeaderCell style={{ textAlign: "end" }}>PF</TableHeaderCell>
@@ -705,7 +707,6 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
                   {verdictResult.friction_ladder.map((tier) => (
                     <TableRow key={tier.multiplier}>
                       <TableCell>{tier.multiplier}x</TableCell>
-                      <TableCell>{tier.commission_bps.toFixed(1)} / {tier.slippage_bps.toFixed(1)} / {tier.borrow_fee_bps.toFixed(1)} bps</TableCell>
                       <TableCell style={{ textAlign: "end" }}>{tier.total_return_pct.toFixed(2)}%</TableCell>
                       <TableCell style={{ textAlign: "end" }}>USD {tier.net_profit_usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                       <TableCell style={{ textAlign: "end" }}>{tier.profit_factor.toFixed(2)}</TableCell>
