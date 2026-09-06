@@ -35,7 +35,7 @@ export interface SimulationReplayCanvasProps {
 
 export function SimulationReplayCanvas({
   ticks = [],
-  symbol = "PRIMARY ASSET",
+  symbol = "PRIMARY SECURITY",
 }: SimulationReplayCanvasProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -147,22 +147,23 @@ export function SimulationReplayCanvas({
     { label: ticks[ticks.length - 1].date, x: width - paddingRight },
   ];
 
-  // Active allocation calculation
-  const activePositionValue = currentTick.price * currentTick.position_shares;
-  const allocationPct =
-    currentTick.portfolio_value > 0
-      ? (Math.abs(activePositionValue) / currentTick.portfolio_value) * 100
-      : 0;
+  // Active allocation provided directly by backend domain calculation
+  const allocationPct = currentTick.allocation_pct ?? 0;
 
-  // Determine action badge
-  const isBuy = currentTick.action_note.includes("BUY");
-  const isExit = currentTick.action_note.includes("EXIT");
-  const isShort = currentTick.action_note.includes("SHORT");
+  // Determine action badge from structured action field
+  const isBuy = currentTick.action_type === "buy";
+  const isExit = currentTick.action_type === "exit";
+  const isShort = currentTick.action_type === "short";
 
-  // Filter all fill events for the trade actions log
+  // Filter all fill events (buy, exit, short) for the trade actions log
   const fillEvents = ticks
-    .map((t, idx) => ({ tick: t, index: idx }))
-    .filter((item) => item.tick.action_note.includes("BUY") || item.tick.action_note.includes("EXIT"));
+    .map((tick, index) => ({ tick, index }))
+    .filter(
+      ({ tick }) =>
+        tick.action_type === "buy" ||
+        tick.action_type === "exit" ||
+        tick.action_type === "short",
+    );
 
   return (
     <VStack gap={4} style={{ width: "100%" }}>
@@ -175,7 +176,9 @@ export function SimulationReplayCanvas({
             ? "1px solid var(--color-text-green)"
             : isExit
               ? "1px solid var(--color-text-red)"
-              : "1px solid var(--color-border-emphasized)",
+              : isShort
+                ? "1px solid var(--color-text-orange)"
+                : "1px solid var(--color-border-emphasized)",
         }}
       >
         <VStack gap={2}>
@@ -191,7 +194,7 @@ export function SimulationReplayCanvas({
                         ? "▼ SHORT ACTION"
                         : "● HOLDING"
                 }
-                color={isBuy ? "green" : isExit ? "red" : isShort ? "purple" : "blue"}
+                color={isBuy ? "green" : isExit ? "red" : isShort ? "orange" : "blue"}
               />
               <Text weight="bold" size="lg">
                 Order Ticket: {currentTick.action_note}
@@ -408,7 +411,7 @@ export function SimulationReplayCanvas({
                 width: "100%",
                 height: "8px",
                 cursor: "pointer",
-                accentColor: "var(--color-icon-blue, #3b82f6)",
+                accentColor: "var(--color-icon-blue)",
               }}
             />
 
@@ -446,6 +449,15 @@ export function SimulationReplayCanvas({
                 </svg>
                 <Text size="sm" weight="bold" style={{ color: "var(--color-text-green)" }}>
                   ▲ BUY Fill
+                </Text>
+              </HStack>
+
+              <HStack gap={1} align="center">
+                <svg width="12" height="12">
+                  <polygon points="6,10 11,2 1,2" fill="var(--color-icon-orange)" />
+                </svg>
+                <Text size="sm" weight="bold" style={{ color: "var(--color-text-orange)" }}>
+                  ▼ SHORT Fill
                 </Text>
               </HStack>
 
@@ -518,8 +530,8 @@ export function SimulationReplayCanvas({
               style={{
                 width: "100%",
                 height: "288px",
-                backgroundColor: "var(--color-background-muted, #0f172a)",
-                borderRadius: "var(--radius-container, 8px)",
+                backgroundColor: "var(--color-background-muted)",
+                borderRadius: "var(--radius-container)",
               }}
               onMouseLeave={() => setHoverIndex(null)}
             >
@@ -599,20 +611,21 @@ export function SimulationReplayCanvas({
                 points={replayedPathPoints}
               />
 
-              {/* MANDATORY BUY ("▲ BUY") AND EXIT ("▼ EXIT") MARKERS ON PRICE BARS */}
+              {/* MANDATORY BUY, SHORT, AND EXIT MARKERS ON PRICE BARS */}
               {ticks.map((t, idx) => {
                 const tickX = paddingLeft + (idx / Math.max(1, ticks.length - 1)) * availableW;
                 const tickY =
                   height - paddingYBottom - ((t.price - minPrice) / priceRange) * availableH;
 
-                const hasBuy = t.action_note.includes("BUY");
-                const hasExit = t.action_note.includes("EXIT");
+                const isBuyMarker = t.action_type === "buy";
+                const isExitMarker = t.action_type === "exit";
+                const isShortMarker = t.action_type === "short";
 
-                if (!hasBuy && !hasExit) return null;
+                if (!isBuyMarker && !isExitMarker && !isShortMarker) return null;
 
                 const isCurrent = idx === currentIndex;
 
-                if (hasBuy) {
+                if (isBuyMarker) {
                   return (
                     <g
                       key={`buy-${idx}`}
@@ -628,7 +641,7 @@ export function SimulationReplayCanvas({
                         cy={tickY}
                         r={isCurrent ? 5 : 4}
                         fill="var(--color-text-green)"
-                        stroke="#fff"
+                        stroke="var(--color-background-surface)"
                         strokeWidth="1.5"
                       />
                       {/* Pin line connecting bar to marker */}
@@ -656,6 +669,50 @@ export function SimulationReplayCanvas({
                   );
                 }
 
+                if (isShortMarker) {
+                  return (
+                    <g
+                      key={`short-${idx}`}
+                      style={{ cursor: "pointer" }}
+                      onClick={() => {
+                        setIsPlaying(false);
+                        setCurrentIndex(idx);
+                      }}
+                    >
+                      {/* Price bar fill point dot */}
+                      <circle
+                        cx={tickX}
+                        cy={tickY}
+                        r={isCurrent ? 5 : 4}
+                        fill="var(--color-text-orange)"
+                        stroke="var(--color-background-surface)"
+                        strokeWidth="1.5"
+                      />
+                      {/* Pin line connecting bar to marker */}
+                      <line
+                        x1={tickX}
+                        y1={tickY}
+                        x2={tickX}
+                        y2={tickY - 16}
+                        stroke="var(--color-text-orange)"
+                        strokeWidth="1.5"
+                      />
+                      {/* Explicit "▼ SHORT" marker label */}
+                      <text
+                        x={tickX}
+                        y={tickY - 20}
+                        textAnchor="middle"
+                        fill="var(--color-text-orange)"
+                        fontSize="11"
+                        fontWeight="bold"
+                        fontFamily="var(--font-mono, monospace)"
+                      >
+                        ▼ SHORT
+                      </text>
+                    </g>
+                  );
+                }
+
                 return (
                   <g
                     key={`exit-${idx}`}
@@ -671,7 +728,7 @@ export function SimulationReplayCanvas({
                       cy={tickY}
                       r={isCurrent ? 5 : 4}
                       fill="var(--color-text-red)"
-                      stroke="#fff"
+                      stroke="var(--color-background-surface)"
                       strokeWidth="1.5"
                     />
                     {/* Pin line connecting bar to marker */}
@@ -714,7 +771,7 @@ export function SimulationReplayCanvas({
                 cy={currentY}
                 r={6}
                 fill="var(--color-icon-blue)"
-                stroke="#fff"
+                stroke="var(--color-background-surface)"
                 strokeWidth="2"
               />
 
@@ -805,7 +862,8 @@ export function SimulationReplayCanvas({
               <TableBody>
                 {fillEvents.map(({ tick: fillTick, index: fillIdx }) => {
                   const isCurrent = fillIdx === currentIndex;
-                  const isBuyFill = fillTick.action_note.includes("BUY");
+                  const isBuyFill = fillTick.action_type === "buy";
+                  const isShortFill = fillTick.action_type === "short";
                   return (
                     <TableRow
                       key={fillIdx}
@@ -823,8 +881,20 @@ export function SimulationReplayCanvas({
                       </TableCell>
                       <TableCell>
                         <Token
-                          label={isBuyFill ? "▲ BUY" : "▼ EXIT"}
-                          color={isBuyFill ? "green" : "red"}
+                          label={
+                            isBuyFill
+                              ? "▲ BUY"
+                              : isShortFill
+                                ? "▼ SHORT"
+                                : "▼ EXIT"
+                          }
+                          color={
+                            isBuyFill
+                              ? "green"
+                              : isShortFill
+                                ? "orange"
+                                : "red"
+                          }
                         />
                       </TableCell>
                       <TableCell style={{ textAlign: "end" }}>

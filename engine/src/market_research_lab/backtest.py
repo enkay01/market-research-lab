@@ -197,6 +197,9 @@ class ReplayTick:
     cash: float
     daily_pnl: float
     action_note: str
+    action_type: str = "hold_cash"
+    position_value: float = 0.0
+    allocation_pct: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -663,6 +666,7 @@ def run_backtest(
     total_dividends_credited = 0.0
     delistings_applied: list[str] = []
     replay_ticks: list[ReplayTick] = []
+    last_known_actual_close_prices: dict[str, float] = {}
     prior_portfolio_val: float = specification.starting_cash
 
     primary_symbol = universe[0]
@@ -834,6 +838,7 @@ def run_backtest(
         # -------------------------------------------------------------
         # STEP 2: Reconcile pending targets at today's open price
         # -------------------------------------------------------------
+        prior_primary_shares = positions.get(primary_symbol, 0.0)
         if pending_targets:
             # Calculate open portfolio value using today's open prices
             open_prices: dict[str, float] = {}
@@ -1548,26 +1553,74 @@ def run_backtest(
             )
         )
 
+        bar_primary = bars_by_symbol.get(primary_symbol, {}).get(date_str)
+        if bar_primary is not None:
+            last_known_actual_close_prices[primary_symbol] = bar_primary.close
+            primary_actual_close = bar_primary.close
+        elif primary_symbol in delisted_securities:
+            primary_actual_close = 0.0
+        else:
+            primary_actual_close = last_known_actual_close_prices.get(primary_symbol, 0.0)
+
         action_fill = next(
             (f for f in fills_today if f.security_id == primary_symbol),
-            (fills_today[0] if fills_today else None),
+            None,
         )
         if action_fill is not None:
-            if action_fill.side == "buy":
-                action_note = f"▲ BUY {action_fill.quantity:.2f} @ ${action_fill.price:.2f}"
-            elif abs(primary_shares) <= EPS:
-                action_note = (
-                    f"▼ EXIT position ({action_fill.quantity:.2f} @ ${action_fill.price:.2f})"
-                )
-            elif primary_shares < -EPS:
-                action_note = f"▼ SHORT {action_fill.quantity:.2f} @ ${action_fill.price:.2f}"
+            if prior_primary_shares < -EPS:
+                # Covering or reducing short
+                if action_fill.side == "buy":
+                    action_type = "exit"
+                    if abs(primary_shares) <= EPS:
+                        action_note = (
+                            f"▼ EXIT position ({action_fill.quantity:.2f} @ ${action_fill.price:.2f})"
+                        )
+                    elif primary_shares < -EPS:
+                        action_note = (
+                            f"▼ EXIT partial short cover ({action_fill.quantity:.2f} @ ${action_fill.price:.2f})"
+                        )
+                    else:
+                        action_note = (
+                            f"▼ EXIT short cover ({action_fill.quantity:.2f} @ ${action_fill.price:.2f})"
+                        )
+                else:
+                    action_type = "short"
+                    action_note = f"▼ SHORT {action_fill.quantity:.2f} @ ${action_fill.price:.2f}"
+            elif prior_primary_shares > EPS:
+                # Closing or reducing long
+                if action_fill.side == "sell":
+                    action_type = "exit"
+                    if abs(primary_shares) <= EPS:
+                        action_note = (
+                            f"▼ EXIT position ({action_fill.quantity:.2f} @ ${action_fill.price:.2f})"
+                        )
+                    elif primary_shares > EPS:
+                        action_note = (
+                            f"▼ EXIT partial ({action_fill.quantity:.2f} @ ${action_fill.price:.2f})"
+                        )
+                    else:
+                        action_note = (
+                            f"▼ EXIT position ({action_fill.quantity:.2f} @ ${action_fill.price:.2f})"
+                        )
+                else:
+                    action_type = "buy"
+                    action_note = f"▲ BUY {action_fill.quantity:.2f} @ ${action_fill.price:.2f}"
             else:
-                action_note = f"▼ EXIT {action_fill.quantity:.2f} @ ${action_fill.price:.2f}"
+                # Opening from flat
+                if action_fill.side == "buy":
+                    action_type = "buy"
+                    action_note = f"▲ BUY {action_fill.quantity:.2f} @ ${action_fill.price:.2f}"
+                else:
+                    action_type = "short"
+                    action_note = f"▼ SHORT {action_fill.quantity:.2f} @ ${action_fill.price:.2f}"
         elif primary_shares > EPS:
+            action_type = "hold_long"
             action_note = f"Hold Long ({primary_shares:.2f} shares)"
         elif primary_shares < -EPS:
+            action_type = "hold_short"
             action_note = f"Hold Short ({abs(primary_shares):.2f} shares)"
         else:
+            action_type = "hold_cash"
             action_note = "Hold Cash"
 
         signal_val = (
@@ -1575,16 +1628,23 @@ def run_backtest(
             if primary_target is not None
             else today_signal_weights.get(primary_symbol, 0.0)
         )
+        primary_pos_val = primary_shares * primary_actual_close
+        primary_alloc_pct = (
+            (abs(primary_pos_val) / portfolio_val * 100.0) if portfolio_val > 0.0 else 0.0
+        )
         replay_ticks.append(
             ReplayTick(
                 date=date_str,
-                price=round(primary_close, 4),
+                price=round(primary_actual_close, 4),
                 signal=round(signal_val, 6),
                 position_shares=round(primary_shares, 6),
                 portfolio_value=round(portfolio_val, 4),
                 cash=round(cash, 4),
                 daily_pnl=round(portfolio_val - prior_portfolio_val, 4),
                 action_note=action_note,
+                action_type=action_type,
+                position_value=round(primary_pos_val, 4),
+                allocation_pct=round(primary_alloc_pct, 4),
             )
         )
         prior_portfolio_val = portfolio_val

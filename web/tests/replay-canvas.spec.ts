@@ -10,6 +10,9 @@ const mockReplayTicks = [
     cash: 100000.0,
     daily_pnl: 0.0,
     action_note: "Hold Cash",
+    action_type: "hold_cash",
+    position_value: 0.0,
+    allocation_pct: 0.0,
   },
   {
     date: "2024-01-03",
@@ -20,6 +23,9 @@ const mockReplayTicks = [
     cash: 1200.0,
     daily_pnl: 0.0,
     action_note: "▲ BUY 650.00 @ $152.00",
+    action_type: "buy",
+    position_value: 98800.0,
+    allocation_pct: 98.8,
   },
   {
     date: "2024-01-04",
@@ -30,6 +36,9 @@ const mockReplayTicks = [
     cash: 1200.0,
     daily_pnl: 1950.0,
     action_note: "Hold Long (650.00 shares)",
+    action_type: "hold_long",
+    position_value: 100750.0,
+    allocation_pct: 98.8,
   },
   {
     date: "2024-01-05",
@@ -40,6 +49,9 @@ const mockReplayTicks = [
     cash: 1200.0,
     daily_pnl: 1950.0,
     action_note: "Hold Long (650.00 shares)",
+    action_type: "hold_long",
+    position_value: 102700.0,
+    allocation_pct: 98.8,
   },
   {
     date: "2024-01-08",
@@ -50,6 +62,9 @@ const mockReplayTicks = [
     cash: 105200.0,
     daily_pnl: 1300.0,
     action_note: "▼ EXIT position (650.00 @ $160.00)",
+    action_type: "exit",
+    position_value: 0.0,
+    allocation_pct: 0.0,
   },
   {
     date: "2024-01-09",
@@ -60,6 +75,9 @@ const mockReplayTicks = [
     cash: 105200.0,
     daily_pnl: 0.0,
     action_note: "Hold Cash",
+    action_type: "hold_cash",
+    position_value: 0.0,
+    allocation_pct: 0.0,
   },
 ];
 
@@ -292,22 +310,26 @@ test("Tab 3 interactive simulation replay canvas renders price path, explicit ax
   await expect(page.getByText("$105,200").first()).toBeVisible();
   await expect(page.getByText("+$1300.00").first()).toBeVisible();
 
-  // 11. Verify playback speed toggles (0.5x, 1x, 2x, 4x) update stepping cadence
-  const speedHalf = page.getByText("0.5x").first();
+  // 11. Verify playback speed toggles (0.5x, 1x, 2x, 4x) update selected state
+  const speedHalf = page.getByRole("radio", { name: "0.5x" });
   await expect(speedHalf).toBeVisible();
   await speedHalf.click();
+  await expect(speedHalf).toBeChecked();
 
-  const speed2x = page.getByText("2x").first();
+  const speed2x = page.getByRole("radio", { name: "2x" });
   await expect(speed2x).toBeVisible();
   await speed2x.click();
+  await expect(speed2x).toBeChecked();
 
-  const speed4x = page.getByText("4x").first();
+  const speed4x = page.getByRole("radio", { name: "4x" });
   await expect(speed4x).toBeVisible();
   await speed4x.click();
+  await expect(speed4x).toBeChecked();
 
-  const speed1x = page.getByText("1x").first();
+  const speed1x = page.getByRole("radio", { name: "1x" });
   await expect(speed1x).toBeVisible();
   await speed1x.click();
+  await expect(speed1x).toBeChecked();
 
   // 12. Test Step Navigation buttons
   const stepPrev = page.getByRole("button", { name: "⏮ Step" });
@@ -331,7 +353,7 @@ test("Tab 3 interactive simulation replay canvas renders price path, explicit ax
   await expect(page.getByText("Order Ticket: ▼ EXIT position (650.00 @ $160.00)")).toBeVisible();
 });
 
-test("Playback speed toggle updates stepping cadence during active playback", async ({ page }) => {
+test("Playback speed toggle updates stepping cadence at 1200, 600, 300, and 150 ms", async ({ page }) => {
   await page.route("**/api/health", (route) => route.fulfill({ json: { status: "ok" } }));
   await page.route("**/api/projects", (route) =>
     route.fulfill({
@@ -363,26 +385,68 @@ test("Playback speed toggle updates stepping cadence during active playback", as
   const runVerdictBtn = page.getByRole("button", { name: /Run Backtest & Generate Verdict/i });
   await runVerdictBtn.click();
 
+  // Wait for verdict execution to complete before switching tabs
+  await expect(page.getByText("Strategy Clears All Hurdle Gates")).toBeVisible();
+
   const tab3 = page.getByText("3. Replay & Trade Actions");
   await tab3.click();
-  await page.waitForTimeout(300);
+  const scrubber = page.getByTestId("timeline-scrubber");
+  await expect(scrubber).toBeVisible();
 
-  // Switch to fastest speed 4x (150ms per step)
-  const speed4x = page.getByText("4x").first();
+  // Ensure playback starts from index 0
+  const resetBtn = page.getByRole("button", { name: "↺ Reset" });
+  await resetBtn.click();
+  await expect(page.getByText("Active: 2024-01-02")).toBeVisible();
+
+  // 1. Test 4x speed (150ms cadence)
+  const speed4x = page.getByRole("radio", { name: "4x" });
   await speed4x.click();
+  await expect(speed4x).toBeChecked();
 
-  // Click Play Replay
   const playBtn = page.getByRole("button", { name: /Play Replay/i });
   await playBtn.click();
 
-  // Wait 400ms (at 150ms/step, should advance at least 2 steps)
-  await page.waitForTimeout(400);
-
-  // Pause
+  // At 150ms cadence, after 220ms the index should have stepped to index 1 (2024-01-03)
+  await page.waitForTimeout(220);
+  await expect(page.getByText("Active: 2024-01-03")).toBeVisible();
   const pauseBtn = page.getByRole("button", { name: /Pause/i });
   await pauseBtn.click();
 
-  // Verify timeline advanced beyond Day 0
-  await expect(page.getByText("Active: 2024-01-02")).not.toBeVisible();
+  // 2. Test 2x speed (300ms cadence)
+  const speed2x = page.getByRole("radio", { name: "2x" });
+  await speed2x.click();
+  await expect(speed2x).toBeChecked();
+
+  await playBtn.click();
+  // At 300ms cadence, after 380ms the index should have stepped to index 2 (2024-01-04)
+  await page.waitForTimeout(380);
+  await expect(page.getByText("Active: 2024-01-04")).toBeVisible();
+  await pauseBtn.click();
+
+  // 3. Test 1x speed (600ms cadence)
+  const speed1x = page.getByRole("radio", { name: "1x" });
+  await speed1x.click();
+  await expect(speed1x).toBeChecked();
+
+  await playBtn.click();
+  // At 600ms cadence, after 700ms the index should have stepped to index 3 (2024-01-05)
+  await page.waitForTimeout(700);
+  await expect(page.getByText("Active: 2024-01-05")).toBeVisible();
+  await pauseBtn.click();
+
+  // 4. Test 0.5x speed (1200ms cadence)
+  const speed05x = page.getByRole("radio", { name: "0.5x" });
+  await speed05x.click();
+  await expect(speed05x).toBeChecked();
+
+  await playBtn.click();
+  // At 1200ms cadence, after 500ms (<1200ms) index must still be index 3
+  await page.waitForTimeout(500);
+  await expect(page.getByText("Active: 2024-01-05")).toBeVisible();
+
+  // After 850ms more (total 1350ms > 1200ms), index steps to index 4 (2024-01-08)
+  await page.waitForTimeout(850);
+  await expect(page.getByText("Active: 2024-01-08")).toBeVisible();
+  await pauseBtn.click();
 });
 

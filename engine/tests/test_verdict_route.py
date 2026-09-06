@@ -119,6 +119,9 @@ def test_post_verdict_success(test_client: TestClient) -> None:
     assert "cash" in first_tick
     assert "daily_pnl" in first_tick
     assert "action_note" in first_tick
+    assert "action_type" in first_tick
+    assert "position_value" in first_tick
+    assert "allocation_pct" in first_tick
 
 
 def test_post_verdict_invalid_holdout_split(test_client: TestClient) -> None:

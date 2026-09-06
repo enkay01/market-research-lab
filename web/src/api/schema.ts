@@ -2055,6 +2055,22 @@ export interface components {
             daily_pnl: number;
             /** Action Note */
             action_note: string;
+            /**
+             * Action Type
+             * @default hold_cash
+             * @enum {string}
+             */
+            action_type: "buy" | "exit" | "short" | "hold_long" | "hold_short" | "hold_cash";
+            /**
+             * Position Value
+             * @default 0
+             */
+            position_value: number;
+            /**
+             * Allocation Pct
+             * @default 0
+             */
+            allocation_pct: number;
         };
         /** RunResponse */
         RunResponse: {

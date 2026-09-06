@@ -225,6 +225,9 @@ class ReplayTickResponse(BaseModel):
     cash: float
     daily_pnl: float
     action_note: str
+    action_type: Literal["buy", "exit", "short", "hold_long", "hold_short", "hold_cash"] = "hold_cash"
+    position_value: float = 0.0
+    allocation_pct: float = 0.0
 
 
 class BacktestResultResponse(BaseModel):
@@ -932,6 +935,9 @@ def evaluate_strategy_verdict_route(
                 cash=tick.cash,
                 daily_pnl=tick.daily_pnl,
                 action_note=tick.action_note,
+                action_type=tick.action_type,  # type: ignore[arg-type]
+                position_value=tick.position_value,
+                allocation_pct=tick.allocation_pct,
             )
             for tick in domain_result.replay_ticks
         ],
