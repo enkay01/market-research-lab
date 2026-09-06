@@ -692,6 +692,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/backtests/screener": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Evaluate Strategy Screener Route */
+        post: operations["evaluate_strategy_screener_route_api_projects__project_id__backtests_screener_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/options-backtests": {
         parameters: {
             query?: never;
@@ -1298,6 +1315,23 @@ export interface components {
             definition: {
                 [key: string]: components["schemas"]["JsonValue-Output"];
             };
+        };
+        /** DiagnosticBannerResponse */
+        DiagnosticBannerResponse: {
+            /** Market Edge Detected */
+            market_edge_detected: boolean;
+            /** Edge Distribution */
+            edge_distribution: string;
+            /** Headline */
+            headline: string;
+            /** Summary */
+            summary: string;
+            /** Total Securities */
+            total_securities: number;
+            /** Positive Edge Securities */
+            positive_edge_securities: number;
+            /** Market Breadth Pct */
+            market_breadth_pct: number;
         };
         /** DownloadEventResponse */
         DownloadEventResponse: {
@@ -2093,6 +2127,31 @@ export interface components {
             /** Saved At */
             saved_at: string;
         };
+        /** ScreenerCandidateResponse */
+        ScreenerCandidateResponse: {
+            /** Rank */
+            rank: number;
+            /** Symbol */
+            symbol: string;
+            /** Name */
+            name: string;
+            /** Sector */
+            sector: string;
+            /** Strategy Return */
+            strategy_return: number;
+            /** Benchmark Return */
+            benchmark_return: number;
+            /** Net Edge */
+            net_edge: number;
+            /** Win Rate */
+            win_rate: number;
+            /** Profit Factor */
+            profit_factor: number;
+            /** Trades Count */
+            trades_count: number;
+            /** Status */
+            status: string;
+        };
         /** SecurityListSummaryResponse */
         SecurityListSummaryResponse: {
             /** Id */
@@ -2241,6 +2300,51 @@ export interface components {
             /** Options */
             options?: string[] | null;
         };
+        /** StrategyScreenerRequest */
+        StrategyScreenerRequest: {
+            /** Strategy Name */
+            strategy_name: string;
+            /**
+             * Strategy Revision
+             * @default v1
+             */
+            strategy_revision: string;
+            /** Dataset Version Id */
+            dataset_version_id?: string | null;
+            /** Universe Preset */
+            universe_preset?: string | null;
+            /** Symbols */
+            symbols?: string[];
+            /**
+             * Benchmark Symbol
+             * @default SPY
+             */
+            benchmark_symbol: string;
+            /** Start Date */
+            start_date?: string | null;
+            /** End Date */
+            end_date?: string | null;
+            /**
+             * Starting Cash
+             * @default 100000
+             */
+            starting_cash: number;
+            /** Parameters */
+            parameters?: {
+                [key: string]: components["schemas"]["JsonValue-Input"];
+            };
+            execution?: components["schemas"]["ExecutionModelAssumptionsRequest"];
+        };
+        /** StrategyScreenerResponse */
+        StrategyScreenerResponse: {
+            /** Strategy Name */
+            strategy_name: string;
+            /** Benchmark Symbol */
+            benchmark_symbol: string;
+            diagnostic_banner: components["schemas"]["DiagnosticBannerResponse"];
+            /** Candidates */
+            candidates: components["schemas"]["ScreenerCandidateResponse"][];
+        };
         /** StrategyTargetResponse */
         StrategyTargetResponse: {
             /** Security Id */
@@ -2328,6 +2432,7 @@ export interface components {
             equity_curve: components["schemas"]["VerdictEquityPointResponse"][];
             /** Friction Ladder */
             friction_ladder: components["schemas"]["FrictionTierResponse"][];
+            screener_sweep?: components["schemas"]["StrategyScreenerResponse"] | null;
         };
         /** TradeResponse */
         TradeResponse: {
@@ -3904,6 +4009,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StrategyVerdictResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    evaluate_strategy_screener_route_api_projects__project_id__backtests_screener_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StrategyScreenerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyScreenerResponse"];
                 };
             };
             /** @description Validation Error */

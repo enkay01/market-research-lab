@@ -63,6 +63,10 @@ export type GateResult = components["schemas"]["GateResultResponse"];
 export type PartitionMetrics = components["schemas"]["PartitionMetricsResponse"];
 export type VerdictEquityPoint = components["schemas"]["VerdictEquityPointResponse"];
 export type FrictionTier = components["schemas"]["FrictionTierResponse"];
+export type ScreenerCandidate = components["schemas"]["ScreenerCandidateResponse"];
+export type DiagnosticBanner = components["schemas"]["DiagnosticBannerResponse"];
+export type StrategyScreenerResponse = components["schemas"]["StrategyScreenerResponse"];
+export type StrategyScreenerRequest = components["schemas"]["StrategyScreenerRequest"];
 
 export interface OptionsGreeks {
   delta: number;
@@ -671,6 +675,13 @@ export const api = {
   evaluateVerdict: (projectId: string, request: StrategyVerdictRequest) =>
     dataOrThrow<StrategyVerdictResponse>(
       client.POST("/api/projects/{project_id}/backtests/verdict", {
+        params: { path: { project_id: projectId } },
+        body: request,
+      }),
+    ),
+  runScreenerSweep: (projectId: string, request: StrategyScreenerRequest) =>
+    dataOrThrow<StrategyScreenerResponse>(
+      client.POST("/api/projects/{project_id}/backtests/screener", {
         params: { path: { project_id: projectId } },
         body: request,
       }),

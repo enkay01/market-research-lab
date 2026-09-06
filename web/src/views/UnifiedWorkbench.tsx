@@ -23,6 +23,7 @@ import { EquityCurveCanvas } from "./EquityCurveCanvas";
 import {
   api,
   type Project,
+  type StrategyScreenerResponse,
   type StrategyVerdictResponse,
 } from "../api/client";
 
@@ -99,8 +100,12 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
 
   // Live verdict execution result
   const [verdictResult, setVerdictResult] = useState<StrategyVerdictResponse | null>(null);
+  const [selectedSecurity, setSelectedSecurity] = useState<string | null>(null);
+  const [screenerResult, setScreenerResult] = useState<StrategyScreenerResponse | null>(null);
+  const [isScreenerLoading, setIsScreenerLoading] = useState(false);
+  const [auditNotification, setAuditNotification] = useState<string | null>(null);
 
-  async function handleRunEvaluation() {
+  async function handleRunEvaluation(overrideSymbol?: string) {
     if (!project?.id) {
       setErrorMessage("Please select or create a project before running the evaluation.");
       return;
@@ -118,11 +123,15 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
     const holdoutRatio =
       holdoutSplit in splitMap ? splitMap[holdoutSplit as keyof typeof splitMap] : 0.25;
 
+    const targetSymbol = overrideSymbol ?? selectedSecurity ?? undefined;
+
     try {
       const response = await api.evaluateVerdict(project.id, {
         strategy_name: strategyModel,
         strategy_revision: "v1",
         universe_preset: universe,
+        symbol: targetSymbol,
+        symbols: targetSymbol ? [targetSymbol] : undefined,
         benchmark_symbol: benchmark.toUpperCase(),
         holdout_ratio: holdoutRatio,
         starting_cash: parseFloat(initialCapital) || 100_000.0,
@@ -150,8 +159,16 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
       });
 
       setVerdictResult(response);
+      if (response.screener_sweep) {
+        setScreenerResult(response.screener_sweep);
+      }
       setHasExecuted(true);
-      setActiveTab("summary");
+      if (overrideSymbol) {
+        setSelectedSecurity(overrideSymbol);
+        setAuditNotification(
+          `Security ${overrideSymbol} loaded into primary configuration. 5-gate statistical audit completed.`
+        );
+      }
     } catch (err: unknown) {
       setErrorMessage(
         err instanceof Error ? err.message : "Failed to execute strategy verdict."
@@ -159,6 +176,53 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
     } finally {
       setIsLoading(false);
     }
+  }
+
+  async function handleRunScreener() {
+    if (!project?.id) return;
+    setIsScreenerLoading(true);
+    try {
+      const sweep = await api.runScreenerSweep(project.id, {
+        strategy_name: strategyModel,
+        strategy_revision: "v1",
+        universe_preset: universe,
+        benchmark_symbol: benchmark.toUpperCase(),
+        starting_cash: parseFloat(initialCapital) || 100_000.0,
+        parameters: {
+          fast_period: parseInt(fastPeriod, 10) || 10,
+          slow_period: parseInt(slowPeriod, 10) || 50,
+          period: 14,
+          stop_loss: stopLoss,
+          take_profit: takeProfit,
+          max_hold: maxHold,
+        },
+        execution: {
+          schedule: "daily",
+          commission_rate: (parseFloat(commissionBps) || 0) / 10000.0,
+          slippage_rate: (parseFloat(slippageBps) || 0) / 10000.0,
+          allow_shorting: true,
+          borrow_fee_rate: 0.0,
+          cash_interest_rate: 0.0,
+          unavailable_borrow: [],
+          max_leverage: 1.0,
+          margin_requirement: 1.0,
+          maintenance_margin: 0.25,
+          leverage_mode: "reject",
+        },
+      });
+      setScreenerResult(sweep);
+    } catch (err: unknown) {
+      setErrorMessage(
+        err instanceof Error ? err.message : "Failed to execute screener sweep."
+      );
+    } finally {
+      setIsScreenerLoading(false);
+    }
+  }
+
+  async function handleSelectSecurity(symbol: string) {
+    setSelectedSecurity(symbol);
+    await handleRunEvaluation(symbol);
   }
 
   // --------------------------------------------------------------------------
@@ -389,7 +453,7 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
                 label={isLoading ? "Executing..." : "▶ Run Backtest & Generate Verdict"}
                 variant="primary"
                 size="md"
-                onClick={handleRunEvaluation}
+                onClick={() => handleRunEvaluation()}
                 isDisabled={isLoading}
               />
             </HStack>
@@ -439,7 +503,7 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
                 {verdictResult.headline_verdict}
               </Text>
               <Text size="sm" type="supporting">
-                Universe: {universe.toUpperCase()} · Benchmark: {benchmark.toUpperCase()} ETF · Evaluated: 5 Hurdle Gates (1, 2, 3, 4, 5)
+                {selectedSecurity ? `Target: ${selectedSecurity} · ` : ""}Universe: {universe.toUpperCase()} · Benchmark: {benchmark.toUpperCase()} ETF · Evaluated: 5 Hurdle Gates (1, 2, 3, 4, 5)
               </Text>
             </VStack>
           </HStack>
@@ -789,18 +853,222 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
         </VStack>
       )}
 
-      {/* TABS 3-5: PENDING FUTURE TICKETS (#117-#119) */}
-      {activeTab !== "summary" && activeTab !== "gates" && (
+      {/* TAB 4: MARKET-WIDE DIAGNOSTIC SCREENER SWEEP (Issue #118) */}
+      {activeTab === "screener" && (
+        <VStack gap={4}>
+          {auditNotification && (
+            <Banner
+              status="success"
+              title="Primary Configuration Updated"
+              description={auditNotification}
+            />
+          )}
+
+          {screenerResult ? (
+            <>
+              {/* Diagnostic Banner: Surfaces whether edge exists across market or is isolated */}
+              <Card
+                padding={3}
+                style={{
+                  backgroundColor: "var(--color-background-wash)",
+                  border: `1px solid ${
+                    screenerResult.diagnostic_banner.market_edge_detected
+                      ? "var(--color-text-green)"
+                      : screenerResult.diagnostic_banner.edge_distribution === "ISOLATED"
+                      ? "var(--color-text-blue)"
+                      : "var(--color-text-red)"
+                  }`,
+                }}
+              >
+                <VStack gap={2}>
+                  <HStack justify="between" align="center" style={{ flexWrap: "wrap", gap: "12px" }}>
+                    <HStack gap={2} align="center">
+                      <Token
+                        label={
+                          screenerResult.diagnostic_banner.edge_distribution === "MARKET_WIDE"
+                            ? "● MARKET-WIDE EDGE"
+                            : screenerResult.diagnostic_banner.edge_distribution === "ISOLATED"
+                            ? "● ISOLATED EDGE"
+                            : "● NO MARKET EDGE"
+                        }
+                        color={
+                          screenerResult.diagnostic_banner.market_edge_detected
+                            ? "green"
+                            : screenerResult.diagnostic_banner.edge_distribution === "ISOLATED"
+                            ? "blue"
+                            : "red"
+                        }
+                      />
+                      <Text weight="bold" size="lg">
+                        {screenerResult.diagnostic_banner.headline}
+                      </Text>
+                    </HStack>
+                    <HStack gap={2} align="center">
+                      <Token
+                        label={`Market Breadth: ${screenerResult.diagnostic_banner.positive_edge_securities}/${screenerResult.diagnostic_banner.total_securities} (${screenerResult.diagnostic_banner.market_breadth_pct.toFixed(1)}%)`}
+                        color={screenerResult.diagnostic_banner.market_edge_detected ? "green" : "gray"}
+                      />
+                      <Button
+                        label={isScreenerLoading ? "Sweeping..." : "↻ Refresh Sweep"}
+                        variant="secondary"
+                        size="sm"
+                        onClick={handleRunScreener}
+                        isDisabled={isScreenerLoading}
+                      />
+                    </HStack>
+                  </HStack>
+                  <Divider />
+                  <Text size="sm" type="supporting">
+                    {screenerResult.diagnostic_banner.summary}
+                  </Text>
+                </VStack>
+              </Card>
+
+              {/* Screener Table */}
+              <Card padding={3}>
+                <VStack gap={3}>
+                  <HStack justify="between" align="center" style={{ flexWrap: "wrap", gap: "8px" }}>
+                    <VStack gap={0}>
+                      <Text weight="bold">Universe Diagnostic Screener Table</Text>
+                      <Text size="sm" type="supporting">
+                        Ranked descending by Net Edge (Strategy Return minus {benchmark.toUpperCase()} Benchmark Return). Click any row to load into primary configuration.
+                      </Text>
+                    </VStack>
+                    {selectedSecurity && (
+                      <Token label={`Auditing: ${selectedSecurity}`} color="blue" />
+                    )}
+                  </HStack>
+
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHeaderCell style={{ width: "50px" }}>Rank</TableHeaderCell>
+                        <TableHeaderCell>Symbol</TableHeaderCell>
+                        <TableHeaderCell>Name</TableHeaderCell>
+                        <TableHeaderCell>Sector</TableHeaderCell>
+                        <TableHeaderCell style={{ textAlign: "end" }}>Strategy Return</TableHeaderCell>
+                        <TableHeaderCell style={{ textAlign: "end" }}>Benchmark ({benchmark.toUpperCase()})</TableHeaderCell>
+                        <TableHeaderCell style={{ textAlign: "end" }}>Net Edge</TableHeaderCell>
+                        <TableHeaderCell style={{ textAlign: "end" }}>Trades</TableHeaderCell>
+                        <TableHeaderCell style={{ textAlign: "center" }}>Status</TableHeaderCell>
+                        <TableHeaderCell style={{ textAlign: "center" }}>Audit</TableHeaderCell>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {screenerResult.candidates.map((cand) => {
+                        const isSelected = selectedSecurity === cand.symbol;
+                        return (
+                          <TableRow
+                            key={cand.symbol}
+                            onClick={() => handleSelectSecurity(cand.symbol)}
+                            style={{
+                              cursor: "pointer",
+                              backgroundColor: isSelected ? "var(--color-background-wash)" : undefined,
+                            }}
+                          >
+                            <TableCell>
+                              <Text weight="bold">#{cand.rank}</Text>
+                            </TableCell>
+                            <TableCell>
+                              <Text weight="bold">{cand.symbol}</Text>
+                            </TableCell>
+                            <TableCell>
+                              <Text size="sm" type="supporting">{cand.name}</Text>
+                            </TableCell>
+                            <TableCell>
+                              <Token label={cand.sector} color="gray" />
+                            </TableCell>
+                            <TableCell
+                              style={{
+                                textAlign: "end",
+                                color:
+                                  cand.strategy_return >= 0
+                                    ? "var(--color-text-green)"
+                                    : "var(--color-text-red)",
+                              }}
+                            >
+                              {cand.strategy_return >= 0 ? "+" : ""}
+                              {(cand.strategy_return * 100).toFixed(1)}%
+                            </TableCell>
+                            <TableCell style={{ textAlign: "end" }}>
+                              {cand.benchmark_return >= 0 ? "+" : ""}
+                              {(cand.benchmark_return * 100).toFixed(1)}%
+                            </TableCell>
+                            <TableCell
+                              style={{
+                                textAlign: "end",
+                                fontWeight: "bold",
+                                color:
+                                  cand.net_edge > 0
+                                    ? "var(--color-text-green)"
+                                    : "var(--color-text-red)",
+                              }}
+                            >
+                              {cand.net_edge > 0 ? "+" : ""}
+                              {(cand.net_edge * 100).toFixed(1)}%
+                            </TableCell>
+                            <TableCell style={{ textAlign: "end" }}>
+                              {cand.trades_count}
+                            </TableCell>
+                            <TableCell style={{ textAlign: "center" }}>
+                              <Token
+                                label={cand.status}
+                                color={cand.status === "PASS" ? "green" : "red"}
+                              />
+                            </TableCell>
+                            <TableCell style={{ textAlign: "center" }}>
+                              <Button
+                                label={isSelected ? "Audited ✓" : "Audit 5 Gates →"}
+                                variant={isSelected ? "secondary" : "primary"}
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleSelectSecurity(cand.symbol);
+                                }}
+                              />
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </VStack>
+              </Card>
+            </>
+          ) : (
+            <Card padding={4}>
+              <VStack gap={3} align="center" style={{ textAlign: "center", padding: "32px 16px" }}>
+                <Token label="SCREENER READY" color="purple" />
+                <Text weight="bold" size="lg">
+                  Market-Wide Diagnostic Universe Screener
+                </Text>
+                <Text size="sm" type="supporting" style={{ maxWidth: "600px" }}>
+                  Execute a cross-asset sweep evaluating the active strategy rules across every security in the {universe.toUpperCase()} universe against {benchmark.toUpperCase()}.
+                </Text>
+                <Button
+                  label={isScreenerLoading ? "Executing Screener Sweep..." : "⚡ Run Market-Wide Screener Sweep"}
+                  variant="primary"
+                  size="md"
+                  onClick={handleRunScreener}
+                  isDisabled={isScreenerLoading}
+                />
+              </VStack>
+            </Card>
+          )}
+        </VStack>
+      )}
+
+      {/* TABS 3 & 5: PENDING FUTURE TICKETS (#117 & #119) */}
+      {(activeTab === "replay" || activeTab === "ledger") && (
         <Card padding={4}>
           <VStack gap={3} align="center" style={{ textAlign: "center", padding: "32px 16px" }}>
             <Token label="AVAILABLE IN EPIC PHASE 2" color="purple" />
             <Text weight="bold" size="lg">
               {activeTab === "replay" && "Interactive Simulation Replay Canvas"}
-              {activeTab === "screener" && "Market-Wide Diagnostic Universe Screener"}
               {activeTab === "ledger" && "Daily Mark-to-Market Ledger Audit"}
             </Text>
             <Text size="sm" type="supporting" style={{ maxWidth: "600px" }}>
-              This tab is scheduled for implementation in tickets #117–#119.
+              This tab is scheduled for implementation in tickets #117 and #119.
             </Text>
             <Button
               label="Return to Tab 1 (Verdict &amp; Summary)"

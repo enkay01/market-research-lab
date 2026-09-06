@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
@@ -37,6 +39,15 @@ from ..projects import (
     BacktestRunRecord,
     FailedBacktestRunRecord,
     ProjectStore,
+)
+from ..strategy_screener import (
+    KNOWN_SECTORS,
+    KNOWN_SECURITY_NAMES,
+    DiagnosticBanner,
+    ScreenerCandidate,
+    StrategyScreenerResult,
+    StrategyScreenerSpecification,
+    evaluate_screener_sweep,
 )
 from ..strategy_verdict import (
     StrategyVerdictSpecification,
@@ -690,6 +701,184 @@ class VerdictEquityPointResponse(BaseModel):
     is_holdout: bool
 
 
+class ScreenerCandidateResponse(BaseModel):
+    rank: int
+    symbol: str
+    name: str
+    sector: str
+    strategy_return: float
+    benchmark_return: float
+    net_edge: float
+    win_rate: float
+    profit_factor: float
+    trades_count: int
+    status: str
+
+
+class DiagnosticBannerResponse(BaseModel):
+    market_edge_detected: bool
+    edge_distribution: str
+    headline: str
+    summary: str
+    total_securities: int
+    positive_edge_securities: int
+    market_breadth_pct: float
+
+
+class StrategyScreenerResponse(BaseModel):
+    strategy_name: str
+    benchmark_symbol: str
+    diagnostic_banner: DiagnosticBannerResponse
+    candidates: list[ScreenerCandidateResponse]
+
+
+class StrategyScreenerRequest(BaseModel):
+    strategy_name: str
+    strategy_revision: str = "v1"
+    dataset_version_id: str | None = None
+    universe_preset: str | None = None
+    symbols: list[str] = Field(default_factory=list)
+    benchmark_symbol: str = "SPY"
+    start_date: str | None = None
+    end_date: str | None = None
+    starting_cash: float = 100_000.0
+    parameters: dict[str, JsonValue] = Field(default_factory=dict)
+    execution: ExecutionModelAssumptionsRequest = Field(
+        default_factory=ExecutionModelAssumptionsRequest
+    )
+
+
+@dataclass(frozen=True)
+class ScreenerExecutionOptions:
+    market_store: MarketDataStore
+    dataset_version_id: str
+    target_symbols: tuple[str, ...]
+    benchmark_sym: str
+    strategy_name: str
+    strategy_revision: str = "v1"
+    start_date: str = ""
+    end_date: str = ""
+    starting_cash: float = 100_000.0
+    parameters: dict[str, JsonValue] = field(default_factory=dict)
+    execution_request: ExecutionModelAssumptionsRequest = field(
+        default_factory=ExecutionModelAssumptionsRequest
+    )
+
+
+def _execute_screener_sweep(options: ScreenerExecutionOptions) -> StrategyScreenerResponse:
+    if not options.target_symbols:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"No eligible symbols resolved for screening in dataset '{options.dataset_version_id}'.",
+        )
+
+    options.market_store.ensure_historical_eligibility(options.dataset_version_id)
+
+    bench_bars = options.market_store.history(options.dataset_version_id, symbol=options.benchmark_sym)
+    if not bench_bars:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Benchmark symbol '{options.benchmark_sym}' has no price history in dataset "
+                f"'{options.dataset_version_id}'."
+            ),
+        )
+
+    all_bars: list[DailyBar] = []
+    sec_names: dict[str, str] = {}
+    sec_sectors: dict[str, str] = {}
+
+    for sym in options.target_symbols:
+        bars_sec = options.market_store.history(options.dataset_version_id, symbol=sym)
+        all_bars.extend(bars_sec)
+        sec_obj = options.market_store.get_security(sym)
+        sec_names[sym] = sec_obj.name if (sec_obj and sec_obj.name) else KNOWN_SECURITY_NAMES.get(sym, sym)
+        sec_sectors[sym] = KNOWN_SECTORS.get(sym, "General")
+
+    if options.benchmark_sym not in options.target_symbols:
+        all_bars.extend(bench_bars)
+
+    all_corp_actions: list[CorporateAction] = []
+    for sym in options.target_symbols:
+        acts = options.market_store.corporate_actions(options.dataset_version_id, symbol=sym)
+        if isinstance(acts, list):
+            all_corp_actions.extend(acts)
+
+    session_dates = sorted({b.session_date for b in all_bars})
+    start_date = options.start_date or (session_dates[0] if session_dates else "")
+    end_date = options.end_date or (session_dates[-1] if session_dates else "")
+
+    screener_spec = StrategyScreenerSpecification(
+        strategy_name=options.strategy_name,
+        strategy_revision=options.strategy_revision,
+        dataset_version_id=options.dataset_version_id,
+        universe=options.target_symbols,
+        benchmark_security_id=options.benchmark_sym,
+        start_date=start_date,
+        end_date=end_date,
+        starting_cash=options.starting_cash,
+        parameters=options.parameters,
+        execution=ExecutionModelAssumptions(
+            schedule=options.execution_request.schedule,
+            commission_rate=options.execution_request.commission_rate,
+            slippage_rate=options.execution_request.slippage_rate,
+            allow_shorting=options.execution_request.allow_shorting,
+            borrow_fee_rate=options.execution_request.borrow_fee_rate,
+            cash_interest_rate=options.execution_request.cash_interest_rate,
+            unavailable_borrow=tuple(options.execution_request.unavailable_borrow),
+            max_leverage=options.execution_request.max_leverage,
+            margin_requirement=options.execution_request.margin_requirement,
+            maintenance_margin=options.execution_request.maintenance_margin,
+            leverage_mode=options.execution_request.leverage_mode,
+        ),
+        security_names=sec_names,
+        security_sectors=sec_sectors,
+    )
+
+    try:
+        domain_result = evaluate_screener_sweep(
+            screener_spec,
+            bars=all_bars,
+            corporate_actions=all_corp_actions,
+            benchmark_bars=bench_bars,
+        )
+    except BacktestError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(error),
+        ) from error
+
+    return StrategyScreenerResponse(
+        strategy_name=domain_result.specification.strategy_name,
+        benchmark_symbol=domain_result.benchmark_symbol,
+        diagnostic_banner=DiagnosticBannerResponse(
+            market_edge_detected=domain_result.diagnostic_banner.market_edge_detected,
+            edge_distribution=domain_result.diagnostic_banner.edge_distribution,
+            headline=domain_result.diagnostic_banner.headline,
+            summary=domain_result.diagnostic_banner.summary,
+            total_securities=domain_result.diagnostic_banner.total_securities,
+            positive_edge_securities=domain_result.diagnostic_banner.positive_edge_securities,
+            market_breadth_pct=domain_result.diagnostic_banner.market_breadth_pct,
+        ),
+        candidates=[
+            ScreenerCandidateResponse(
+                rank=c.rank,
+                symbol=c.symbol,
+                name=c.name,
+                sector=c.sector,
+                strategy_return=c.strategy_return,
+                benchmark_return=c.benchmark_return,
+                net_edge=c.net_edge,
+                win_rate=c.win_rate,
+                profit_factor=c.profit_factor,
+                trades_count=c.trades_count,
+                status=c.status,
+            )
+            for c in domain_result.candidates
+        ],
+    )
+
+
 class StrategyVerdictResponse(BaseModel):
     overall_passed: bool
     headline_verdict: str
@@ -702,6 +891,7 @@ class StrategyVerdictResponse(BaseModel):
     combined_metrics: PartitionMetricsResponse
     equity_curve: list[VerdictEquityPointResponse]
     friction_ladder: list[FrictionTierResponse]
+    screener_sweep: StrategyScreenerResponse | None = None
 
 
 @router.post(
@@ -828,6 +1018,29 @@ def evaluate_strategy_verdict_route(
             detail=str(error),
         ) from error
 
+    screener_target_syms = [s for s in target_symbols if s != benchmark_sym]
+    if not screener_target_syms:
+        all_ds_syms = {b.security_id for b in all_bars if b.security_id != benchmark_sym}
+        screener_target_syms = list(all_ds_syms) if all_ds_syms else list(target_symbols)
+
+    screener_response: StrategyScreenerResponse | None = None
+    if screener_target_syms:
+        with contextlib.suppress(BacktestError, HTTPException):
+            screener_options = ScreenerExecutionOptions(
+                market_store=market_store,
+                dataset_version_id=dataset_version_id,
+                target_symbols=tuple(screener_target_syms),
+                benchmark_sym=benchmark_sym,
+                strategy_name=request.strategy_name,
+                strategy_revision=request.strategy_revision,
+                start_date=start_date,
+                end_date=end_date,
+                starting_cash=request.starting_cash,
+                parameters=request.parameters,
+                execution_request=request.execution,
+            )
+            screener_response = _execute_screener_sweep(screener_options)
+
     return StrategyVerdictResponse(
         overall_passed=domain_result.overall_passed,
         headline_verdict=domain_result.headline_verdict,
@@ -909,4 +1122,66 @@ def evaluate_strategy_verdict_route(
             )
             for tier in domain_result.friction_ladder
         ],
+        screener_sweep=screener_response,
     )
+
+
+@router.post(
+    "/api/projects/{project_id}/backtests/screener",
+    response_model=StrategyScreenerResponse,
+    tags=["backtests"],
+)
+def evaluate_strategy_screener_route(
+    project_id: UUID,
+    request: StrategyScreenerRequest,
+    store: ProjectStore = Depends(get_project_store),
+    market_store: MarketDataStore = Depends(get_market_store),
+) -> StrategyScreenerResponse:
+    store.get_project(str(project_id))
+
+    dataset_version_id = request.dataset_version_id
+    if not dataset_version_id:
+        versions = [
+            v
+            for v in market_store.list_dataset_versions()
+            if v.dataset_type != DATASET_TYPE_CORPORATE_ACTIONS and not v.is_corporate_actions
+        ]
+        if not versions:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="No daily market bar datasets found in workspace.",
+            )
+        dataset_version_id = versions[0].id
+
+    target_symbols: list[str] = []
+    if request.symbols:
+        target_symbols = [s.strip().upper() for s in request.symbols if s.strip()]
+    elif request.universe_preset == "megacap":
+        megacaps = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA"]
+        dataset_bars = market_store.history(dataset_version_id)
+        available_syms = {b.security_id for b in dataset_bars}
+        matched = [s for s in megacaps if s in available_syms]
+        target_symbols = matched if matched else list(available_syms)
+    else:
+        dataset_bars = market_store.history(dataset_version_id)
+        target_symbols = list({b.security_id for b in dataset_bars})
+
+    benchmark_sym = (request.benchmark_symbol or "SPY").strip().upper()
+    target_symbols = [s for s in target_symbols if s != benchmark_sym]
+    if not target_symbols:
+        target_symbols = [benchmark_sym]
+
+    options = ScreenerExecutionOptions(
+        market_store=market_store,
+        dataset_version_id=dataset_version_id,
+        target_symbols=tuple(target_symbols),
+        benchmark_sym=benchmark_sym,
+        strategy_name=request.strategy_name,
+        strategy_revision=request.strategy_revision,
+        start_date=request.start_date or "",
+        end_date=request.end_date or "",
+        starting_cash=request.starting_cash,
+        parameters=request.parameters,
+        execution_request=request.execution,
+    )
+    return _execute_screener_sweep(options)
