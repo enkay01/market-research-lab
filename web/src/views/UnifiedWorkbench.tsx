@@ -20,6 +20,7 @@ import {
 } from "@astryxdesign/core";
 import { Selector } from "@astryxdesign/core/Selector";
 import { EquityCurveCanvas } from "./EquityCurveCanvas";
+import { SimulationReplayCanvas } from "./SimulationReplayCanvas";
 import {
   api,
   type Project,
@@ -789,18 +790,25 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
         </VStack>
       )}
 
-      {/* TABS 3-5: PENDING FUTURE TICKETS (#117-#119) */}
-      {activeTab !== "summary" && activeTab !== "gates" && (
+      {/* TAB 3: INTERACTIVE SIMULATION REPLAY CANVAS & TRADE ACTIONS (Issue #117) */}
+      {activeTab === "replay" && (
+        <SimulationReplayCanvas
+          ticks={verdictResult.replay_ticks}
+          symbol={universe === "megacap" ? "MEGACAP BASKET" : universe.toUpperCase()}
+        />
+      )}
+
+      {/* TABS 4-5: PENDING FUTURE TICKETS (#118-#119) */}
+      {(activeTab === "screener" || activeTab === "ledger") && (
         <Card padding={4}>
           <VStack gap={3} align="center" style={{ textAlign: "center", padding: "32px 16px" }}>
             <Token label="AVAILABLE IN EPIC PHASE 2" color="purple" />
             <Text weight="bold" size="lg">
-              {activeTab === "replay" && "Interactive Simulation Replay Canvas"}
               {activeTab === "screener" && "Market-Wide Diagnostic Universe Screener"}
               {activeTab === "ledger" && "Daily Mark-to-Market Ledger Audit"}
             </Text>
             <Text size="sm" type="supporting" style={{ maxWidth: "600px" }}>
-              This tab is scheduled for implementation in tickets #117–#119.
+              This tab is scheduled for implementation in tickets #118–#119.
             </Text>
             <Button
               label="Return to Tab 1 (Verdict &amp; Summary)"

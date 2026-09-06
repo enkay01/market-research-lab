@@ -22,6 +22,7 @@ from ..backtest import (
     BacktestError,
     BacktestSpecification,
     ExecutionModelAssumptions,
+    ReplayFillActionType,
     run_backtest,
 )
 from ..json_types import JsonValue
@@ -216,6 +217,27 @@ class BacktestMetricsResponse(BaseModel):
     num_fills: int
 
 
+class ReplayFillActionResponse(BaseModel):
+    action_type: ReplayFillActionType
+    quantity: float
+    execution_price: float
+    source_fill_id: str
+    source_fill_sequence: int
+
+
+class ReplayTickResponse(BaseModel):
+    date: str
+    price: float
+    signal: float
+    position_shares: float
+    portfolio_value: float
+    cash: float
+    daily_pnl: float
+    position_value: float = 0.0
+    allocation_pct: float = 0.0
+    fill_actions: list[ReplayFillActionResponse]
+
+
 class BacktestResultResponse(BaseModel):
     run_id: str | None = None
     strategy_revision: str | None = None
@@ -232,6 +254,7 @@ class BacktestResultResponse(BaseModel):
     benchmark_equity_curve: list[EquityPointResponse] = Field(default_factory=list)
     rejections: list[ConstraintRejectionResponse] = Field(default_factory=list)
     rankings: list[RankingResponse] = Field(default_factory=list)
+    replay_ticks: list[ReplayTickResponse] = Field(default_factory=list)
 
 
 class BacktestComparisonItemResponse(BaseModel):
@@ -702,6 +725,7 @@ class StrategyVerdictResponse(BaseModel):
     combined_metrics: PartitionMetricsResponse
     equity_curve: list[VerdictEquityPointResponse]
     friction_ladder: list[FrictionTierResponse]
+    replay_ticks: list[ReplayTickResponse] = Field(default_factory=list)
 
 
 @router.post(
@@ -908,5 +932,29 @@ def evaluate_strategy_verdict_route(
                 borrow_paid_usd=tier.borrow_paid_usd,
             )
             for tier in domain_result.friction_ladder
+        ],
+        replay_ticks=[
+            ReplayTickResponse(
+                date=tick.date,
+                price=tick.price,
+                signal=tick.signal,
+                position_shares=tick.position_shares,
+                portfolio_value=tick.portfolio_value,
+                cash=tick.cash,
+                daily_pnl=tick.daily_pnl,
+                position_value=tick.position_value,
+                allocation_pct=tick.allocation_pct,
+                fill_actions=[
+                    ReplayFillActionResponse(
+                        action_type=fa.action_type,
+                        quantity=fa.quantity,
+                        execution_price=fa.execution_price,
+                        source_fill_id=fa.source_fill_id,
+                        source_fill_sequence=fa.source_fill_sequence,
+                    )
+                    for fa in tick.fill_actions
+                ],
+            )
+            for tick in domain_result.replay_ticks
         ],
     )

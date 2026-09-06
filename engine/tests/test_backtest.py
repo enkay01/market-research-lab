@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import date, timedelta
+from typing import Literal
 
 import pytest
 
@@ -18,6 +19,8 @@ from market_research_lab.backtest import (
     BacktestParameterError,
     BacktestSpecification,
     ExecutionModelAssumptions,
+    Fill,
+    _build_replay_fill_actions,
     run_backtest,
 )
 from market_research_lab.market_data import DailyBar
@@ -370,6 +373,76 @@ def test_next_bar_fill_uses_open_not_close():
 
     assert result.fills[0].price == pytest.approx(bars[4].open)
     assert result.fills[0].price != pytest.approx(bars[4].close)
+
+
+def test_replay_uses_close_marks_when_execution_price_field_is_open():
+    closes = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0]
+    bars = [make_bar(d, c - 1.0, c) for d, c in zip(make_dates(len(closes)), closes)]
+    spec = dataclasses.replace(
+        make_spec(bars[0].session_date, bars[-1].session_date, 100000.0),
+        price_field="open",
+    )
+
+    result = run_backtest(spec, bars=bars)
+    buy_tick = result.replay_ticks[4]
+
+    assert buy_tick.price == bars[4].close
+    assert buy_tick.price != bars[4].open
+    assert buy_tick.fill_actions[0].execution_price == bars[4].open
+    assert buy_tick.portfolio_value == pytest.approx(
+        buy_tick.cash + buy_tick.position_shares * buy_tick.price
+    )
+    assert buy_tick.daily_pnl == pytest.approx(
+        buy_tick.portfolio_value - result.replay_ticks[3].portfolio_value
+    )
+
+
+def test_replay_fill_actions_preserve_source_order_and_reversals():
+    def replay_fill(
+        trade_id: str,
+        side: Literal["buy", "sell"],
+        quantity: float,
+    ) -> Fill:
+        return Fill(
+            trade_id=trade_id,
+            security_id="AAPL",
+            session_date="2024-01-05",
+            decision_time="2024-01-04T21:00:00Z",
+            side=side,
+            quantity=quantity,
+            price=10.0,
+            notional=quantity * (1 if side == "buy" else -1) * 10.0,
+            commission=0.0,
+            slippage_cost=0.0,
+            rationale="test",
+        )
+
+    long_to_short = _build_replay_fill_actions(
+        [
+            replay_fill("fill-sell", "sell", 8.0),
+            replay_fill("fill-cover", "buy", 2.0),
+        ],
+        position_before=5.0,
+    )
+
+    assert [
+        (action.action_type, action.quantity, action.source_fill_id, action.source_fill_sequence)
+        for action in long_to_short
+    ] == [
+        ("exit", 5.0, "fill-sell", 1),
+        ("short", 3.0, "fill-sell", 1),
+        ("exit", 2.0, "fill-cover", 2),
+    ]
+    assert sum(action.quantity for action in long_to_short[:2]) == 8.0
+
+    short_to_long = _build_replay_fill_actions(
+        [replay_fill("fill-buy", "buy", 8.0)],
+        position_before=-5.0,
+    )
+    assert [(action.action_type, action.quantity) for action in short_to_long] == [
+        ("exit", 5.0),
+        ("buy", 3.0),
+    ]
 
 
 def test_manifest_records_specification():

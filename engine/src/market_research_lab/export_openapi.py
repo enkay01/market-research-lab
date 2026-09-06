@@ -9,8 +9,9 @@ from .api import create_app
 
 
 def main() -> None:
-    target = Path(__file__).resolve().parents[3] / "engine" / "openapi.json"
-    target.write_text(json.dumps(create_app().openapi(), indent=2) + "\n", encoding="utf-8")
+    engine_dir = Path(__file__).resolve().parents[2]
+    content = json.dumps(create_app().openapi(), indent=2) + "\n"
+    (engine_dir / "openapi.json").write_text(content, encoding="utf-8")
 
 
 if __name__ == "__main__":

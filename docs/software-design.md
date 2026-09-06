@@ -219,6 +219,8 @@ Daily event order is explicit:
 
 The same `run_backtest` interface supports independent time-series and cross-sectional Strategies. For cross-sectional evaluation, the event loop builds every eligible Security view at the decision time, evaluates the universe once, records the Candidate Ranking, and schedules the resulting targets for the next eligible execution time.
 
+Replay output is a close-marked backtest artifact. Each tick reports the primary Security's bar close and backend-calculated position value, portfolio value, allocation, and daily profit and loss from the same end-of-session close snapshot. Ordered fill actions retain their actual execution price and source-fill identity separately. The browser formats these typed values but does not classify actions or recompute backtest metrics.
+
 ### Options Backtesting
 
 `option_backtest.py` keeps the public seam for the first derivatives slice. Its target internal structure moves Black-Scholes pricing, implied-volatility solving, and Greeks into a private pure-math module. A private selection module owns Put Credit Spread filtering. Dataclasses and an enum record entry, Stop Level movement, stop-loss, and expiration transitions without a class for each state. Counterfactual analysis stays separate from position replay. The module continues to own linked-leg pricing, risk limits, and reliability behind this structure. Its primary interface remains:
