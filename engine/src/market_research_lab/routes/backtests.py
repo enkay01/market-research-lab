@@ -216,6 +216,17 @@ class BacktestMetricsResponse(BaseModel):
     num_fills: int
 
 
+class ReplayTickResponse(BaseModel):
+    date: str
+    price: float
+    signal: float
+    position_shares: float
+    portfolio_value: float
+    cash: float
+    daily_pnl: float
+    action_note: str
+
+
 class BacktestResultResponse(BaseModel):
     run_id: str | None = None
     strategy_revision: str | None = None
@@ -232,6 +243,7 @@ class BacktestResultResponse(BaseModel):
     benchmark_equity_curve: list[EquityPointResponse] = Field(default_factory=list)
     rejections: list[ConstraintRejectionResponse] = Field(default_factory=list)
     rankings: list[RankingResponse] = Field(default_factory=list)
+    replay_ticks: list[ReplayTickResponse] = Field(default_factory=list)
 
 
 class BacktestComparisonItemResponse(BaseModel):
@@ -702,6 +714,7 @@ class StrategyVerdictResponse(BaseModel):
     combined_metrics: PartitionMetricsResponse
     equity_curve: list[VerdictEquityPointResponse]
     friction_ladder: list[FrictionTierResponse]
+    replay_ticks: list[ReplayTickResponse] = Field(default_factory=list)
 
 
 @router.post(
@@ -908,5 +921,18 @@ def evaluate_strategy_verdict_route(
                 borrow_paid_usd=tier.borrow_paid_usd,
             )
             for tier in domain_result.friction_ladder
+        ],
+        replay_ticks=[
+            ReplayTickResponse(
+                date=tick.date,
+                price=tick.price,
+                signal=tick.signal,
+                position_shares=tick.position_shares,
+                portfolio_value=tick.portfolio_value,
+                cash=tick.cash,
+                daily_pnl=tick.daily_pnl,
+                action_note=tick.action_note,
+            )
+            for tick in domain_result.replay_ticks
         ],
     )

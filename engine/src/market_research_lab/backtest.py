@@ -186,6 +186,20 @@ class BacktestMetrics:
 
 
 @dataclass(frozen=True)
+class ReplayTick:
+    """One chronological replay state tick for visualization and trade action auditing."""
+
+    date: str
+    price: float
+    signal: float
+    position_shares: float
+    portfolio_value: float
+    cash: float
+    daily_pnl: float
+    action_note: str
+
+
+@dataclass(frozen=True)
 class BacktestResult:
     """Complete immutable output of one Backtest run."""
 
@@ -202,6 +216,7 @@ class BacktestResult:
     benchmark_equity_curve: tuple[EquityPoint, ...] = ()
     rejections: tuple[ConstraintRejection, ...] = ()
     ranking_records: tuple[RankingRecord, ...] = ()
+    replay_ticks: tuple[ReplayTick, ...] = ()
 
     @property
     def total_commission(self) -> float:
@@ -647,6 +662,8 @@ def run_backtest(
     total_splits_count = 0
     total_dividends_credited = 0.0
     delistings_applied: list[str] = []
+    replay_ticks: list[ReplayTick] = []
+    prior_portfolio_val: float = specification.starting_cash
 
     primary_symbol = universe[0]
 
@@ -1531,6 +1548,47 @@ def run_backtest(
             )
         )
 
+        action_fill = next(
+            (f for f in fills_today if f.security_id == primary_symbol),
+            (fills_today[0] if fills_today else None),
+        )
+        if action_fill is not None:
+            if action_fill.side == "buy":
+                action_note = f"▲ BUY {action_fill.quantity:.2f} @ ${action_fill.price:.2f}"
+            elif abs(primary_shares) <= EPS:
+                action_note = (
+                    f"▼ EXIT position ({action_fill.quantity:.2f} @ ${action_fill.price:.2f})"
+                )
+            elif primary_shares < -EPS:
+                action_note = f"▼ SHORT {action_fill.quantity:.2f} @ ${action_fill.price:.2f}"
+            else:
+                action_note = f"▼ EXIT {action_fill.quantity:.2f} @ ${action_fill.price:.2f}"
+        elif primary_shares > EPS:
+            action_note = f"Hold Long ({primary_shares:.2f} shares)"
+        elif primary_shares < -EPS:
+            action_note = f"Hold Short ({abs(primary_shares):.2f} shares)"
+        else:
+            action_note = "Hold Cash"
+
+        signal_val = (
+            primary_target.weight
+            if primary_target is not None
+            else today_signal_weights.get(primary_symbol, 0.0)
+        )
+        replay_ticks.append(
+            ReplayTick(
+                date=date_str,
+                price=round(primary_close, 4),
+                signal=round(signal_val, 6),
+                position_shares=round(primary_shares, 6),
+                portfolio_value=round(portfolio_val, 4),
+                cash=round(cash, 4),
+                daily_pnl=round(portfolio_val - prior_portfolio_val, 4),
+                action_note=action_note,
+            )
+        )
+        prior_portfolio_val = portfolio_val
+
     if not fills:
         warnings.append("No fills occurred during the backtest window.")
 
@@ -1666,4 +1724,5 @@ def run_backtest(
         benchmark_equity_curve=benchmark_equity_curve,
         rejections=tuple(rejections),
         ranking_records=tuple(ranking_records),
+        replay_ticks=tuple(replay_ticks),
     )

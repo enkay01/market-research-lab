@@ -941,6 +941,8 @@ export interface components {
             rejections?: components["schemas"]["ConstraintRejectionResponse"][];
             /** Rankings */
             rankings?: components["schemas"]["RankingResponse"][];
+            /** Replay Ticks */
+            replay_ticks?: components["schemas"]["ReplayTickResponse"][];
         };
         /** BacktestRunRequest */
         BacktestRunRequest: {
@@ -2035,6 +2037,25 @@ export interface components {
             /** Rationale */
             rationale: string;
         };
+        /** ReplayTickResponse */
+        ReplayTickResponse: {
+            /** Date */
+            date: string;
+            /** Price */
+            price: number;
+            /** Signal */
+            signal: number;
+            /** Position Shares */
+            position_shares: number;
+            /** Portfolio Value */
+            portfolio_value: number;
+            /** Cash */
+            cash: number;
+            /** Daily Pnl */
+            daily_pnl: number;
+            /** Action Note */
+            action_note: string;
+        };
         /** RunResponse */
         RunResponse: {
             /** Id */
@@ -2328,6 +2349,8 @@ export interface components {
             equity_curve: components["schemas"]["VerdictEquityPointResponse"][];
             /** Friction Ladder */
             friction_ladder: components["schemas"]["FrictionTierResponse"][];
+            /** Replay Ticks */
+            replay_ticks?: components["schemas"]["ReplayTickResponse"][];
         };
         /** TradeResponse */
         TradeResponse: {

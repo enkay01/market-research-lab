@@ -528,5 +528,49 @@ def test_strategy_verdict_full_execution_fail() -> None:
     assert "Loses to benchmark after costs" in result.headline_verdict
 
 
+def test_evaluate_strategy_verdict_emits_replay_ticks() -> None:
+    """Strategy verdict emits ordered replay ticks with price, signal, shares, cash, and PnL."""
+    dates = _make_dates(20)
+    strat_closes = [100.0 + (i * 1.5) for i in range(20)]
+    bench_closes = [400.0 + (i * 0.5) for i in range(20)]
 
+    bars: list[DailyBar] = []
+    for d, c in zip(dates, strat_closes, strict=True):
+        bars.append(_make_bar(d, security_id="AAPL", open_price=c, close_price=c))
+    for d, c in zip(dates, bench_closes, strict=True):
+        bars.append(_make_bar(d, security_id="SPY", open_price=c, close_price=c))
+
+    spec = StrategyVerdictSpecification(
+        strategy_name="long_flat_moving_average",
+        universe=("AAPL",),
+        benchmark_security_id="SPY",
+        start_date=dates[0],
+        end_date=dates[-1],
+        starting_cash=100_000.0,
+        parameters={"fast_period": 2, "slow_period": 4},
+        holdout_ratio=0.25,
+    )
+
+    result = evaluate_strategy_verdict(spec, bars=bars)
+
+    assert len(result.replay_ticks) == len(dates)
+
+    # Verify every tick possesses the required 8 fields
+    for i, tick in enumerate(result.replay_ticks):
+        assert tick.date == dates[i]
+        assert tick.price > 0.0
+        assert isinstance(tick.signal, float)
+        assert isinstance(tick.position_shares, float)
+        assert isinstance(tick.portfolio_value, float)
+        assert isinstance(tick.cash, float)
+        assert isinstance(tick.daily_pnl, float)
+        assert isinstance(tick.action_note, str)
+        assert len(tick.action_note) > 0
+
+    # Ensure action notes distinguish trade fills from holding states
+    notes = [t.action_note for t in result.replay_ticks]
+    has_trade_action = any("BUY" in n or "EXIT" in n for n in notes)
+    has_hold_action = any("Hold" in n for n in notes)
+    assert has_trade_action, "Expected at least one BUY or EXIT action note"
+    assert has_hold_action, "Expected at least one holding action note"
 

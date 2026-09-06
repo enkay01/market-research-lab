@@ -107,6 +107,19 @@ def test_post_verdict_success(test_client: TestClient) -> None:
     assert False in is_holdout_flags
     assert True in is_holdout_flags
 
+    # Tab 3 replay ticks emission verification
+    assert "replay_ticks" in data
+    assert len(data["replay_ticks"]) == 20
+    first_tick = data["replay_ticks"][0]
+    assert "date" in first_tick
+    assert "price" in first_tick
+    assert "signal" in first_tick
+    assert "position_shares" in first_tick
+    assert "portfolio_value" in first_tick
+    assert "cash" in first_tick
+    assert "daily_pnl" in first_tick
+    assert "action_note" in first_tick
+
 
 def test_post_verdict_invalid_holdout_split(test_client: TestClient) -> None:
     """Holdout ratio outside bounds returns 422 validation error."""

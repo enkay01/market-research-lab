@@ -1399,55 +1399,178 @@
         }
       }
     },
-    "/api/datasets/download": {
+    "/api/downloads": {
       "post": {
         "tags": [
-          "datasets"
+          "downloads"
         ],
-        "summary": "Download Dataset",
-        "operationId": "download_dataset_api_datasets_download_post",
+        "summary": "Start Download",
+        "operationId": "start_download_api_downloads_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "$ref": "#/components/schemas/CompositeDownloadRequest"
-                  },
-                  {
-                    "$ref": "#/components/schemas/TiingoDownloadRequest"
-                  },
-                  {
-                    "$ref": "#/components/schemas/SecEdgarDownloadRequest"
-                  },
-                  {
-                    "$ref": "#/components/schemas/AlpacaDownloadRequest"
-                  },
-                  {
-                    "$ref": "#/components/schemas/MassiveDownloadRequest"
-                  }
-                ],
-                "title": "Request"
+                "$ref": "#/components/schemas/CompositeDownloadRequest"
               }
             }
           },
           "required": true
         },
         "responses": {
-          "201": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/CompositeDownloadResponse"
-                    },
-                    {
-                      "$ref": "#/components/schemas/ProviderDownloadResponse"
-                    }
-                  ],
-                  "title": "Response Download Dataset Api Datasets Download Post"
+                  "$ref": "#/components/schemas/DownloadStartResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/datasets/download": {
+      "post": {
+        "tags": [
+          "downloads"
+        ],
+        "summary": "Start Download",
+        "operationId": "start_download_api_datasets_download_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompositeDownloadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadStartResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/downloads/latest": {
+      "get": {
+        "tags": [
+          "downloads"
+        ],
+        "summary": "Get Latest Download",
+        "operationId": "get_latest_download_api_downloads_latest_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadSnapshotResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/downloads/{download_id}": {
+      "get": {
+        "tags": [
+          "downloads"
+        ],
+        "summary": "Get Download Status",
+        "operationId": "get_download_status_api_downloads__download_id__get",
+        "parameters": [
+          {
+            "name": "download_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,64}$",
+              "title": "Download Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadSnapshotResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/downloads/{download_id}/cancel": {
+      "post": {
+        "tags": [
+          "downloads"
+        ],
+        "summary": "Cancel Download",
+        "operationId": "cancel_download_api_downloads__download_id__cancel_post",
+        "parameters": [
+          {
+            "name": "download_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,64}$",
+              "title": "Download Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadSnapshotResponse"
                 }
               }
             }
@@ -2214,6 +2337,59 @@
         }
       }
     },
+    "/api/projects/{project_id}/backtests/verdict": {
+      "post": {
+        "tags": [
+          "backtests"
+        ],
+        "summary": "Evaluate Strategy Verdict Route",
+        "operationId": "evaluate_strategy_verdict_route_api_projects__project_id__backtests_verdict_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StrategyVerdictRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategyVerdictResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{project_id}/options-backtests": {
       "post": {
         "tags": [
@@ -2672,39 +2848,6 @@
   },
   "components": {
     "schemas": {
-      "AlpacaDownloadRequest": {
-        "properties": {
-          "start_date": {
-            "type": "string",
-            "format": "date",
-            "title": "Start Date"
-          },
-          "end_date": {
-            "type": "string",
-            "format": "date",
-            "title": "End Date"
-          },
-          "provider": {
-            "type": "string",
-            "const": "alpaca",
-            "title": "Provider"
-          },
-          "symbol": {
-            "type": "string",
-            "maxLength": 16,
-            "minLength": 1,
-            "title": "Symbol"
-          }
-        },
-        "type": "object",
-        "required": [
-          "start_date",
-          "end_date",
-          "provider",
-          "symbol"
-        ],
-        "title": "AlpacaDownloadRequest"
-      },
       "BacktestComparisonItemResponse": {
         "properties": {
           "run_id": {
@@ -3025,6 +3168,20 @@
             },
             "type": "array",
             "title": "Rejections"
+          },
+          "rankings": {
+            "items": {
+              "$ref": "#/components/schemas/RankingResponse"
+            },
+            "type": "array",
+            "title": "Rankings"
+          },
+          "replay_ticks": {
+            "items": {
+              "$ref": "#/components/schemas/ReplayTickResponse"
+            },
+            "type": "array",
+            "title": "Replay Ticks"
           }
         },
         "type": "object",
@@ -3358,39 +3515,6 @@
           "downloads"
         ],
         "title": "CompositeDownloadRequest"
-      },
-      "CompositeDownloadResponse": {
-        "properties": {
-          "dataset_version_id": {
-            "type": "string",
-            "title": "Dataset Version Id"
-          },
-          "security_list_id": {
-            "type": "string",
-            "title": "Security List Id"
-          },
-          "parts": {
-            "items": {
-              "$ref": "#/components/schemas/DatasetPartResponse"
-            },
-            "type": "array",
-            "title": "Parts"
-          },
-          "dataset_version_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Dataset Version Ids"
-          }
-        },
-        "type": "object",
-        "required": [
-          "dataset_version_id",
-          "security_list_id",
-          "parts"
-        ],
-        "title": "CompositeDownloadResponse"
       },
       "ConstraintRejectionResponse": {
         "properties": {
@@ -3932,6 +4056,178 @@
         ],
         "title": "DefinitionRevisionResponse"
       },
+      "DownloadEventResponse": {
+        "properties": {
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp"
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "details": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object",
+            "title": "Details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "timestamp",
+          "phase",
+          "message"
+        ],
+        "title": "DownloadEventResponse"
+      },
+      "DownloadSnapshotResponse": {
+        "properties": {
+          "download_id": {
+            "type": "string",
+            "title": "Download Id"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase"
+          },
+          "started_at": {
+            "type": "string",
+            "title": "Started At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "dataset_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset Version Id"
+          },
+          "security_list_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Security List Id"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "total_logical_units": {
+            "type": "integer",
+            "title": "Total Logical Units",
+            "default": 0
+          },
+          "completed_logical_units": {
+            "type": "integer",
+            "title": "Completed Logical Units",
+            "default": 0
+          },
+          "total_requests": {
+            "type": "integer",
+            "title": "Total Requests",
+            "default": 0
+          },
+          "completed_requests": {
+            "type": "integer",
+            "title": "Completed Requests",
+            "default": 0
+          },
+          "active_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Provider"
+          },
+          "active_operation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Operation"
+          },
+          "rate_limit_wait_seconds": {
+            "type": "number",
+            "title": "Rate Limit Wait Seconds",
+            "default": 0.0
+          },
+          "recent_events": {
+            "items": {
+              "$ref": "#/components/schemas/DownloadEventResponse"
+            },
+            "type": "array",
+            "title": "Recent Events"
+          }
+        },
+        "type": "object",
+        "required": [
+          "download_id",
+          "state",
+          "phase",
+          "started_at",
+          "updated_at"
+        ],
+        "title": "DownloadSnapshotResponse"
+      },
+      "DownloadStartResponse": {
+        "properties": {
+          "download_id": {
+            "type": "string",
+            "title": "Download Id"
+          },
+          "status_url": {
+            "type": "string",
+            "title": "Status Url"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/DownloadSnapshotResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "download_id",
+          "status_url",
+          "snapshot"
+        ],
+        "title": "DownloadStartResponse"
+      },
       "DraftRequest": {
         "properties": {
           "definition": {
@@ -4109,7 +4405,7 @@
             "type": "string",
             "enum": [
               "reject",
-              "clamp"
+              "constrain"
             ],
             "title": "Leverage Mode",
             "default": "reject"
@@ -4248,6 +4544,69 @@
         ],
         "title": "FillResponse"
       },
+      "FrictionTierResponse": {
+        "properties": {
+          "multiplier": {
+            "type": "integer",
+            "title": "Multiplier"
+          },
+          "commission_bps": {
+            "type": "number",
+            "title": "Commission Bps"
+          },
+          "slippage_bps": {
+            "type": "number",
+            "title": "Slippage Bps"
+          },
+          "borrow_fee_bps": {
+            "type": "number",
+            "title": "Borrow Fee Bps"
+          },
+          "total_return_pct": {
+            "type": "number",
+            "title": "Total Return Pct"
+          },
+          "net_profit_usd": {
+            "type": "number",
+            "title": "Net Profit Usd"
+          },
+          "profit_factor": {
+            "type": "number",
+            "title": "Profit Factor"
+          },
+          "max_drawdown_pct": {
+            "type": "number",
+            "title": "Max Drawdown Pct"
+          },
+          "commission_paid_usd": {
+            "type": "number",
+            "title": "Commission Paid Usd"
+          },
+          "slippage_drag_usd": {
+            "type": "number",
+            "title": "Slippage Drag Usd"
+          },
+          "borrow_paid_usd": {
+            "type": "number",
+            "title": "Borrow Paid Usd"
+          }
+        },
+        "type": "object",
+        "required": [
+          "multiplier",
+          "commission_bps",
+          "slippage_bps",
+          "borrow_fee_bps",
+          "total_return_pct",
+          "net_profit_usd",
+          "profit_factor",
+          "max_drawdown_pct",
+          "commission_paid_usd",
+          "slippage_drag_usd",
+          "borrow_paid_usd"
+        ],
+        "title": "FrictionTierResponse"
+      },
       "FundamentalFactResponse": {
         "properties": {
           "security_id": {
@@ -4366,6 +4725,54 @@
           "retrieval_time"
         ],
         "title": "FundamentalFactResponse"
+      },
+      "GateResultResponse": {
+        "properties": {
+          "gate_number": {
+            "type": "integer",
+            "title": "Gate Number"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "passed": {
+            "type": "boolean",
+            "title": "Passed"
+          },
+          "metric_label": {
+            "type": "string",
+            "title": "Metric Label"
+          },
+          "metric_value": {
+            "type": "string",
+            "title": "Metric Value"
+          },
+          "threshold_label": {
+            "type": "string",
+            "title": "Threshold Label"
+          },
+          "threshold_value": {
+            "type": "string",
+            "title": "Threshold Value"
+          },
+          "verdict_note": {
+            "type": "string",
+            "title": "Verdict Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "gate_number",
+          "name",
+          "passed",
+          "metric_label",
+          "metric_value",
+          "threshold_label",
+          "threshold_value",
+          "verdict_note"
+        ],
+        "title": "GateResultResponse"
       },
       "HTTPValidationError": {
         "properties": {
@@ -4818,49 +5225,6 @@
         ],
         "title": "LedgerRowResponse"
       },
-      "MassiveDownloadRequest": {
-        "properties": {
-          "start_date": {
-            "type": "string",
-            "format": "date",
-            "title": "Start Date"
-          },
-          "end_date": {
-            "type": "string",
-            "format": "date",
-            "title": "End Date"
-          },
-          "provider": {
-            "type": "string",
-            "const": "massive",
-            "title": "Provider"
-          },
-          "symbol": {
-            "type": "string",
-            "maxLength": 16,
-            "minLength": 1,
-            "title": "Symbol"
-          },
-          "data_type": {
-            "type": "string",
-            "enum": [
-              "stocks_daily",
-              "stocks_minute",
-              "options"
-            ],
-            "title": "Data Type",
-            "default": "stocks_daily"
-          }
-        },
-        "type": "object",
-        "required": [
-          "start_date",
-          "end_date",
-          "provider",
-          "symbol"
-        ],
-        "title": "MassiveDownloadRequest"
-      },
       "OptionsBacktestResponse": {
         "properties": {
           "run_id": {
@@ -5230,6 +5594,64 @@
         ],
         "title": "OptionsBacktestRunRequest"
       },
+      "PartitionMetricsResponse": {
+        "properties": {
+          "total_return": {
+            "type": "number",
+            "title": "Total Return"
+          },
+          "cagr": {
+            "type": "number",
+            "title": "Cagr"
+          },
+          "sharpe_ratio": {
+            "type": "number",
+            "title": "Sharpe Ratio"
+          },
+          "sortino_ratio": {
+            "type": "number",
+            "title": "Sortino Ratio"
+          },
+          "max_drawdown": {
+            "type": "number",
+            "title": "Max Drawdown"
+          },
+          "benchmark_return": {
+            "type": "number",
+            "title": "Benchmark Return"
+          },
+          "win_rate": {
+            "type": "number",
+            "title": "Win Rate"
+          },
+          "profit_factor": {
+            "type": "number",
+            "title": "Profit Factor"
+          },
+          "trades_count": {
+            "type": "integer",
+            "title": "Trades Count"
+          },
+          "exposure_pct": {
+            "type": "number",
+            "title": "Exposure Pct"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_return",
+          "cagr",
+          "sharpe_ratio",
+          "sortino_ratio",
+          "max_drawdown",
+          "benchmark_return",
+          "win_rate",
+          "profit_factor",
+          "trades_count",
+          "exposure_pct"
+        ],
+        "title": "PartitionMetricsResponse"
+      },
       "PositionSnapshotResponse": {
         "properties": {
           "shares": {
@@ -5337,26 +5759,113 @@
         ],
         "title": "ProviderDownloadItem"
       },
-      "ProviderDownloadResponse": {
+      "RankingResponse": {
         "properties": {
-          "dataset_version_id": {
+          "session_date": {
             "type": "string",
-            "title": "Dataset Version Id"
+            "title": "Session Date"
           },
-          "dataset_version_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Dataset Version Ids"
+          "decision_time": {
+            "type": "string",
+            "title": "Decision Time"
+          },
+          "security_id": {
+            "type": "string",
+            "title": "Security Id"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank"
+          },
+          "selected": {
+            "type": "boolean",
+            "title": "Selected"
+          },
+          "target_weight": {
+            "type": "number",
+            "title": "Target Weight"
+          },
+          "rationale": {
+            "type": "string",
+            "title": "Rationale"
           }
         },
         "type": "object",
         "required": [
-          "dataset_version_id",
-          "dataset_version_ids"
+          "session_date",
+          "decision_time",
+          "security_id",
+          "selected",
+          "target_weight",
+          "rationale"
         ],
-        "title": "ProviderDownloadResponse"
+        "title": "RankingResponse"
+      },
+      "ReplayTickResponse": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date"
+          },
+          "price": {
+            "type": "number",
+            "title": "Price"
+          },
+          "signal": {
+            "type": "number",
+            "title": "Signal"
+          },
+          "position_shares": {
+            "type": "number",
+            "title": "Position Shares"
+          },
+          "portfolio_value": {
+            "type": "number",
+            "title": "Portfolio Value"
+          },
+          "cash": {
+            "type": "number",
+            "title": "Cash"
+          },
+          "daily_pnl": {
+            "type": "number",
+            "title": "Daily Pnl"
+          },
+          "action_note": {
+            "type": "string",
+            "title": "Action Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date",
+          "price",
+          "signal",
+          "position_shares",
+          "portfolio_value",
+          "cash",
+          "daily_pnl",
+          "action_note"
+        ],
+        "title": "ReplayTickResponse"
       },
       "RunResponse": {
         "properties": {
@@ -5523,54 +6032,6 @@
           "saved_at"
         ],
         "title": "SavedStrategyRevisionResponse"
-      },
-      "SecEdgarDownloadRequest": {
-        "properties": {
-          "start_date": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Start Date"
-          },
-          "end_date": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "End Date"
-          },
-          "provider": {
-            "type": "string",
-            "const": "sec_edgar",
-            "title": "Provider"
-          },
-          "ciks": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "maxItems": 500,
-            "minItems": 1,
-            "title": "Ciks"
-          }
-        },
-        "type": "object",
-        "required": [
-          "provider",
-          "ciks"
-        ],
-        "title": "SecEdgarDownloadRequest"
       },
       "SecurityListSummaryResponse": {
         "properties": {
@@ -6049,13 +6510,81 @@
         ],
         "title": "StrategyTemplateResponse"
       },
-      "TiingoDownloadRequest": {
+      "StrategyVerdictRequest": {
         "properties": {
+          "strategy_name": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Strategy Name",
+            "default": "trend_exhaustion"
+          },
+          "strategy_revision": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Strategy Revision",
+            "default": "v1"
+          },
+          "dataset_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset Version Id"
+          },
+          "universe_preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Universe Preset",
+            "default": "megacap"
+          },
+          "symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol"
+          },
+          "symbols": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbols"
+          },
+          "benchmark_symbol": {
+            "type": "string",
+            "maxLength": 32,
+            "title": "Benchmark Symbol",
+            "default": "SPY"
+          },
           "start_date": {
             "anyOf": [
               {
                 "type": "string",
-                "format": "date"
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
               },
               {
                 "type": "null"
@@ -6067,7 +6596,7 @@
             "anyOf": [
               {
                 "type": "string",
-                "format": "date"
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
               },
               {
                 "type": "null"
@@ -6075,27 +6604,120 @@
             ],
             "title": "End Date"
           },
-          "provider": {
-            "type": "string",
-            "const": "tiingo",
-            "title": "Provider"
+          "starting_cash": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Starting Cash",
+            "default": 100000.0
           },
-          "symbols": {
+          "parameters": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Input"
+            },
+            "type": "object",
+            "title": "Parameters"
+          },
+          "holdout_ratio": {
+            "type": "number",
+            "maximum": 0.5,
+            "minimum": 0.05,
+            "title": "Holdout Ratio",
+            "default": 0.25
+          },
+          "execution": {
+            "$ref": "#/components/schemas/ExecutionModelAssumptionsRequest"
+          }
+        },
+        "type": "object",
+        "title": "StrategyVerdictRequest"
+      },
+      "StrategyVerdictResponse": {
+        "properties": {
+          "overall_passed": {
+            "type": "boolean",
+            "title": "Overall Passed"
+          },
+          "headline_verdict": {
+            "type": "string",
+            "title": "Headline Verdict"
+          },
+          "rejection_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejection Reason"
+          },
+          "confidence_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence Score"
+          },
+          "holdout_ratio": {
+            "type": "number",
+            "title": "Holdout Ratio"
+          },
+          "gates": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/GateResultResponse"
             },
             "type": "array",
-            "maxItems": 500,
-            "minItems": 1,
-            "title": "Symbols"
+            "title": "Gates"
+          },
+          "in_sample_metrics": {
+            "$ref": "#/components/schemas/PartitionMetricsResponse"
+          },
+          "out_of_sample_metrics": {
+            "$ref": "#/components/schemas/PartitionMetricsResponse"
+          },
+          "combined_metrics": {
+            "$ref": "#/components/schemas/PartitionMetricsResponse"
+          },
+          "equity_curve": {
+            "items": {
+              "$ref": "#/components/schemas/VerdictEquityPointResponse"
+            },
+            "type": "array",
+            "title": "Equity Curve"
+          },
+          "friction_ladder": {
+            "items": {
+              "$ref": "#/components/schemas/FrictionTierResponse"
+            },
+            "type": "array",
+            "title": "Friction Ladder"
+          },
+          "replay_ticks": {
+            "items": {
+              "$ref": "#/components/schemas/ReplayTickResponse"
+            },
+            "type": "array",
+            "title": "Replay Ticks"
           }
         },
         "type": "object",
         "required": [
-          "provider",
-          "symbols"
+          "overall_passed",
+          "headline_verdict",
+          "holdout_ratio",
+          "gates",
+          "in_sample_metrics",
+          "out_of_sample_metrics",
+          "combined_metrics",
+          "equity_curve",
+          "friction_ladder"
         ],
-        "title": "TiingoDownloadRequest"
+        "title": "StrategyVerdictResponse"
       },
       "TradeResponse": {
         "properties": {
@@ -6199,6 +6821,39 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VerdictEquityPointResponse": {
+        "properties": {
+          "session_date": {
+            "type": "string",
+            "title": "Session Date"
+          },
+          "strategy_equity": {
+            "type": "number",
+            "title": "Strategy Equity"
+          },
+          "benchmark_equity": {
+            "type": "number",
+            "title": "Benchmark Equity"
+          },
+          "drawdown_pct": {
+            "type": "number",
+            "title": "Drawdown Pct"
+          },
+          "is_holdout": {
+            "type": "boolean",
+            "title": "Is Holdout"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_date",
+          "strategy_equity",
+          "benchmark_equity",
+          "drawdown_pct",
+          "is_holdout"
+        ],
+        "title": "VerdictEquityPointResponse"
       },
       "WatchlistAddRequest": {
         "properties": {
