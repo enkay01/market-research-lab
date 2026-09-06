@@ -1088,10 +1088,15 @@ export interface components {
             strategy_revision: string;
             /** Dataset Version Id */
             dataset_version_id?: string | null;
-            /** Universe Preset */
-            universe_preset?: string | null;
+            /**
+             * Universe Preset
+             * @default megacap
+             */
+            universe_preset: string | null;
+            /** Symbol */
+            symbol?: string | null;
             /** Symbols */
-            symbols?: string[];
+            symbols?: string[] | null;
             /**
              * Benchmark Symbol
              * @default SPY
@@ -1116,11 +1121,16 @@ export interface components {
         CandidateRankingResponse: {
             /** Strategy Name */
             strategy_name: string;
+            /** Strategy Revision */
+            strategy_revision: string;
             /** Benchmark Symbol */
             benchmark_symbol: string;
-            diagnostic_banner: components["schemas"]["DiagnosticBannerResponse"];
-            /** Candidates */
-            candidates: components["schemas"]["RankedCandidateResponse"][];
+            /** Session Date */
+            session_date: string;
+            /** Decision Time */
+            decision_time: string;
+            /** Rankings */
+            rankings: components["schemas"]["RankingResponse"][];
         };
         /** CompositeDownloadRequest */
         CompositeDownloadRequest: {
@@ -1360,23 +1370,6 @@ export interface components {
             definition: {
                 [key: string]: components["schemas"]["JsonValue-Output"];
             };
-        };
-        /** DiagnosticBannerResponse */
-        DiagnosticBannerResponse: {
-            /** Market Edge Detected */
-            market_edge_detected: boolean;
-            /** Edge Distribution */
-            edge_distribution: string;
-            /** Headline */
-            headline: string;
-            /** Summary */
-            summary: string;
-            /** Total Securities */
-            total_securities: number;
-            /** Positive Edge Securities */
-            positive_edge_securities: number;
-            /** Market Breadth Pct */
-            market_breadth_pct: number;
         };
         /** DownloadEventResponse */
         DownloadEventResponse: {
@@ -2095,50 +2088,6 @@ export interface components {
             /** Data Types */
             data_types?: string[];
         };
-        /** RankedCandidateResponse */
-        RankedCandidateResponse: {
-            /** Rank */
-            rank: number;
-            /** Symbol */
-            symbol: string;
-            /** Name */
-            name: string;
-            /** Sector */
-            sector: string;
-            /** Strategy Return */
-            strategy_return: number;
-            /** Benchmark Return */
-            benchmark_return: number;
-            /** Net Edge */
-            net_edge: number;
-            /** Win Rate */
-            win_rate: number;
-            /** Profit Factor */
-            profit_factor: number;
-            /** Trades Count */
-            trades_count: number;
-            /** Status */
-            status: string;
-            /**
-             * Gates Passed
-             * @default 0
-             */
-            gates_passed: number;
-            /**
-             * Gates Total
-             * @default 5
-             */
-            gates_total: number;
-            /**
-             * Gate Summary
-             * @default
-             */
-            gate_summary: string;
-            /** Gate Outcomes */
-            gate_outcomes?: {
-                [key: string]: boolean;
-            };
-        };
         /** RankingResponse */
         RankingResponse: {
             /** Session Date */
@@ -2423,12 +2372,12 @@ export interface components {
             parameters?: {
                 [key: string]: components["schemas"]["JsonValue-Input"];
             };
+            execution?: components["schemas"]["ExecutionModelAssumptionsRequest"];
             /**
              * Holdout Ratio
              * @default 0.25
              */
             holdout_ratio: number;
-            execution?: components["schemas"]["ExecutionModelAssumptionsRequest"];
         };
         /** StrategyVerdictResponse */
         StrategyVerdictResponse: {
@@ -2452,7 +2401,6 @@ export interface components {
             /** Friction Ladder */
             friction_ladder: components["schemas"]["FrictionTierResponse"][];
             candidate_ranking?: components["schemas"]["CandidateRankingResponse"] | null;
-            screener_sweep?: components["schemas"]["CandidateRankingResponse"] | null;
         };
         /** TradeResponse */
         TradeResponse: {

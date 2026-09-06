@@ -83,6 +83,10 @@ interface ExecutionAssumptionsOptions {
 }
 
 type StrategyParametersPayload = {
+  lookback_period: number;
+  top_n: number;
+  weighting: "equal";
+} | {
   fast_period: number;
   slow_period: number;
   period: number;
@@ -91,7 +95,18 @@ type StrategyParametersPayload = {
   max_hold: string;
 };
 
-function buildStrategyParameters(options: StrategyParameterOptions): StrategyParametersPayload {
+function buildStrategyParameters(
+  strategyName: string,
+  options: StrategyParameterOptions,
+): StrategyParametersPayload {
+  if (strategyName === "top_n_momentum") {
+    return {
+      lookback_period: parseInt(options.slowPeriod, 10) || 20,
+      top_n: parseInt(options.fastPeriod, 10) || 10,
+      weighting: "equal",
+    };
+  }
+
   return {
     fast_period: parseInt(options.fastPeriod, 10) || 10,
     slow_period: parseInt(options.slowPeriod, 10) || 50,
@@ -127,14 +142,14 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<
-    "summary" | "gates" | "replay" | "screener" | "ledger"
+    "summary" | "gates" | "replay" | "ranking" | "ledger"
   >("summary");
 
   // Wizard structured configuration state (Zero free-text fields)
   const [universe, setUniverse] = useState("megacap");
   const [benchmark, setBenchmark] = useState("spy");
   const [cadence, setCadence] = useState("daily");
-  const [strategyModel, setStrategyModel] = useState("trend_exhaustion");
+  const [strategyModel, setStrategyModel] = useState("top_n_momentum");
   const [fastPeriod, setFastPeriod] = useState("10");
   const [slowPeriod, setSlowPeriod] = useState("50");
   const [stopLoss, setStopLoss] = useState("5");
@@ -150,9 +165,8 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
   // Live verdict execution result
   const [verdictResult, setVerdictResult] = useState<StrategyVerdictResponse | null>(null);
   const [selectedSecurity, setSelectedSecurity] = useState<string | null>(null);
-  const [candidateRankingResult, setCandidateRankingResult] = useState<CandidateRankingResponse | null>(null);
-  const screenerResult = candidateRankingResult;
-  const [isScreenerLoading, setIsScreenerLoading] = useState(false);
+  const [rankingResult, setRankingResult] = useState<CandidateRankingResponse | null>(null);
+  const [isRankingLoading, setIsRankingLoading] = useState(false);
   const [auditNotification, setAuditNotification] = useState<string | null>(null);
 
   async function handleRunEvaluation(overrideSymbol?: string) {
@@ -174,6 +188,7 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
       holdoutSplit in splitMap ? splitMap[holdoutSplit as keyof typeof splitMap] : 0.25;
 
     const targetSymbol = overrideSymbol ?? selectedSecurity ?? undefined;
+    const isMarketWideEvaluation = targetSymbol === undefined;
 
     try {
       const response = await api.evaluateVerdict(project.id, {
@@ -185,7 +200,7 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
         benchmark_symbol: benchmark.toUpperCase(),
         holdout_ratio: holdoutRatio,
         starting_cash: parseFloat(initialCapital) || 100_000.0,
-        parameters: buildStrategyParameters({
+        parameters: buildStrategyParameters(strategyModel, {
           fastPeriod,
           slowPeriod,
           stopLoss,
@@ -199,10 +214,8 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
       });
 
       setVerdictResult(response);
-      const ranking = response.candidate_ranking ?? response.screener_sweep;
-      // Retain market-wide Candidate Ranking state when auditing a selected security (Comment 9)
-      if (!overrideSymbol && ranking) {
-        setCandidateRankingResult(ranking);
+      if (isMarketWideEvaluation) {
+        setRankingResult(response.candidate_ranking ?? null);
       }
       setHasExecuted(true);
       if (overrideSymbol) {
@@ -222,15 +235,15 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
 
   async function handleRunCandidateRanking() {
     if (!project?.id) return;
-    setIsScreenerLoading(true);
+    setIsRankingLoading(true);
     try {
-      const sweep = await api.runCandidateRanking(project.id, {
+      const ranking = await api.runCandidateRanking(project.id, {
         strategy_name: strategyModel,
         strategy_revision: "v1",
         universe_preset: universe,
         benchmark_symbol: benchmark.toUpperCase(),
         starting_cash: parseFloat(initialCapital) || 100_000.0,
-        parameters: buildStrategyParameters({
+        parameters: buildStrategyParameters(strategyModel, {
           fastPeriod,
           slowPeriod,
           stopLoss,
@@ -242,17 +255,15 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
           slippageBps,
         }),
       });
-      setCandidateRankingResult(sweep);
+      setRankingResult(ranking);
     } catch (err: unknown) {
       setErrorMessage(
-        err instanceof Error ? err.message : "Failed to execute screener sweep."
+        err instanceof Error ? err.message : "Failed to load candidate ranking."
       );
     } finally {
-      setIsScreenerLoading(false);
+      setIsRankingLoading(false);
     }
   }
-
-  const handleRunScreener = handleRunCandidateRanking;
 
   async function handleSelectSecurity(symbol: string) {
     setSelectedSecurity(symbol);
@@ -341,13 +352,14 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
                   value={strategyModel}
                   onChange={(val: string) => setStrategyModel(val)}
                   options={[
+                    { value: "top_n_momentum", label: "Top-N Cross-Sectional Momentum" },
                     { value: "trend_exhaustion", label: "Trend Exhaustion + Volatility Sizing" },
                     { value: "ma_crossover", label: "Dual Moving Average Crossover" },
                     { value: "rsi_reversal", label: "RSI Mean Reversion" },
                   ]}
                 />
                 <Selector
-                  label="Fast Lookback"
+                  label={strategyModel === "top_n_momentum" ? "Top N Securities" : "Fast Lookback"}
                   value={fastPeriod}
                   onChange={(val: string) => setFastPeriod(val)}
                   options={[
@@ -357,7 +369,7 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
                   ]}
                 />
                 <Selector
-                  label="Slow Lookback"
+                  label={strategyModel === "top_n_momentum" ? "Momentum Lookback" : "Slow Lookback"}
                   value={slowPeriod}
                   onChange={(val: string) => setSlowPeriod(val)}
                   options={[
@@ -567,7 +579,7 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
           <SegmentedControlItem value="summary" label="1. Verdict &amp; Summary" />
           <SegmentedControlItem value="gates" label="2. Stress &amp; Luck (5 Gates)" />
           <SegmentedControlItem value="replay" label="3. Replay &amp; Trade Actions" />
-          <SegmentedControlItem value="screener" label="4. Universe Screener" />
+          <SegmentedControlItem value="ranking" label="4. Candidate Ranking" />
           <SegmentedControlItem value="ledger" label="5. Ledger Audit" />
         </SegmentedControl>
       </Card>
@@ -887,8 +899,8 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
         </VStack>
       )}
 
-      {/* TAB 4: MARKET-WIDE DIAGNOSTIC SCREENER SWEEP (Issue #118) */}
-      {activeTab === "screener" && (
+      {/* TAB 4: CANDIDATE RANKING */}
+      {activeTab === "ranking" && (
         <VStack gap={4}>
           {auditNotification && (
             <Banner
@@ -898,172 +910,91 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
             />
           )}
 
-          {screenerResult ? (
+          {rankingResult ? (
             <>
-              {/* Diagnostic Banner: Surfaces whether edge exists across market or is isolated */}
-              <Card
-                padding={3}
-                style={{
-                  backgroundColor: "var(--color-background-wash)",
-                  border: `1px solid ${
-                    screenerResult.diagnostic_banner.market_edge_detected
-                      ? "var(--color-text-green)"
-                      : screenerResult.diagnostic_banner.edge_distribution === "ISOLATED"
-                      ? "var(--color-text-blue)"
-                      : "var(--color-text-red)"
-                  }`,
-                }}
-              >
+              <Card padding={3}>
                 <VStack gap={2}>
                   <HStack justify="between" align="center" style={{ flexWrap: "wrap", gap: "12px" }}>
-                    <HStack gap={2} align="center">
-                      <Token
-                        label={
-                          screenerResult.diagnostic_banner.edge_distribution === "MARKET_WIDE"
-                            ? "● MARKET-WIDE EDGE"
-                            : screenerResult.diagnostic_banner.edge_distribution === "ISOLATED"
-                            ? "● ISOLATED EDGE"
-                            : "● NO MARKET EDGE"
-                        }
-                        color={
-                          screenerResult.diagnostic_banner.market_edge_detected
-                            ? "green"
-                            : screenerResult.diagnostic_banner.edge_distribution === "ISOLATED"
-                            ? "blue"
-                            : "red"
-                        }
-                      />
-                      <Text weight="bold" size="lg">
-                        {screenerResult.diagnostic_banner.headline}
+                    <VStack gap={1}>
+                      <Text weight="bold" size="lg">Candidate Ranking</Text>
+                      <Text size="sm" type="supporting">
+                        {rankingResult.strategy_name} · Benchmark {rankingResult.benchmark_symbol} · Snapshot {rankingResult.rankings[0]?.session_date ?? "Unavailable"}
                       </Text>
-                    </HStack>
+                    </VStack>
                     <HStack gap={2} align="center">
-                      <Token
-                        label={`Market Breadth: ${screenerResult.diagnostic_banner.positive_edge_securities}/${screenerResult.diagnostic_banner.total_securities} (${screenerResult.diagnostic_banner.market_breadth_pct.toFixed(1)}%)`}
-                        color={screenerResult.diagnostic_banner.market_edge_detected ? "green" : "gray"}
-                      />
+                      <Token label={`${rankingResult.rankings.length} Securities`} color="blue" />
                       <Button
-                        label={isScreenerLoading ? "Sweeping..." : "↻ Refresh Sweep"}
+                        label={isRankingLoading ? "Loading..." : "↻ Refresh Ranking"}
                         variant="secondary"
                         size="sm"
-                        onClick={handleRunScreener}
-                        isDisabled={isScreenerLoading}
+                        onClick={handleRunCandidateRanking}
+                        isDisabled={isRankingLoading}
                       />
                     </HStack>
                   </HStack>
                   <Divider />
                   <Text size="sm" type="supporting">
-                    {screenerResult.diagnostic_banner.summary}
+                    The table shows the latest cross-sectional decision from the primary backtest. Select a Security to run its five-gate audit.
                   </Text>
                 </VStack>
               </Card>
 
-              {/* Candidate Ranking Table */}
               <VStack gap={3}>
                 <HStack justify="between" align="center" style={{ flexWrap: "wrap", gap: "8px" }}>
                   <VStack gap={0}>
-                    <Text weight="bold">Universe Diagnostic Screener Table</Text>
+                    <Text weight="bold">Latest ranking snapshot</Text>
                     <Text size="sm" type="supporting">
-                      Candidate Ranking ordered descending by Net Edge (Strategy Return minus {benchmark.toUpperCase()} Benchmark Return). Click any row to load into primary configuration.
+                      Scores and target weights come from the same Strategy run as the verdict.
                     </Text>
                   </VStack>
-                  {selectedSecurity && (
-                    <Token label={`Auditing: ${selectedSecurity}`} color="blue" />
-                  )}
+                  {selectedSecurity && <Token label={`Auditing: ${selectedSecurity}`} color="blue" />}
                 </HStack>
 
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHeaderCell style={{ width: "50px" }}>Rank</TableHeaderCell>
-                      <TableHeaderCell>Symbol</TableHeaderCell>
-                      <TableHeaderCell>Name</TableHeaderCell>
-                      <TableHeaderCell>Sector</TableHeaderCell>
-                      <TableHeaderCell style={{ textAlign: "end" }}>Strategy Return</TableHeaderCell>
-                      <TableHeaderCell style={{ textAlign: "end" }}>Benchmark ({benchmark.toUpperCase()})</TableHeaderCell>
-                      <TableHeaderCell style={{ textAlign: "end" }}>Net Edge</TableHeaderCell>
-                      <TableHeaderCell style={{ textAlign: "end" }}>Trades</TableHeaderCell>
-                      <TableHeaderCell style={{ textAlign: "center" }}>5-Gate Audit</TableHeaderCell>
+                      <TableHeaderCell style={{ width: "60px" }}>Rank</TableHeaderCell>
+                      <TableHeaderCell>Security</TableHeaderCell>
+                      <TableHeaderCell style={{ textAlign: "end" }}>Score</TableHeaderCell>
+                      <TableHeaderCell style={{ textAlign: "center" }}>Selected</TableHeaderCell>
+                      <TableHeaderCell style={{ textAlign: "end" }}>Target Weight</TableHeaderCell>
+                      <TableHeaderCell>Rationale</TableHeaderCell>
                       <TableHeaderCell style={{ textAlign: "center" }}>Audit</TableHeaderCell>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {screenerResult.candidates.map((cand) => {
-                      const isSelected = selectedSecurity === cand.symbol;
+                    {rankingResult.rankings.map((record) => {
+                      const isSelected = selectedSecurity === record.security_id;
+                      const scoreLabel = record.score === null || record.score === undefined
+                        ? "Unavailable"
+                        : `${record.score >= 0 ? "+" : ""}${(record.score * 100).toFixed(1)}%`;
                       return (
                         <TableRow
-                          key={cand.symbol}
-                          onClick={() => handleSelectSecurity(cand.symbol)}
+                          key={`${record.session_date}-${record.security_id}`}
+                          onClick={() => handleSelectSecurity(record.security_id)}
                           style={{
                             cursor: "pointer",
                             backgroundColor: isSelected ? "var(--color-background-wash)" : undefined,
                           }}
                         >
-                          <TableCell>
-                            <Text weight="bold">#{cand.rank}</Text>
-                          </TableCell>
-                          <TableCell>
-                            <Text weight="bold">{cand.symbol}</Text>
-                          </TableCell>
-                          <TableCell>
-                            <Text size="sm" type="supporting">{cand.name}</Text>
-                          </TableCell>
-                          <TableCell>
-                            <Token label={cand.sector} color="gray" />
-                          </TableCell>
-                          <TableCell
-                            style={{
-                              textAlign: "end",
-                              color:
-                                cand.strategy_return >= 0
-                                  ? "var(--color-text-green)"
-                                  : "var(--color-text-red)",
-                            }}
-                          >
-                            {cand.strategy_return >= 0 ? "+" : ""}
-                            {(cand.strategy_return * 100).toFixed(1)}%
-                          </TableCell>
-                          <TableCell style={{ textAlign: "end" }}>
-                            {cand.benchmark_return >= 0 ? "+" : ""}
-                            {(cand.benchmark_return * 100).toFixed(1)}%
-                          </TableCell>
-                          <TableCell
-                            style={{
-                              textAlign: "end",
-                              fontWeight: "bold",
-                              color:
-                                cand.net_edge > 0
-                                  ? "var(--color-text-green)"
-                                  : "var(--color-text-red)",
-                            }}
-                          >
-                            {cand.net_edge > 0 ? "+" : ""}
-                            {(cand.net_edge * 100).toFixed(1)}%
-                          </TableCell>
-                          <TableCell style={{ textAlign: "end" }}>
-                            {cand.trades_count}
-                          </TableCell>
+                          <TableCell><Text weight="bold">{record.rank === null ? "—" : `#${record.rank}`}</Text></TableCell>
+                          <TableCell><Text weight="bold">{record.security_id}</Text></TableCell>
+                          <TableCell style={{ textAlign: "end" }}>{scoreLabel}</TableCell>
                           <TableCell style={{ textAlign: "center" }}>
-                            <HStack gap={1} justify="center" align="center">
-                              <Token
-                                label={cand.status}
-                                color={cand.status === "PASS" ? "green" : "red"}
-                              />
-                              {cand.gates_passed !== undefined && (
-                                <Text size="sm" type="supporting">
-                                  {cand.gates_passed}/{cand.gates_total ?? 5}
-                                </Text>
-                              )}
-                            </HStack>
+                            <Token label={record.selected ? "YES" : "NO"} color={record.selected ? "green" : "gray"} />
                           </TableCell>
+                          <TableCell style={{ textAlign: "end" }}>
+                            {(record.target_weight * 100).toFixed(1)}%
+                          </TableCell>
+                          <TableCell><Text size="sm" type="supporting">{record.rationale}</Text></TableCell>
                           <TableCell style={{ textAlign: "center" }}>
                             <Button
-                              label={isSelected ? "Audited ✓" : "Audit 5 Gates →"}
+                              label={isSelected ? "Audited" : "Audit"}
                               variant={isSelected ? "secondary" : "primary"}
                               size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleSelectSecurity(cand.symbol);
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleSelectSecurity(record.security_id);
                               }}
                             />
                           </TableCell>
@@ -1077,19 +1008,17 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
           ) : (
             <Card padding={4}>
               <VStack gap={3} align="center" style={{ textAlign: "center", padding: "32px 16px" }}>
-                <Token label="SCREENER READY" color="purple" />
-                <Text weight="bold" size="lg">
-                  Market-Wide Diagnostic Universe Screener
-                </Text>
+                <Token label="RANKING READY" color="purple" />
+                <Text weight="bold" size="lg">Candidate Ranking</Text>
                 <Text size="sm" type="supporting" style={{ maxWidth: "600px" }}>
-                  Execute a cross-asset sweep evaluating the active strategy rules across every security in the {universe.toUpperCase()} universe against {benchmark.toUpperCase()}.
+                  Run the cross-sectional Strategy across every eligible Security in the {universe.toUpperCase()} dataset.
                 </Text>
                 <Button
-                  label={isScreenerLoading ? "Executing Screener Sweep..." : "⚡ Run Market-Wide Screener Sweep"}
+                  label={isRankingLoading ? "Loading Ranking..." : "Run Candidate Ranking"}
                   variant="primary"
                   size="md"
-                  onClick={handleRunScreener}
-                  isDisabled={isScreenerLoading}
+                  onClick={handleRunCandidateRanking}
+                  isDisabled={isRankingLoading}
                 />
               </VStack>
             </Card>

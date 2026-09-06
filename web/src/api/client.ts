@@ -63,13 +63,8 @@ export type GateResult = components["schemas"]["GateResultResponse"];
 export type PartitionMetrics = components["schemas"]["PartitionMetricsResponse"];
 export type VerdictEquityPoint = components["schemas"]["VerdictEquityPointResponse"];
 export type FrictionTier = components["schemas"]["FrictionTierResponse"];
-export type RankedCandidate = components["schemas"]["RankedCandidateResponse"];
 export type CandidateRankingResponse = components["schemas"]["CandidateRankingResponse"];
 export type CandidateRankingRequest = components["schemas"]["CandidateRankingRequest"];
-export type ScreenerCandidate = RankedCandidate;
-export type DiagnosticBanner = components["schemas"]["DiagnosticBannerResponse"];
-export type StrategyScreenerResponse = CandidateRankingResponse;
-export type StrategyScreenerRequest = CandidateRankingRequest;
 
 export interface OptionsGreeks {
   delta: number;
@@ -683,13 +678,6 @@ export const api = {
       }),
     ),
   runCandidateRanking: (projectId: string, request: CandidateRankingRequest) =>
-    dataOrThrow<CandidateRankingResponse>(
-      client.POST("/api/projects/{project_id}/backtests/candidate-ranking", {
-        params: { path: { project_id: projectId } },
-        body: request,
-      }),
-    ),
-  runScreenerSweep: (projectId: string, request: CandidateRankingRequest) =>
     dataOrThrow<CandidateRankingResponse>(
       client.POST("/api/projects/{project_id}/backtests/candidate-ranking", {
         params: { path: { project_id: projectId } },
