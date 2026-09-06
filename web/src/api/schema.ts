@@ -2037,6 +2037,22 @@ export interface components {
             /** Rationale */
             rationale: string;
         };
+        /** ReplayFillActionResponse */
+        ReplayFillActionResponse: {
+            /**
+             * Action Type
+             * @enum {string}
+             */
+            action_type: "buy" | "exit" | "short";
+            /** Quantity */
+            quantity: number;
+            /** Execution Price */
+            execution_price: number;
+            /** Source Fill Id */
+            source_fill_id: string;
+            /** Source Fill Sequence */
+            source_fill_sequence: number;
+        };
         /** ReplayTickResponse */
         ReplayTickResponse: {
             /** Date */
@@ -2053,14 +2069,6 @@ export interface components {
             cash: number;
             /** Daily Pnl */
             daily_pnl: number;
-            /** Action Note */
-            action_note: string;
-            /**
-             * Action Type
-             * @default hold_cash
-             * @enum {string}
-             */
-            action_type: "buy" | "exit" | "short" | "hold_long" | "hold_short" | "hold_cash";
             /**
              * Position Value
              * @default 0
@@ -2071,6 +2079,8 @@ export interface components {
              * @default 0
              */
             allocation_pct: number;
+            /** Fill Actions */
+            fill_actions: components["schemas"]["ReplayFillActionResponse"][];
         };
         /** RunResponse */
         RunResponse: {

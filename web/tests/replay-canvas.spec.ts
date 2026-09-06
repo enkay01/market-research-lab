@@ -9,10 +9,9 @@ const mockReplayTicks = [
     portfolio_value: 100000.0,
     cash: 100000.0,
     daily_pnl: 0.0,
-    action_note: "Hold Cash",
-    action_type: "hold_cash",
     position_value: 0.0,
     allocation_pct: 0.0,
+    fill_actions: [],
   },
   {
     date: "2024-01-03",
@@ -22,10 +21,17 @@ const mockReplayTicks = [
     portfolio_value: 100000.0,
     cash: 1200.0,
     daily_pnl: 0.0,
-    action_note: "▲ BUY 650.00 @ $152.00",
-    action_type: "buy",
     position_value: 98800.0,
     allocation_pct: 98.8,
+    fill_actions: [
+      {
+        action_type: "buy",
+        quantity: 650.0,
+        execution_price: 152.0,
+        source_fill_id: "fill-1",
+        source_fill_sequence: 1,
+      },
+    ],
   },
   {
     date: "2024-01-04",
@@ -35,10 +41,9 @@ const mockReplayTicks = [
     portfolio_value: 101950.0,
     cash: 1200.0,
     daily_pnl: 1950.0,
-    action_note: "Hold Long (650.00 shares)",
-    action_type: "hold_long",
     position_value: 100750.0,
     allocation_pct: 98.8,
+    fill_actions: [],
   },
   {
     date: "2024-01-05",
@@ -48,10 +53,9 @@ const mockReplayTicks = [
     portfolio_value: 103900.0,
     cash: 1200.0,
     daily_pnl: 1950.0,
-    action_note: "Hold Long (650.00 shares)",
-    action_type: "hold_long",
     position_value: 102700.0,
     allocation_pct: 98.8,
+    fill_actions: [],
   },
   {
     date: "2024-01-08",
@@ -61,10 +65,17 @@ const mockReplayTicks = [
     portfolio_value: 105200.0,
     cash: 105200.0,
     daily_pnl: 1300.0,
-    action_note: "▼ EXIT position (650.00 @ $160.00)",
-    action_type: "exit",
     position_value: 0.0,
     allocation_pct: 0.0,
+    fill_actions: [
+      {
+        action_type: "exit",
+        quantity: 650.0,
+        execution_price: 160.0,
+        source_fill_id: "fill-2",
+        source_fill_sequence: 1,
+      },
+    ],
   },
   {
     date: "2024-01-09",
@@ -74,10 +85,9 @@ const mockReplayTicks = [
     portfolio_value: 105200.0,
     cash: 105200.0,
     daily_pnl: 0.0,
-    action_note: "Hold Cash",
-    action_type: "hold_cash",
     position_value: 0.0,
     allocation_pct: 0.0,
+    fill_actions: [],
   },
 ];
 
@@ -283,7 +293,7 @@ test("Tab 3 interactive simulation replay canvas renders price path, explicit ax
   await expect(exitMarker).toBeVisible();
 
   // 9. Verify Order Ticket Banner initially displays Day 0 state
-  await expect(page.getByText("Order Ticket: Hold Cash")).toBeVisible();
+  await expect(page.getByText("Order Ticket: No fill")).toBeVisible();
   await expect(page.getByText("$100,000").first()).toBeVisible();
 
   // 10. Verify Timeline Scrubber allows dragging/stepping to any point
@@ -306,7 +316,7 @@ test("Tab 3 interactive simulation replay canvas renders price path, explicit ax
   await page.waitForTimeout(200);
 
   // Order ticket banner dynamically updates to Day 4 EXIT action
-  await expect(page.getByText("Order Ticket: ▼ EXIT position (650.00 @ $160.00)")).toBeVisible();
+  await expect(page.getByText("Order Ticket: ▼ EXIT 650.00 @ $160.00")).toBeVisible();
   await expect(page.getByText("$105,200").first()).toBeVisible();
   await expect(page.getByText("+$1300.00").first()).toBeVisible();
 
@@ -343,17 +353,18 @@ test("Tab 3 interactive simulation replay canvas renders price path, explicit ax
   await page.waitForTimeout(200);
   // Scrubber reset to index 0
   await expect(page.getByText("Active: 2024-01-02")).toBeVisible();
-  await expect(page.getByText("Order Ticket: Hold Cash")).toBeVisible();
+  await expect(page.getByText("Order Ticket: No fill")).toBeVisible();
 
   // 13. Test Click on Recorded Trade Fill table row
   const jumpToExit = page.getByRole("button", { name: "Jump" }).last();
   await jumpToExit.click();
   await page.waitForTimeout(200);
   await expect(page.getByText("Active: 2024-01-08")).toBeVisible();
-  await expect(page.getByText("Order Ticket: ▼ EXIT position (650.00 @ $160.00)")).toBeVisible();
+  await expect(page.getByText("Order Ticket: ▼ EXIT 650.00 @ $160.00")).toBeVisible();
 });
 
 test("Playback speed toggle updates stepping cadence at 1200, 600, 300, and 150 ms", async ({ page }) => {
+  await page.clock.install({ time: 0 });
   await page.route("**/api/health", (route) => route.fulfill({ json: { status: "ok" } }));
   await page.route("**/api/projects", (route) =>
     route.fulfill({
@@ -397,56 +408,60 @@ test("Playback speed toggle updates stepping cadence at 1200, 600, 300, and 150 
   const resetBtn = page.getByRole("button", { name: "↺ Reset" });
   await resetBtn.click();
   await expect(page.getByText("Active: 2024-01-02")).toBeVisible();
+  await page.clock.pauseAt(await page.evaluate(() => Date.now()));
 
-  // 1. Test 4x speed (150ms cadence)
+  // 1. Test 4x speed (150ms cadence) without advancing early.
   const speed4x = page.getByRole("radio", { name: "4x" });
   await speed4x.click();
   await expect(speed4x).toBeChecked();
+  await expect(page.getByTestId("playback-speed")).toHaveAttribute("data-cadence", "150");
 
   const playBtn = page.getByRole("button", { name: /Play Replay/i });
-  await playBtn.click();
-
-  // At 150ms cadence, after 220ms the index should have stepped to index 1 (2024-01-03)
-  await page.waitForTimeout(220);
-  await expect(page.getByText("Active: 2024-01-03")).toBeVisible();
+  await playBtn.evaluate((button) => button.click());
+  expect(await scrubber.inputValue()).toBe("0");
+  await page.clock.runFor(149);
+  expect(await scrubber.inputValue()).toBe("0");
+  await page.clock.runFor(1);
+  expect(await scrubber.inputValue()).toBe("1");
   const pauseBtn = page.getByRole("button", { name: /Pause/i });
   await pauseBtn.click();
 
-  // 2. Test 2x speed (300ms cadence)
+  // 2. Test 2x speed (300ms cadence) without advancing early.
   const speed2x = page.getByRole("radio", { name: "2x" });
   await speed2x.click();
   await expect(speed2x).toBeChecked();
+  await expect(page.getByTestId("playback-speed")).toHaveAttribute("data-cadence", "300");
 
-  await playBtn.click();
-  // At 300ms cadence, after 380ms the index should have stepped to index 2 (2024-01-04)
-  await page.waitForTimeout(380);
-  await expect(page.getByText("Active: 2024-01-04")).toBeVisible();
+  await playBtn.evaluate((button) => button.click());
+  await page.clock.runFor(299);
+  expect(await scrubber.inputValue()).toBe("1");
+  await page.clock.runFor(1);
+  expect(await scrubber.inputValue()).toBe("2");
   await pauseBtn.click();
 
-  // 3. Test 1x speed (600ms cadence)
+  // 3. Test 1x speed (600ms cadence) without advancing early.
   const speed1x = page.getByRole("radio", { name: "1x" });
   await speed1x.click();
   await expect(speed1x).toBeChecked();
+  await expect(page.getByTestId("playback-speed")).toHaveAttribute("data-cadence", "600");
 
-  await playBtn.click();
-  // At 600ms cadence, after 700ms the index should have stepped to index 3 (2024-01-05)
-  await page.waitForTimeout(700);
-  await expect(page.getByText("Active: 2024-01-05")).toBeVisible();
+  await playBtn.evaluate((button) => button.click());
+  await page.clock.runFor(599);
+  expect(await scrubber.inputValue()).toBe("2");
+  await page.clock.runFor(1);
+  expect(await scrubber.inputValue()).toBe("3");
   await pauseBtn.click();
 
-  // 4. Test 0.5x speed (1200ms cadence)
+  // 4. Test 0.5x speed (1200ms cadence) without advancing early.
   const speed05x = page.getByRole("radio", { name: "0.5x" });
   await speed05x.click();
   await expect(speed05x).toBeChecked();
+  await expect(page.getByTestId("playback-speed")).toHaveAttribute("data-cadence", "1200");
 
-  await playBtn.click();
-  // At 1200ms cadence, after 500ms (<1200ms) index must still be index 3
-  await page.waitForTimeout(500);
-  await expect(page.getByText("Active: 2024-01-05")).toBeVisible();
-
-  // After 850ms more (total 1350ms > 1200ms), index steps to index 4 (2024-01-08)
-  await page.waitForTimeout(850);
-  await expect(page.getByText("Active: 2024-01-08")).toBeVisible();
+  await playBtn.evaluate((button) => button.click());
+  await page.clock.runFor(1199);
+  expect(await scrubber.inputValue()).toBe("3");
+  await page.clock.runFor(1);
+  expect(await scrubber.inputValue()).toBe("4");
   await pauseBtn.click();
 });
-

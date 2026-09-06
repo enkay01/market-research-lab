@@ -22,6 +22,7 @@ from ..backtest import (
     BacktestError,
     BacktestSpecification,
     ExecutionModelAssumptions,
+    ReplayFillActionType,
     run_backtest,
 )
 from ..json_types import JsonValue
@@ -216,6 +217,14 @@ class BacktestMetricsResponse(BaseModel):
     num_fills: int
 
 
+class ReplayFillActionResponse(BaseModel):
+    action_type: ReplayFillActionType
+    quantity: float
+    execution_price: float
+    source_fill_id: str
+    source_fill_sequence: int
+
+
 class ReplayTickResponse(BaseModel):
     date: str
     price: float
@@ -224,10 +233,9 @@ class ReplayTickResponse(BaseModel):
     portfolio_value: float
     cash: float
     daily_pnl: float
-    action_note: str
-    action_type: Literal["buy", "exit", "short", "hold_long", "hold_short", "hold_cash"] = "hold_cash"
     position_value: float = 0.0
     allocation_pct: float = 0.0
+    fill_actions: list[ReplayFillActionResponse]
 
 
 class BacktestResultResponse(BaseModel):
@@ -934,10 +942,18 @@ def evaluate_strategy_verdict_route(
                 portfolio_value=tick.portfolio_value,
                 cash=tick.cash,
                 daily_pnl=tick.daily_pnl,
-                action_note=tick.action_note,
-                action_type=tick.action_type,  # type: ignore[arg-type]
                 position_value=tick.position_value,
                 allocation_pct=tick.allocation_pct,
+                fill_actions=[
+                    ReplayFillActionResponse(
+                        action_type=fa.action_type,
+                        quantity=fa.quantity,
+                        execution_price=fa.execution_price,
+                        source_fill_id=fa.source_fill_id,
+                        source_fill_sequence=fa.source_fill_sequence,
+                    )
+                    for fa in tick.fill_actions
+                ],
             )
             for tick in domain_result.replay_ticks
         ],

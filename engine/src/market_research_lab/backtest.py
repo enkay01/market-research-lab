@@ -185,9 +185,83 @@ class BacktestMetrics:
     num_fills: int
 
 
+ReplayFillActionType = Literal[
+    "buy",
+    "exit",
+    "short",
+]
+
+
+@dataclass(frozen=True)
+class ReplayFillAction:
+    """One fill action executed on the primary security during a replay session."""
+
+    action_type: ReplayFillActionType
+    quantity: float
+    execution_price: float
+    source_fill_id: str
+    source_fill_sequence: int
+
+
+def _classify_replay_fill(
+    fill: Fill,
+    position_before: float,
+    source_fill_sequence: int,
+) -> tuple[ReplayFillAction, ...]:
+    """Expand one signed fill into ordered replay actions by position effect."""
+    actions: list[ReplayFillAction] = []
+
+    def append_action(action_type: ReplayFillActionType, quantity: float) -> None:
+        rounded_quantity = round(quantity, 6)
+        if rounded_quantity <= EPS:
+            return
+        actions.append(
+            ReplayFillAction(
+                action_type=action_type,
+                quantity=rounded_quantity,
+                execution_price=fill.price,
+                source_fill_id=fill.trade_id,
+                source_fill_sequence=source_fill_sequence,
+            )
+        )
+
+    if fill.side == "buy":
+        cover_quantity = min(fill.quantity, abs(position_before)) if position_before < -EPS else 0.0
+        append_action("exit", cover_quantity)
+
+        buy_quantity = fill.quantity - cover_quantity
+        append_action("buy", buy_quantity)
+    else:
+        exit_quantity = min(fill.quantity, position_before) if position_before > EPS else 0.0
+        append_action("exit", exit_quantity)
+
+        short_quantity = fill.quantity - exit_quantity
+        append_action("short", short_quantity)
+
+    return tuple(actions)
+
+
+def _build_replay_fill_actions(
+    fills: Sequence[Fill],
+    position_before: float,
+) -> tuple[ReplayFillAction, ...]:
+    """Preserve every primary fill in source order as semantic replay actions."""
+    actions: list[ReplayFillAction] = []
+    position = position_before
+    for source_fill_sequence, fill in enumerate(fills, start=1):
+        actions.extend(_classify_replay_fill(fill, position, source_fill_sequence))
+        position += fill.quantity if fill.side == "buy" else -fill.quantity
+    return tuple(actions)
+
+
 @dataclass(frozen=True)
 class ReplayTick:
-    """One chronological replay state tick for visualization and trade action auditing."""
+    """One chronological replay state tick for visualization and trade action auditing.
+
+    All valuation fields (price, position_value, portfolio_value, allocation_pct, daily_pnl)
+    use the Security's bar close. Execution price selection remains an accounting concern;
+    fill actions expose their effective execution price separately.
+    """
 
     date: str
     price: float
@@ -196,10 +270,9 @@ class ReplayTick:
     portfolio_value: float
     cash: float
     daily_pnl: float
-    action_note: str
-    action_type: str = "hold_cash"
     position_value: float = 0.0
     allocation_pct: float = 0.0
+    fill_actions: tuple[ReplayFillAction, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -650,6 +723,7 @@ def run_backtest(
     pending_targets: dict[str, PendingTarget] = {}
     open_trades: dict[str, OpenTrade] = {}
     last_known_close_prices: dict[str, float] = {sym: 0.0 for sym in universe}
+    last_known_replay_close_prices: dict[str, float] = {sym: 0.0 for sym in universe}
     delisted_securities: set[str] = set()
     trade_counter = 0
 
@@ -666,8 +740,7 @@ def run_backtest(
     total_dividends_credited = 0.0
     delistings_applied: list[str] = []
     replay_ticks: list[ReplayTick] = []
-    last_known_actual_close_prices: dict[str, float] = {}
-    prior_portfolio_val: float = specification.starting_cash
+    prior_replay_portfolio_val: float = specification.starting_cash
 
     primary_symbol = universe[0]
 
@@ -1445,26 +1518,34 @@ def run_backtest(
         total_pos_val = 0.0
         gross_pos_val = 0.0
         primary_close = 0.0
+        replay_total_pos_val = 0.0
+        primary_replay_close = 0.0
         primary_shares = positions.get(primary_symbol, 0.0)
 
         for sym in universe:
             if sym in delisted_securities:
                 close_p = 0.0
+                replay_close_p = 0.0
             else:
                 bar_sym = bars_by_symbol.get(sym, {}).get(date_str)
                 if bar_sym is not None:
                     close_p = _price_value(bar_sym, specification.price_field)
                     last_known_close_prices[sym] = close_p
+                    replay_close_p = bar_sym.close
+                    last_known_replay_close_prices[sym] = replay_close_p
                 else:
                     close_p = last_known_close_prices.get(sym, 0.0)
+                    replay_close_p = last_known_replay_close_prices.get(sym, 0.0)
 
             if sym == primary_symbol:
                 primary_close = close_p
+                primary_replay_close = replay_close_p
 
             shares_sym = positions.get(sym, 0.0)
             val_sym = shares_sym * close_p
             total_pos_val += val_sym
             gross_pos_val += abs(val_sym)
+            replay_total_pos_val += shares_sym * replay_close_p
 
         portfolio_val = ledger_account.calculate_equity(total_pos_val)
 
@@ -1553,101 +1634,36 @@ def run_backtest(
             )
         )
 
-        bar_primary = bars_by_symbol.get(primary_symbol, {}).get(date_str)
-        if bar_primary is not None:
-            last_known_actual_close_prices[primary_symbol] = bar_primary.close
-            primary_actual_close = bar_primary.close
-        elif primary_symbol in delisted_securities:
-            primary_actual_close = 0.0
-        else:
-            primary_actual_close = last_known_actual_close_prices.get(primary_symbol, 0.0)
-
-        action_fill = next(
-            (f for f in fills_today if f.security_id == primary_symbol),
-            None,
-        )
-        if action_fill is not None:
-            if prior_primary_shares < -EPS:
-                # Covering or reducing short
-                if action_fill.side == "buy":
-                    action_type = "exit"
-                    if abs(primary_shares) <= EPS:
-                        action_note = (
-                            f"▼ EXIT position ({action_fill.quantity:.2f} @ ${action_fill.price:.2f})"
-                        )
-                    elif primary_shares < -EPS:
-                        action_note = (
-                            f"▼ EXIT partial short cover ({action_fill.quantity:.2f} @ ${action_fill.price:.2f})"
-                        )
-                    else:
-                        action_note = (
-                            f"▼ EXIT short cover ({action_fill.quantity:.2f} @ ${action_fill.price:.2f})"
-                        )
-                else:
-                    action_type = "short"
-                    action_note = f"▼ SHORT {action_fill.quantity:.2f} @ ${action_fill.price:.2f}"
-            elif prior_primary_shares > EPS:
-                # Closing or reducing long
-                if action_fill.side == "sell":
-                    action_type = "exit"
-                    if abs(primary_shares) <= EPS:
-                        action_note = (
-                            f"▼ EXIT position ({action_fill.quantity:.2f} @ ${action_fill.price:.2f})"
-                        )
-                    elif primary_shares > EPS:
-                        action_note = (
-                            f"▼ EXIT partial ({action_fill.quantity:.2f} @ ${action_fill.price:.2f})"
-                        )
-                    else:
-                        action_note = (
-                            f"▼ EXIT position ({action_fill.quantity:.2f} @ ${action_fill.price:.2f})"
-                        )
-                else:
-                    action_type = "buy"
-                    action_note = f"▲ BUY {action_fill.quantity:.2f} @ ${action_fill.price:.2f}"
-            else:
-                # Opening from flat
-                if action_fill.side == "buy":
-                    action_type = "buy"
-                    action_note = f"▲ BUY {action_fill.quantity:.2f} @ ${action_fill.price:.2f}"
-                else:
-                    action_type = "short"
-                    action_note = f"▼ SHORT {action_fill.quantity:.2f} @ ${action_fill.price:.2f}"
-        elif primary_shares > EPS:
-            action_type = "hold_long"
-            action_note = f"Hold Long ({primary_shares:.2f} shares)"
-        elif primary_shares < -EPS:
-            action_type = "hold_short"
-            action_note = f"Hold Short ({abs(primary_shares):.2f} shares)"
-        else:
-            action_type = "hold_cash"
-            action_note = "Hold Cash"
+        primary_fills = [f for f in fills_today if f.security_id == primary_symbol]
+        fill_actions = _build_replay_fill_actions(primary_fills, prior_primary_shares)
 
         signal_val = (
             primary_target.weight
             if primary_target is not None
             else today_signal_weights.get(primary_symbol, 0.0)
         )
-        primary_pos_val = primary_shares * primary_actual_close
+        replay_portfolio_val = cash + replay_total_pos_val
+        primary_pos_val = primary_shares * primary_replay_close
         primary_alloc_pct = (
-            (abs(primary_pos_val) / portfolio_val * 100.0) if portfolio_val > 0.0 else 0.0
+            (abs(primary_pos_val) / replay_portfolio_val * 100.0)
+            if replay_portfolio_val > 0.0
+            else 0.0
         )
         replay_ticks.append(
             ReplayTick(
                 date=date_str,
-                price=round(primary_actual_close, 4),
+                price=round(primary_replay_close, 4),
                 signal=round(signal_val, 6),
                 position_shares=round(primary_shares, 6),
-                portfolio_value=round(portfolio_val, 4),
+                portfolio_value=round(replay_portfolio_val, 4),
                 cash=round(cash, 4),
-                daily_pnl=round(portfolio_val - prior_portfolio_val, 4),
-                action_note=action_note,
-                action_type=action_type,
+                daily_pnl=round(replay_portfolio_val - prior_replay_portfolio_val, 4),
                 position_value=round(primary_pos_val, 4),
                 allocation_pct=round(primary_alloc_pct, 4),
+                fill_actions=fill_actions,
             )
         )
-        prior_portfolio_val = portfolio_val
+        prior_replay_portfolio_val = replay_portfolio_val
 
     if not fills:
         warnings.append("No fills occurred during the backtest window.")

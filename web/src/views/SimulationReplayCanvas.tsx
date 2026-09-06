@@ -28,6 +28,52 @@ const SPEED_MS = {
   "4x": 150,
 } as const satisfies Record<PlaybackSpeed, number>;
 
+type ReplayFillAction = NonNullable<ReplayTick["fill_actions"]>[number];
+
+const FILL_ACTION_PRESENTATION = {
+  buy: {
+    label: "▲ BUY",
+    tokenColor: "green",
+    textColor: "var(--color-text-green)",
+    markerBelow: true,
+  },
+  exit: {
+    label: "▼ EXIT",
+    tokenColor: "red",
+    textColor: "var(--color-text-red)",
+    markerBelow: false,
+  },
+  short: {
+    label: "▼ SHORT",
+    tokenColor: "orange",
+    textColor: "var(--color-text-orange)",
+    markerBelow: false,
+  },
+} as const;
+
+const NO_FILL_PRESENTATION = {
+  label: "No fill",
+  tokenColor: "blue",
+  textColor: "var(--color-text-primary)",
+} as const;
+
+function fillActionLabel(actionType: ReplayFillAction["action_type"]): string {
+  return FILL_ACTION_PRESENTATION[actionType].label;
+}
+
+function replayActionLabel(fillActions?: ReplayTick["fill_actions"]): string {
+  if (!fillActions || fillActions.length === 0) {
+    return NO_FILL_PRESENTATION.label;
+  }
+
+  return fillActions
+    .map(
+      (action) =>
+        `${fillActionLabel(action.action_type)} ${action.quantity.toFixed(2)} @ $${action.execution_price.toFixed(2)}`,
+    )
+    .join("; ");
+}
+
 export interface SimulationReplayCanvasProps {
   ticks?: ReplayTick[];
   symbol?: string;
@@ -42,12 +88,11 @@ export function SimulationReplayCanvas({
   const [speed, setSpeed] = useState<PlaybackSpeed>("1x");
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
 
-  // Stepping cadence dynamically updates with speed
+  // Schedule one replay step at the selected cadence.
   useEffect(() => {
     if (!isPlaying || ticks.length === 0) return;
 
-    const intervalMs = SPEED_MS[speed];
-    const timer = setInterval(() => {
+    const timer = window.setTimeout(() => {
       setCurrentIndex((prev) => {
         if (prev >= ticks.length - 1) {
           setIsPlaying(false);
@@ -55,10 +100,10 @@ export function SimulationReplayCanvas({
         }
         return prev + 1;
       });
-    }, intervalMs);
+    }, SPEED_MS[speed]);
 
-    return () => clearInterval(timer);
-  }, [isPlaying, speed, ticks.length]);
+    return () => clearTimeout(timer);
+  }, [currentIndex, isPlaying, speed, ticks.length]);
 
   if (ticks.length === 0) {
     return (
@@ -149,21 +194,23 @@ export function SimulationReplayCanvas({
 
   // Active allocation provided directly by backend domain calculation
   const allocationPct = currentTick.allocation_pct ?? 0;
+  const currentFillActions = currentTick.fill_actions ?? [];
+  const currentFill =
+    currentFillActions.length > 0 ? currentFillActions[currentFillActions.length - 1] : undefined;
+  const currentActionPresentation = currentFill
+    ? FILL_ACTION_PRESENTATION[currentFill.action_type]
+    : NO_FILL_PRESENTATION;
+  const currentActionLabel = replayActionLabel(currentFillActions);
 
-  // Determine action badge from structured action field
-  const isBuy = currentTick.action_type === "buy";
-  const isExit = currentTick.action_type === "exit";
-  const isShort = currentTick.action_type === "short";
-
-  // Filter all fill events (buy, exit, short) for the trade actions log
-  const fillEvents = ticks
-    .map((tick, index) => ({ tick, index }))
-    .filter(
-      ({ tick }) =>
-        tick.action_type === "buy" ||
-        tick.action_type === "exit" ||
-        tick.action_type === "short",
-    );
+  // Flatten every typed fill action so reversals and short covers remain visible.
+  const fillEvents = ticks.flatMap((tick, index) =>
+    (tick.fill_actions ?? []).map((fill, fillIndex) => ({
+      tick,
+      index,
+      fill,
+      fillIndex,
+    })),
+  );
 
   return (
     <VStack gap={4} style={{ width: "100%" }}>
@@ -172,32 +219,18 @@ export function SimulationReplayCanvas({
         padding={3}
         style={{
           backgroundColor: "var(--color-background-wash)",
-          border: isBuy
-            ? "1px solid var(--color-text-green)"
-            : isExit
-              ? "1px solid var(--color-text-red)"
-              : isShort
-                ? "1px solid var(--color-text-orange)"
-                : "1px solid var(--color-border-emphasized)",
+          border: `1px solid ${currentFill ? currentActionPresentation.textColor : "var(--color-border-emphasized)"}`,
         }}
       >
         <VStack gap={2}>
           <HStack justify="between" align="center" style={{ flexWrap: "wrap", gap: "8px" }}>
             <HStack gap={2} align="center">
               <Token
-                label={
-                  isBuy
-                    ? "▲ BUY ACTION"
-                    : isExit
-                      ? "▼ EXIT ACTION"
-                      : isShort
-                        ? "▼ SHORT ACTION"
-                        : "● HOLDING"
-                }
-                color={isBuy ? "green" : isExit ? "red" : isShort ? "orange" : "blue"}
+                label={currentFill ? `${currentActionPresentation.label} ACTION` : "NO FILL"}
+                color={currentActionPresentation.tokenColor}
               />
               <Text weight="bold" size="lg">
-                Order Ticket: {currentTick.action_note}
+                Order Ticket: {currentActionLabel}
               </Text>
             </HStack>
 
@@ -227,15 +260,9 @@ export function SimulationReplayCanvas({
                 <Text
                   weight="bold"
                   size="lg"
-                  style={{
-                    color: isBuy
-                      ? "var(--color-text-green)"
-                      : isExit
-                        ? "var(--color-text-red)"
-                        : "var(--color-text-primary)",
-                  }}
+                  style={{ color: currentActionPresentation.textColor }}
                 >
-                  {currentTick.action_note}
+                  {currentActionLabel}
                 </Text>
               </VStack>
             </Card>
@@ -370,6 +397,8 @@ export function SimulationReplayCanvas({
                 Speed:
               </Text>
               <SegmentedControl
+                data-testid="playback-speed"
+                data-cadence={SPEED_MS[speed]}
                 label="Cadence"
                 value={speed}
                 onChange={(val: string) => {
@@ -501,7 +530,10 @@ export function SimulationReplayCanvas({
 
               <HStack gap={3} align="center">
                 <Text size="sm">
-                  Action: <strong>{inspectedTick.action_note}</strong>
+                  Action:{" "}
+                  <strong>
+                    {replayActionLabel(inspectedTick.fill_actions)}
+                  </strong>
                 </Text>
                 <Text size="sm" type="supporting">
                   Cash: ${Math.round(inspectedTick.cash).toLocaleString()}
@@ -612,145 +644,52 @@ export function SimulationReplayCanvas({
               />
 
               {/* MANDATORY BUY, SHORT, AND EXIT MARKERS ON PRICE BARS */}
-              {ticks.map((t, idx) => {
+              {fillEvents.map(({ tick: t, index: idx, fill, fillIndex }) => {
                 const tickX = paddingLeft + (idx / Math.max(1, ticks.length - 1)) * availableW;
                 const tickY =
                   height - paddingYBottom - ((t.price - minPrice) / priceRange) * availableH;
-
-                const isBuyMarker = t.action_type === "buy";
-                const isExitMarker = t.action_type === "exit";
-                const isShortMarker = t.action_type === "short";
-
-                if (!isBuyMarker && !isExitMarker && !isShortMarker) return null;
-
+                const fillPresentation = FILL_ACTION_PRESENTATION[fill.action_type];
+                const markerColor = fillPresentation.textColor;
+                const markerBelow = fillPresentation.markerBelow;
+                const markerY = tickY + (markerBelow ? 16 : -16);
+                const labelY = tickY + (markerBelow ? 28 : -20);
                 const isCurrent = idx === currentIndex;
-
-                if (isBuyMarker) {
-                  return (
-                    <g
-                      key={`buy-${idx}`}
-                      style={{ cursor: "pointer" }}
-                      onClick={() => {
-                        setIsPlaying(false);
-                        setCurrentIndex(idx);
-                      }}
-                    >
-                      {/* Price bar fill point dot */}
-                      <circle
-                        cx={tickX}
-                        cy={tickY}
-                        r={isCurrent ? 5 : 4}
-                        fill="var(--color-text-green)"
-                        stroke="var(--color-background-surface)"
-                        strokeWidth="1.5"
-                      />
-                      {/* Pin line connecting bar to marker */}
-                      <line
-                        x1={tickX}
-                        y1={tickY}
-                        x2={tickX}
-                        y2={tickY + 16}
-                        stroke="var(--color-text-green)"
-                        strokeWidth="1.5"
-                      />
-                      {/* Explicit "▲ BUY" marker label */}
-                      <text
-                        x={tickX}
-                        y={tickY + 28}
-                        textAnchor="middle"
-                        fill="var(--color-text-green)"
-                        fontSize="11"
-                        fontWeight="bold"
-                        fontFamily="var(--font-mono, monospace)"
-                      >
-                        ▲ BUY
-                      </text>
-                    </g>
-                  );
-                }
-
-                if (isShortMarker) {
-                  return (
-                    <g
-                      key={`short-${idx}`}
-                      style={{ cursor: "pointer" }}
-                      onClick={() => {
-                        setIsPlaying(false);
-                        setCurrentIndex(idx);
-                      }}
-                    >
-                      {/* Price bar fill point dot */}
-                      <circle
-                        cx={tickX}
-                        cy={tickY}
-                        r={isCurrent ? 5 : 4}
-                        fill="var(--color-text-orange)"
-                        stroke="var(--color-background-surface)"
-                        strokeWidth="1.5"
-                      />
-                      {/* Pin line connecting bar to marker */}
-                      <line
-                        x1={tickX}
-                        y1={tickY}
-                        x2={tickX}
-                        y2={tickY - 16}
-                        stroke="var(--color-text-orange)"
-                        strokeWidth="1.5"
-                      />
-                      {/* Explicit "▼ SHORT" marker label */}
-                      <text
-                        x={tickX}
-                        y={tickY - 20}
-                        textAnchor="middle"
-                        fill="var(--color-text-orange)"
-                        fontSize="11"
-                        fontWeight="bold"
-                        fontFamily="var(--font-mono, monospace)"
-                      >
-                        ▼ SHORT
-                      </text>
-                    </g>
-                  );
-                }
 
                 return (
                   <g
-                    key={`exit-${idx}`}
+                    key={`fill-${fill.source_fill_id}-${fill.source_fill_sequence}-${fillIndex}`}
                     style={{ cursor: "pointer" }}
                     onClick={() => {
                       setIsPlaying(false);
                       setCurrentIndex(idx);
                     }}
                   >
-                    {/* Price bar fill point dot */}
                     <circle
                       cx={tickX}
                       cy={tickY}
                       r={isCurrent ? 5 : 4}
-                      fill="var(--color-text-red)"
+                      fill={markerColor}
                       stroke="var(--color-background-surface)"
                       strokeWidth="1.5"
                     />
-                    {/* Pin line connecting bar to marker */}
                     <line
                       x1={tickX}
                       y1={tickY}
                       x2={tickX}
-                      y2={tickY - 16}
-                      stroke="var(--color-text-red)"
+                      y2={markerY}
+                      stroke={markerColor}
                       strokeWidth="1.5"
                     />
-                    {/* Explicit "▼ EXIT" marker label */}
                     <text
                       x={tickX}
-                      y={tickY - 20}
+                      y={labelY}
                       textAnchor="middle"
-                      fill="var(--color-text-red)"
+                      fill={markerColor}
                       fontSize="11"
                       fontWeight="bold"
                       fontFamily="var(--font-mono, monospace)"
                     >
-                      ▼ EXIT
+                      {fillActionLabel(fill.action_type)}
                     </text>
                   </g>
                 );
@@ -852,7 +791,11 @@ export function SimulationReplayCanvas({
                 <TableRow>
                   <TableHeaderCell>Session Date</TableHeaderCell>
                   <TableHeaderCell>Fill Action</TableHeaderCell>
-                  <TableHeaderCell style={{ textAlign: "end" }}>Price</TableHeaderCell>
+                  <TableHeaderCell style={{ textAlign: "end" }}>Quantity</TableHeaderCell>
+                  <TableHeaderCell style={{ textAlign: "end" }}>
+                    Execution Price
+                  </TableHeaderCell>
+                  <TableHeaderCell>Source Fill</TableHeaderCell>
                   <TableHeaderCell style={{ textAlign: "end" }}>Position</TableHeaderCell>
                   <TableHeaderCell style={{ textAlign: "end" }}>Cash Balance</TableHeaderCell>
                   <TableHeaderCell style={{ textAlign: "end" }}>Day PnL</TableHeaderCell>
@@ -860,13 +803,12 @@ export function SimulationReplayCanvas({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {fillEvents.map(({ tick: fillTick, index: fillIdx }) => {
+                {fillEvents.map(({ tick: fillTick, index: fillIdx, fill, fillIndex }) => {
                   const isCurrent = fillIdx === currentIndex;
-                  const isBuyFill = fillTick.action_type === "buy";
-                  const isShortFill = fillTick.action_type === "short";
+                  const fillPresentation = FILL_ACTION_PRESENTATION[fill.action_type];
                   return (
                     <TableRow
-                      key={fillIdx}
+                      key={`fill-${fill.source_fill_id}-${fill.source_fill_sequence}-${fillIndex}`}
                       style={{
                         backgroundColor: isCurrent ? "var(--color-background-surface)" : undefined,
                         cursor: "pointer",
@@ -881,24 +823,20 @@ export function SimulationReplayCanvas({
                       </TableCell>
                       <TableCell>
                         <Token
-                          label={
-                            isBuyFill
-                              ? "▲ BUY"
-                              : isShortFill
-                                ? "▼ SHORT"
-                                : "▼ EXIT"
-                          }
-                          color={
-                            isBuyFill
-                              ? "green"
-                              : isShortFill
-                                ? "orange"
-                                : "red"
-                          }
+                          label={fillPresentation.label}
+                          color={fillPresentation.tokenColor}
                         />
                       </TableCell>
                       <TableCell style={{ textAlign: "end" }}>
-                        ${fillTick.price.toFixed(2)}
+                        {fill.quantity.toFixed(2)} shs
+                      </TableCell>
+                      <TableCell style={{ textAlign: "end" }}>
+                        ${fill.execution_price.toFixed(2)}
+                      </TableCell>
+                      <TableCell>
+                        <Text size="sm">
+                          {fill.source_fill_id} · #{fill.source_fill_sequence}
+                        </Text>
                       </TableCell>
                       <TableCell style={{ textAlign: "end" }}>
                         {fillTick.position_shares.toFixed(0)} shs

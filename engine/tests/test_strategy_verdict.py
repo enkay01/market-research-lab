@@ -566,11 +566,9 @@ def test_evaluate_strategy_verdict_emits_replay_ticks() -> None:
         assert isinstance(tick.portfolio_value, float)
         assert isinstance(tick.cash, float)
         assert isinstance(tick.daily_pnl, float)
-        assert isinstance(tick.action_note, str)
-        assert len(tick.action_note) > 0
-        assert isinstance(tick.action_type, str)
         assert isinstance(tick.position_value, float)
         assert isinstance(tick.allocation_pct, float)
+        assert isinstance(tick.fill_actions, tuple)
 
     # Assert exact values for BUY tick (session 4: dates[4])
     buy_tick = result.replay_ticks[4]
@@ -580,8 +578,12 @@ def test_evaluate_strategy_verdict_emits_replay_ticks() -> None:
     assert buy_tick.cash == 0.0
     assert round(buy_tick.position_shares, 2) == 909.09
     assert round(buy_tick.daily_pnl, 2) == 1818.18
-    assert buy_tick.action_type == "buy"
-    assert "BUY" in buy_tick.action_note
+    assert len(buy_tick.fill_actions) == 1
+    assert buy_tick.fill_actions[0].action_type == "buy"
+    assert buy_tick.fill_actions[0].quantity == pytest.approx(909.090909)
+    assert buy_tick.fill_actions[0].execution_price == 110.0
+    assert buy_tick.fill_actions[0].source_fill_sequence == 1
+    assert buy_tick.fill_actions[0].source_fill_id
     assert round(buy_tick.position_value, 2) == 101818.18
     assert buy_tick.allocation_pct == 100.0
 
@@ -593,8 +595,7 @@ def test_evaluate_strategy_verdict_emits_replay_ticks() -> None:
     assert hold_tick.cash == 0.0
     assert round(hold_tick.position_shares, 2) == 909.09
     assert round(hold_tick.daily_pnl, 2) == 2727.27
-    assert hold_tick.action_type == "hold_long"
-    assert "Hold Long" in hold_tick.action_note
+    assert hold_tick.fill_actions == ()
     assert round(hold_tick.position_value, 2) == 104545.45
     assert hold_tick.allocation_pct == 100.0
 
@@ -606,8 +607,10 @@ def test_evaluate_strategy_verdict_emits_replay_ticks() -> None:
     assert exit_tick.cash == 80000.0
     assert exit_tick.position_shares == 0.0
     assert round(exit_tick.daily_pnl, 2) == -10909.09
-    assert exit_tick.action_type == "exit"
-    assert "EXIT" in exit_tick.action_note
+    assert len(exit_tick.fill_actions) == 1
+    assert exit_tick.fill_actions[0].action_type == "exit"
+    assert exit_tick.fill_actions[0].quantity == pytest.approx(909.090909)
+    assert exit_tick.fill_actions[0].execution_price == 88.0
     assert exit_tick.position_value == 0.0
     assert exit_tick.allocation_pct == 0.0
 
@@ -642,13 +645,11 @@ def test_replay_ticks_classify_short_cover_as_exit() -> None:
 
     # Session 4 (2024-01-05): short fill executes
     short_tick = res.replay_ticks[4]
-    assert short_tick.action_type == "short"
-    assert "SHORT" in short_tick.action_note
+    assert [action.action_type for action in short_tick.fill_actions] == ["short"]
     assert short_tick.position_shares < 0.0
 
     # Session 7 (2024-01-08): short cover executes (buy fill covering short) -> must be EXIT!
     cover_tick = res.replay_ticks[7]
-    assert cover_tick.action_type == "exit"
-    assert "EXIT" in cover_tick.action_note
+    assert [action.action_type for action in cover_tick.fill_actions] == ["exit"]
     assert cover_tick.position_shares == 0.0
 
