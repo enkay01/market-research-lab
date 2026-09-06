@@ -63,6 +63,7 @@ export type GateResult = components["schemas"]["GateResultResponse"];
 export type PartitionMetrics = components["schemas"]["PartitionMetricsResponse"];
 export type VerdictEquityPoint = components["schemas"]["VerdictEquityPointResponse"];
 export type FrictionTier = components["schemas"]["FrictionTierResponse"];
+export type ReplayTick = components["schemas"]["ReplayTickResponse"];
 export type CandidateRankingResponse = components["schemas"]["CandidateRankingResponse"];
 export type CandidateRankingRequest = components["schemas"]["CandidateRankingRequest"];
 

@@ -19,6 +19,7 @@ from .backtest import (
     BacktestSpecification,
     EquityPoint,
     ExecutionModelAssumptions,
+    ReplayTick,
     Trade,
     run_backtest,
 )
@@ -154,6 +155,7 @@ class StrategyVerdictResult:
     friction_ladder: tuple[FrictionTier, ...] = ()
     rejection_reason: str | None = None
     confidence_score: float | None = None
+    replay_ticks: tuple[ReplayTick, ...] = ()
     ranking_records: tuple[RankingRecord, ...] = ()
 
 
@@ -852,11 +854,10 @@ def evaluate_strategy_verdict(
     overall_passed = all(g.passed for g in evaluated_gates)
     first_failed = next((g for g in evaluated_gates if not g.passed), None)
     rejection_reason = None if first_failed is None else first_failed.verdict_note
-    headline_verdict = (
-        "Strategy Clears Gate 1, 2, 3, 4, and 5 (Statistical Hurdle Gates)"
-        if first_failed is None
-        else f"Strategy Rejected: {rejection_reason}"
-    )
+    if first_failed is None:
+        headline_verdict = "Strategy Clears Gate 1, 2, 3, 4, and 5 (Statistical Hurdle Gates)"
+    else:
+        headline_verdict = f"Strategy Rejected: {rejection_reason}"
 
     verdict_curve: list[VerdictEquityPoint] = []
     for pt in backtest_result.equity_curve:
@@ -883,6 +884,7 @@ def evaluate_strategy_verdict(
         combined_metrics=combined_metrics,
         equity_curve=tuple(verdict_curve),
         friction_ladder=tuple(friction_results),
+        replay_ticks=backtest_result.replay_ticks,
         ranking_records=backtest_result.ranking_records,
     )
 

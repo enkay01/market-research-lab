@@ -958,6 +958,8 @@ export interface components {
             rejections?: components["schemas"]["ConstraintRejectionResponse"][];
             /** Rankings */
             rankings?: components["schemas"]["RankingResponse"][];
+            /** Replay Ticks */
+            replay_ticks?: components["schemas"]["ReplayTickResponse"][];
         };
         /** BacktestRunRequest */
         BacktestRunRequest: {
@@ -2107,6 +2109,51 @@ export interface components {
             /** Rationale */
             rationale: string;
         };
+        /** ReplayFillActionResponse */
+        ReplayFillActionResponse: {
+            /**
+             * Action Type
+             * @enum {string}
+             */
+            action_type: "buy" | "exit" | "short";
+            /** Quantity */
+            quantity: number;
+            /** Execution Price */
+            execution_price: number;
+            /** Source Fill Id */
+            source_fill_id: string;
+            /** Source Fill Sequence */
+            source_fill_sequence: number;
+        };
+        /** ReplayTickResponse */
+        ReplayTickResponse: {
+            /** Date */
+            date: string;
+            /** Price */
+            price: number;
+            /** Signal */
+            signal: number;
+            /** Position Shares */
+            position_shares: number;
+            /** Portfolio Value */
+            portfolio_value: number;
+            /** Cash */
+            cash: number;
+            /** Daily Pnl */
+            daily_pnl: number;
+            /**
+             * Position Value
+             * @default 0
+             */
+            position_value: number;
+            /**
+             * Allocation Pct
+             * @default 0
+             */
+            allocation_pct: number;
+            /** Fill Actions */
+            fill_actions: components["schemas"]["ReplayFillActionResponse"][];
+        };
         /** RunResponse */
         RunResponse: {
             /** Id */
@@ -2400,6 +2447,8 @@ export interface components {
             equity_curve: components["schemas"]["VerdictEquityPointResponse"][];
             /** Friction Ladder */
             friction_ladder: components["schemas"]["FrictionTierResponse"][];
+            /** Replay Ticks */
+            replay_ticks?: components["schemas"]["ReplayTickResponse"][];
             candidate_ranking?: components["schemas"]["CandidateRankingResponse"] | null;
         };
         /** TradeResponse */

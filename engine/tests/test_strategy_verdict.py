@@ -528,5 +528,128 @@ def test_strategy_verdict_full_execution_fail() -> None:
     assert "Loses to benchmark after costs" in result.headline_verdict
 
 
+def test_evaluate_strategy_verdict_emits_replay_ticks() -> None:
+    """Strategy verdict emits ordered replay ticks with price, signal, shares, cash, and PnL."""
+    dates = _make_dates(12)
+    # Price rises to trigger long entry, holds, then falls to trigger exit
+    strat_closes = [100.0, 101.0, 105.0, 110.0, 112.0, 115.0, 100.0, 90.0, 85.0, 85.0, 85.0, 85.0]
+    bench_closes = [400.0 + (i * 0.5) for i in range(12)]
 
+    bars: list[DailyBar] = []
+    for d, c in zip(dates, strat_closes, strict=True):
+        # Explicitly make open_price != close_price to verify replay ticks record close price
+        bars.append(_make_bar(d, security_id="AAPL", open_price=c - 2.0, close_price=c))
+    for d, c in zip(dates, bench_closes, strict=True):
+        bars.append(_make_bar(d, security_id="SPY", open_price=c - 1.0, close_price=c))
+
+    spec = StrategyVerdictSpecification(
+        strategy_name="long_flat_moving_average",
+        universe=("AAPL",),
+        benchmark_security_id="SPY",
+        start_date=dates[0],
+        end_date=dates[-1],
+        starting_cash=100_000.0,
+        parameters={"fast_period": 2, "slow_period": 4},
+        holdout_ratio=0.25,
+    )
+
+    result = evaluate_strategy_verdict(spec, bars=bars)
+
+    assert len(result.replay_ticks) == len(dates)
+
+    # Verify every tick possesses the required fields
+    for i, tick in enumerate(result.replay_ticks):
+        assert tick.date == dates[i]
+        assert tick.price > 0.0
+        assert isinstance(tick.signal, float)
+        assert isinstance(tick.position_shares, float)
+        assert isinstance(tick.portfolio_value, float)
+        assert isinstance(tick.cash, float)
+        assert isinstance(tick.daily_pnl, float)
+        assert isinstance(tick.position_value, float)
+        assert isinstance(tick.allocation_pct, float)
+        assert isinstance(tick.fill_actions, tuple)
+
+    # Assert exact values for BUY tick (session 4: dates[4])
+    buy_tick = result.replay_ticks[4]
+    assert buy_tick.date == dates[4]
+    assert buy_tick.price == 112.0  # Recorded bar close price, NOT open price (110.0)
+    assert buy_tick.price != 110.0
+    assert buy_tick.cash == 0.0
+    assert round(buy_tick.position_shares, 2) == 909.09
+    assert round(buy_tick.daily_pnl, 2) == 1818.18
+    assert len(buy_tick.fill_actions) == 1
+    assert buy_tick.fill_actions[0].action_type == "buy"
+    assert buy_tick.fill_actions[0].quantity == pytest.approx(909.090909)
+    assert buy_tick.fill_actions[0].execution_price == 110.0
+    assert buy_tick.fill_actions[0].source_fill_sequence == 1
+    assert buy_tick.fill_actions[0].source_fill_id
+    assert round(buy_tick.position_value, 2) == 101818.18
+    assert buy_tick.allocation_pct == 100.0
+
+    # Assert exact values for HOLD tick (session 5: dates[5])
+    hold_tick = result.replay_ticks[5]
+    assert hold_tick.date == dates[5]
+    assert hold_tick.price == 115.0  # Recorded bar close price, NOT open price (113.0)
+    assert hold_tick.price != 113.0
+    assert hold_tick.cash == 0.0
+    assert round(hold_tick.position_shares, 2) == 909.09
+    assert round(hold_tick.daily_pnl, 2) == 2727.27
+    assert hold_tick.fill_actions == ()
+    assert round(hold_tick.position_value, 2) == 104545.45
+    assert hold_tick.allocation_pct == 100.0
+
+    # Assert exact values for EXIT tick (session 7: dates[7])
+    exit_tick = result.replay_ticks[7]
+    assert exit_tick.date == dates[7]
+    assert exit_tick.price == 90.0  # Recorded bar close price, NOT open price (88.0)
+    assert exit_tick.price != 88.0
+    assert exit_tick.cash == 80000.0
+    assert exit_tick.position_shares == 0.0
+    assert round(exit_tick.daily_pnl, 2) == -10909.09
+    assert len(exit_tick.fill_actions) == 1
+    assert exit_tick.fill_actions[0].action_type == "exit"
+    assert exit_tick.fill_actions[0].quantity == pytest.approx(909.090909)
+    assert exit_tick.fill_actions[0].execution_price == 88.0
+    assert exit_tick.position_value == 0.0
+    assert exit_tick.allocation_pct == 0.0
+
+
+def test_replay_ticks_classify_short_cover_as_exit() -> None:
+    """Short covering buy fills are classified as 'exit' actions rather than 'buy'."""
+    from market_research_lab.backtest import (
+        BacktestSpecification,
+        ExecutionModelAssumptions,
+        run_backtest,
+    )
+
+    dates = [f"2024-01-0{i+1}" for i in range(8)]
+    closes = [100.0, 90.0, 80.0, 70.0, 60.0, 50.0, 80.0, 90.0]
+    bars = [
+        _make_bar(d, security_id="AAPL", open_price=c, close_price=c)
+        for d, c in zip(dates, closes, strict=True)
+    ]
+
+    spec = BacktestSpecification(
+        strategy_name="long_short_moving_average",
+        strategy_revision="v1",
+        dataset_version_id="ds-short",
+        universe=("AAPL",),
+        start_date=dates[0],
+        end_date=dates[-1],
+        starting_cash=100_000.0,
+        parameters={"fast_period": 2, "slow_period": 4, "ma_type": "sma"},
+        execution=ExecutionModelAssumptions(allow_shorting=True),
+    )
+    res = run_backtest(spec, bars=bars)
+
+    # Session 4 (2024-01-05): short fill executes
+    short_tick = res.replay_ticks[4]
+    assert [action.action_type for action in short_tick.fill_actions] == ["short"]
+    assert short_tick.position_shares < 0.0
+
+    # Session 7 (2024-01-08): short cover executes (buy fill covering short) -> must be EXIT!
+    cover_tick = res.replay_ticks[7]
+    assert [action.action_type for action in cover_tick.fill_actions] == ["exit"]
+    assert cover_tick.position_shares == 0.0
 
