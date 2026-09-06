@@ -692,7 +692,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/projects/{project_id}/backtests/screener": {
+    "/api/projects/{project_id}/backtests/candidate-ranking": {
         parameters: {
             query?: never;
             header?: never;
@@ -701,8 +701,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Evaluate Strategy Screener Route */
-        post: operations["evaluate_strategy_screener_route_api_projects__project_id__backtests_screener_post"];
+        /** Evaluate Candidate Ranking Route */
+        post: operations["evaluate_candidate_ranking_route_api_projects__project_id__backtests_candidate_ranking_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1076,6 +1076,51 @@ export interface components {
         BulkDeleteRunsResponse: {
             /** Deleted Ids */
             deleted_ids: string[];
+        };
+        /** CandidateRankingRequest */
+        CandidateRankingRequest: {
+            /** Strategy Name */
+            strategy_name: string;
+            /**
+             * Strategy Revision
+             * @default v1
+             */
+            strategy_revision: string;
+            /** Dataset Version Id */
+            dataset_version_id?: string | null;
+            /** Universe Preset */
+            universe_preset?: string | null;
+            /** Symbols */
+            symbols?: string[];
+            /**
+             * Benchmark Symbol
+             * @default SPY
+             */
+            benchmark_symbol: string;
+            /** Start Date */
+            start_date?: string | null;
+            /** End Date */
+            end_date?: string | null;
+            /**
+             * Starting Cash
+             * @default 100000
+             */
+            starting_cash: number;
+            /** Parameters */
+            parameters?: {
+                [key: string]: components["schemas"]["JsonValue-Input"];
+            };
+            execution?: components["schemas"]["ExecutionModelAssumptionsRequest"];
+        };
+        /** CandidateRankingResponse */
+        CandidateRankingResponse: {
+            /** Strategy Name */
+            strategy_name: string;
+            /** Benchmark Symbol */
+            benchmark_symbol: string;
+            diagnostic_banner: components["schemas"]["DiagnosticBannerResponse"];
+            /** Candidates */
+            candidates: components["schemas"]["RankedCandidateResponse"][];
         };
         /** CompositeDownloadRequest */
         CompositeDownloadRequest: {
@@ -2050,6 +2095,50 @@ export interface components {
             /** Data Types */
             data_types?: string[];
         };
+        /** RankedCandidateResponse */
+        RankedCandidateResponse: {
+            /** Rank */
+            rank: number;
+            /** Symbol */
+            symbol: string;
+            /** Name */
+            name: string;
+            /** Sector */
+            sector: string;
+            /** Strategy Return */
+            strategy_return: number;
+            /** Benchmark Return */
+            benchmark_return: number;
+            /** Net Edge */
+            net_edge: number;
+            /** Win Rate */
+            win_rate: number;
+            /** Profit Factor */
+            profit_factor: number;
+            /** Trades Count */
+            trades_count: number;
+            /** Status */
+            status: string;
+            /**
+             * Gates Passed
+             * @default 0
+             */
+            gates_passed: number;
+            /**
+             * Gates Total
+             * @default 5
+             */
+            gates_total: number;
+            /**
+             * Gate Summary
+             * @default
+             */
+            gate_summary: string;
+            /** Gate Outcomes */
+            gate_outcomes?: {
+                [key: string]: boolean;
+            };
+        };
         /** RankingResponse */
         RankingResponse: {
             /** Session Date */
@@ -2126,31 +2215,6 @@ export interface components {
             revision: string;
             /** Saved At */
             saved_at: string;
-        };
-        /** ScreenerCandidateResponse */
-        ScreenerCandidateResponse: {
-            /** Rank */
-            rank: number;
-            /** Symbol */
-            symbol: string;
-            /** Name */
-            name: string;
-            /** Sector */
-            sector: string;
-            /** Strategy Return */
-            strategy_return: number;
-            /** Benchmark Return */
-            benchmark_return: number;
-            /** Net Edge */
-            net_edge: number;
-            /** Win Rate */
-            win_rate: number;
-            /** Profit Factor */
-            profit_factor: number;
-            /** Trades Count */
-            trades_count: number;
-            /** Status */
-            status: string;
         };
         /** SecurityListSummaryResponse */
         SecurityListSummaryResponse: {
@@ -2300,51 +2364,6 @@ export interface components {
             /** Options */
             options?: string[] | null;
         };
-        /** StrategyScreenerRequest */
-        StrategyScreenerRequest: {
-            /** Strategy Name */
-            strategy_name: string;
-            /**
-             * Strategy Revision
-             * @default v1
-             */
-            strategy_revision: string;
-            /** Dataset Version Id */
-            dataset_version_id?: string | null;
-            /** Universe Preset */
-            universe_preset?: string | null;
-            /** Symbols */
-            symbols?: string[];
-            /**
-             * Benchmark Symbol
-             * @default SPY
-             */
-            benchmark_symbol: string;
-            /** Start Date */
-            start_date?: string | null;
-            /** End Date */
-            end_date?: string | null;
-            /**
-             * Starting Cash
-             * @default 100000
-             */
-            starting_cash: number;
-            /** Parameters */
-            parameters?: {
-                [key: string]: components["schemas"]["JsonValue-Input"];
-            };
-            execution?: components["schemas"]["ExecutionModelAssumptionsRequest"];
-        };
-        /** StrategyScreenerResponse */
-        StrategyScreenerResponse: {
-            /** Strategy Name */
-            strategy_name: string;
-            /** Benchmark Symbol */
-            benchmark_symbol: string;
-            diagnostic_banner: components["schemas"]["DiagnosticBannerResponse"];
-            /** Candidates */
-            candidates: components["schemas"]["ScreenerCandidateResponse"][];
-        };
         /** StrategyTargetResponse */
         StrategyTargetResponse: {
             /** Security Id */
@@ -2432,7 +2451,8 @@ export interface components {
             equity_curve: components["schemas"]["VerdictEquityPointResponse"][];
             /** Friction Ladder */
             friction_ladder: components["schemas"]["FrictionTierResponse"][];
-            screener_sweep?: components["schemas"]["StrategyScreenerResponse"] | null;
+            candidate_ranking?: components["schemas"]["CandidateRankingResponse"] | null;
+            screener_sweep?: components["schemas"]["CandidateRankingResponse"] | null;
         };
         /** TradeResponse */
         TradeResponse: {
@@ -4022,7 +4042,7 @@ export interface operations {
             };
         };
     };
-    evaluate_strategy_screener_route_api_projects__project_id__backtests_screener_post: {
+    evaluate_candidate_ranking_route_api_projects__project_id__backtests_candidate_ranking_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -4033,7 +4053,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["StrategyScreenerRequest"];
+                "application/json": components["schemas"]["CandidateRankingRequest"];
             };
         };
         responses: {
@@ -4043,7 +4063,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["StrategyScreenerResponse"];
+                    "application/json": components["schemas"]["CandidateRankingResponse"];
                 };
             };
             /** @description Validation Error */

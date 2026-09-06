@@ -3,7 +3,10 @@ import { expect, test } from "playwright/test";
 test("Tab 4 renders screener sweep table, diagnostic banner, and clicking a row loads security into primary config and runs 5-gate evaluation", async ({
   page,
 }) => {
-  let verdictRequests: unknown[] = [];
+  interface CapturedVerdictRequest {
+    symbol?: string;
+  }
+  const verdictRequests: CapturedVerdictRequest[] = [];
 
   await page.route("**/api/health", (route) =>
     route.fulfill({ json: { status: "ok" } }),
@@ -185,13 +188,19 @@ test("Tab 4 renders screener sweep table, diagnostic banner, and clicking a row 
       },
     ],
     friction_ladder: [],
+    candidate_ranking: mockScreenerSweep,
     screener_sweep: mockScreenerSweep,
   };
 
   await page.route("**/api/projects/proj-1/backtests/verdict", async (route) => {
-    const postData = route.request().postDataJSON();
+    // SAFETY: request payload in Playwright route handler conforms to CapturedVerdictRequest
+    const postData = route.request().postDataJSON() as CapturedVerdictRequest;
     verdictRequests.push(postData);
     await route.fulfill({ json: mockVerdictResponse });
+  });
+
+  await page.route("**/api/projects/proj-1/backtests/candidate-ranking", async (route) => {
+    await route.fulfill({ json: mockScreenerSweep });
   });
 
   await page.route("**/api/projects/proj-1/backtests/screener", async (route) => {
@@ -238,8 +247,8 @@ test("Tab 4 renders screener sweep table, diagnostic banner, and clicking a row 
 
   // Verify that another verdict request was sent specifying MSFT as symbol
   await expect.poll(() => verdictRequests.length).toBeGreaterThan(initialCount);
-  const lastRequest = verdictRequests[verdictRequests.length - 1] as Record<string, unknown>;
-  expect(lastRequest.symbol).toBe("MSFT");
+  const lastRequest = verdictRequests[verdictRequests.length - 1];
+  expect(lastRequest?.symbol).toBe("MSFT");
 
   // Verify notification banner indicating MSFT is loaded into primary configuration
   await expect(page.getByText(/Security MSFT loaded into primary configuration/)).toBeVisible();

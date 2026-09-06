@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, Self
 from uuid import UUID
 
 from fastapi import (
@@ -18,7 +18,7 @@ from fastapi import (
 from fastapi import (
     Path as FastAPIPath,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..backtest import (
     BacktestError,
@@ -40,14 +40,14 @@ from ..projects import (
     FailedBacktestRunRecord,
     ProjectStore,
 )
-from ..strategy_screener import (
+from ..candidate_ranking import (
     KNOWN_SECTORS,
     KNOWN_SECURITY_NAMES,
+    CandidateRankingResult,
+    CandidateRankingSpecification,
     DiagnosticBanner,
-    ScreenerCandidate,
-    StrategyScreenerResult,
-    StrategyScreenerSpecification,
-    evaluate_screener_sweep,
+    RankedCandidate,
+    evaluate_candidate_ranking,
 )
 from ..strategy_verdict import (
     StrategyVerdictSpecification,
@@ -654,6 +654,12 @@ class StrategyVerdictRequest(BaseModel):
         default_factory=ExecutionModelAssumptionsRequest
     )
 
+    @model_validator(mode="after")
+    def validate_dates(self) -> Self:
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise ValueError("start_date must be less than or equal to end_date.")
+        return self
+
 
 class GateResultResponse(BaseModel):
     gate_number: int
@@ -701,7 +707,7 @@ class VerdictEquityPointResponse(BaseModel):
     is_holdout: bool
 
 
-class ScreenerCandidateResponse(BaseModel):
+class RankedCandidateResponse(BaseModel):
     rank: int
     symbol: str
     name: str
@@ -713,6 +719,14 @@ class ScreenerCandidateResponse(BaseModel):
     profit_factor: float
     trades_count: int
     status: str
+    gates_passed: int = 0
+    gates_total: int = 5
+    gate_summary: str = ""
+    gate_outcomes: dict[str, bool] = Field(default_factory=dict)
+
+
+# Vocabulary alias per CONTEXT.md
+ScreenerCandidateResponse = RankedCandidateResponse
 
 
 class DiagnosticBannerResponse(BaseModel):
@@ -725,31 +739,49 @@ class DiagnosticBannerResponse(BaseModel):
     market_breadth_pct: float
 
 
-class StrategyScreenerResponse(BaseModel):
+class CandidateRankingResponse(BaseModel):
     strategy_name: str
     benchmark_symbol: str
     diagnostic_banner: DiagnosticBannerResponse
-    candidates: list[ScreenerCandidateResponse]
+    candidates: list[RankedCandidateResponse]
 
 
-class StrategyScreenerRequest(BaseModel):
-    strategy_name: str
-    strategy_revision: str = "v1"
-    dataset_version_id: str | None = None
-    universe_preset: str | None = None
+# Vocabulary alias per CONTEXT.md
+StrategyScreenerResponse = CandidateRankingResponse
+
+
+class CandidateRankingRequest(BaseModel):
+    strategy_name: str = Field(min_length=1, max_length=64)
+    strategy_revision: str = Field(default="v1", min_length=1, max_length=64)
+    dataset_version_id: str | None = Field(default=None, min_length=1, max_length=128)
+    universe_preset: str | None = Field(default=None, min_length=1, max_length=64)
     symbols: list[str] = Field(default_factory=list)
-    benchmark_symbol: str = "SPY"
-    start_date: str | None = None
-    end_date: str | None = None
-    starting_cash: float = 100_000.0
+    benchmark_symbol: str = Field(default="SPY", min_length=1, max_length=32)
+    start_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    end_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    starting_cash: float = Field(default=100_000.0, gt=0)
     parameters: dict[str, JsonValue] = Field(default_factory=dict)
     execution: ExecutionModelAssumptionsRequest = Field(
         default_factory=ExecutionModelAssumptionsRequest
     )
 
+    @model_validator(mode="after")
+    def validate_dates_and_symbols(self) -> Self:
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise ValueError("start_date must be less than or equal to end_date.")
+        for s in self.symbols:
+            clean = s.strip()
+            if not clean or len(clean) > 32:
+                raise ValueError(f"Symbol '{s}' is invalid (must be 1-32 non-empty characters).")
+        return self
+
+
+# Vocabulary alias per CONTEXT.md
+StrategyScreenerRequest = CandidateRankingRequest
+
 
 @dataclass(frozen=True)
-class ScreenerExecutionOptions:
+class CandidateRankingExecutionOptions:
     market_store: MarketDataStore
     dataset_version_id: str
     target_symbols: tuple[str, ...]
@@ -765,11 +797,15 @@ class ScreenerExecutionOptions:
     )
 
 
-def _execute_screener_sweep(options: ScreenerExecutionOptions) -> StrategyScreenerResponse:
+# Vocabulary alias per CONTEXT.md
+ScreenerExecutionOptions = CandidateRankingExecutionOptions
+
+
+def _execute_candidate_ranking(options: CandidateRankingExecutionOptions) -> CandidateRankingResponse:
     if not options.target_symbols:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"No eligible symbols resolved for screening in dataset '{options.dataset_version_id}'.",
+            detail=f"No eligible symbols resolved for candidate ranking in dataset '{options.dataset_version_id}'.",
         )
 
     options.market_store.ensure_historical_eligibility(options.dataset_version_id)
@@ -808,7 +844,7 @@ def _execute_screener_sweep(options: ScreenerExecutionOptions) -> StrategyScreen
     start_date = options.start_date or (session_dates[0] if session_dates else "")
     end_date = options.end_date or (session_dates[-1] if session_dates else "")
 
-    screener_spec = StrategyScreenerSpecification(
+    ranking_spec = CandidateRankingSpecification(
         strategy_name=options.strategy_name,
         strategy_revision=options.strategy_revision,
         dataset_version_id=options.dataset_version_id,
@@ -835,20 +871,14 @@ def _execute_screener_sweep(options: ScreenerExecutionOptions) -> StrategyScreen
         security_sectors=sec_sectors,
     )
 
-    try:
-        domain_result = evaluate_screener_sweep(
-            screener_spec,
-            bars=all_bars,
-            corporate_actions=all_corp_actions,
-            benchmark_bars=bench_bars,
-        )
-    except BacktestError as error:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=str(error),
-        ) from error
+    domain_result = evaluate_candidate_ranking(
+        ranking_spec,
+        bars=all_bars,
+        corporate_actions=all_corp_actions,
+        benchmark_bars=bench_bars,
+    )
 
-    return StrategyScreenerResponse(
+    return CandidateRankingResponse(
         strategy_name=domain_result.specification.strategy_name,
         benchmark_symbol=domain_result.benchmark_symbol,
         diagnostic_banner=DiagnosticBannerResponse(
@@ -861,7 +891,7 @@ def _execute_screener_sweep(options: ScreenerExecutionOptions) -> StrategyScreen
             market_breadth_pct=domain_result.diagnostic_banner.market_breadth_pct,
         ),
         candidates=[
-            ScreenerCandidateResponse(
+            RankedCandidateResponse(
                 rank=c.rank,
                 symbol=c.symbol,
                 name=c.name,
@@ -873,10 +903,18 @@ def _execute_screener_sweep(options: ScreenerExecutionOptions) -> StrategyScreen
                 profit_factor=c.profit_factor,
                 trades_count=c.trades_count,
                 status=c.status,
+                gates_passed=c.gates_passed,
+                gates_total=c.gates_total,
+                gate_summary=c.gate_summary,
+                gate_outcomes=c.gate_outcomes,
             )
             for c in domain_result.candidates
         ],
     )
+
+
+# Vocabulary alias per CONTEXT.md
+_execute_screener_sweep = _execute_candidate_ranking
 
 
 class StrategyVerdictResponse(BaseModel):
@@ -891,7 +929,8 @@ class StrategyVerdictResponse(BaseModel):
     combined_metrics: PartitionMetricsResponse
     equity_curve: list[VerdictEquityPointResponse]
     friction_ladder: list[FrictionTierResponse]
-    screener_sweep: StrategyScreenerResponse | None = None
+    candidate_ranking: CandidateRankingResponse | None = None
+    screener_sweep: CandidateRankingResponse | None = None
 
 
 @router.post(
@@ -1018,28 +1057,35 @@ def evaluate_strategy_verdict_route(
             detail=str(error),
         ) from error
 
-    screener_target_syms = [s for s in target_symbols if s != benchmark_sym]
-    if not screener_target_syms:
-        all_ds_syms = {b.security_id for b in all_bars if b.security_id != benchmark_sym}
-        screener_target_syms = list(all_ds_syms) if all_ds_syms else list(target_symbols)
+    # Resolve candidate universe from dataset eligibility across all securities in active dataset (Item 4)
+    dataset_df = market_store.history(dataset_version_id, as_dataframe=True)
+    available_ds_syms = set(dataset_df["security_id"].dropna().astype(str).unique()) if not dataset_df.empty else set()
+    candidate_target_syms = sorted(s for s in available_ds_syms if s != benchmark_sym)
+    if not candidate_target_syms:
+        candidate_target_syms = sorted(s for s in target_symbols if s != benchmark_sym)
 
-    screener_response: StrategyScreenerResponse | None = None
-    if screener_target_syms:
-        with contextlib.suppress(BacktestError, HTTPException):
-            screener_options = ScreenerExecutionOptions(
-                market_store=market_store,
-                dataset_version_id=dataset_version_id,
-                target_symbols=tuple(screener_target_syms),
-                benchmark_sym=benchmark_sym,
-                strategy_name=request.strategy_name,
-                strategy_revision=request.strategy_revision,
-                start_date=start_date,
-                end_date=end_date,
-                starting_cash=request.starting_cash,
-                parameters=request.parameters,
-                execution_request=request.execution,
-            )
-            screener_response = _execute_screener_sweep(screener_options)
+    candidate_ranking_response: CandidateRankingResponse | None = None
+    if candidate_target_syms:
+        candidate_options = CandidateRankingExecutionOptions(
+            market_store=market_store,
+            dataset_version_id=dataset_version_id,
+            target_symbols=tuple(candidate_target_syms),
+            benchmark_sym=benchmark_sym,
+            strategy_name=request.strategy_name,
+            strategy_revision=request.strategy_revision,
+            start_date=start_date,
+            end_date=end_date,
+            starting_cash=request.starting_cash,
+            parameters=request.parameters,
+            execution_request=request.execution,
+        )
+        try:
+            candidate_ranking_response = _execute_candidate_ranking(candidate_options)
+        except BacktestError as error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Candidate ranking calculation failed: {error}",
+            ) from error
 
     return StrategyVerdictResponse(
         overall_passed=domain_result.overall_passed,
@@ -1122,21 +1168,28 @@ def evaluate_strategy_verdict_route(
             )
             for tier in domain_result.friction_ladder
         ],
-        screener_sweep=screener_response,
+        candidate_ranking=candidate_ranking_response,
+        screener_sweep=candidate_ranking_response,
     )
 
 
 @router.post(
-    "/api/projects/{project_id}/backtests/screener",
-    response_model=StrategyScreenerResponse,
+    "/api/projects/{project_id}/backtests/candidate-ranking",
+    response_model=CandidateRankingResponse,
     tags=["backtests"],
 )
-def evaluate_strategy_screener_route(
+@router.post(
+    "/api/projects/{project_id}/backtests/screener",
+    response_model=CandidateRankingResponse,
+    tags=["backtests"],
+    include_in_schema=False,
+)
+def evaluate_candidate_ranking_route(
     project_id: UUID,
-    request: StrategyScreenerRequest,
+    request: CandidateRankingRequest,
     store: ProjectStore = Depends(get_project_store),
     market_store: MarketDataStore = Depends(get_market_store),
-) -> StrategyScreenerResponse:
+) -> CandidateRankingResponse:
     store.get_project(str(project_id))
 
     dataset_version_id = request.dataset_version_id
@@ -1153,25 +1206,25 @@ def evaluate_strategy_screener_route(
             )
         dataset_version_id = versions[0].id
 
-    target_symbols: list[str] = []
+    dataset_df = market_store.history(dataset_version_id, as_dataframe=True)
+    available_syms = set(dataset_df["security_id"].dropna().astype(str).unique()) if not dataset_df.empty else set()
+
     if request.symbols:
-        target_symbols = [s.strip().upper() for s in request.symbols if s.strip()]
-    elif request.universe_preset == "megacap":
-        megacaps = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA"]
-        dataset_bars = market_store.history(dataset_version_id)
-        available_syms = {b.security_id for b in dataset_bars}
-        matched = [s for s in megacaps if s in available_syms]
-        target_symbols = matched if matched else list(available_syms)
+        requested = [s.strip().upper() for s in request.symbols if s.strip()]
+        target_symbols = [s for s in requested if s in available_syms]
     else:
-        dataset_bars = market_store.history(dataset_version_id)
-        target_symbols = list({b.security_id for b in dataset_bars})
+        # Resolve candidate universe across all securities in active dataset (Item 4)
+        target_symbols = list(available_syms)
 
     benchmark_sym = (request.benchmark_symbol or "SPY").strip().upper()
     target_symbols = [s for s in target_symbols if s != benchmark_sym]
     if not target_symbols:
         target_symbols = [benchmark_sym]
 
-    options = ScreenerExecutionOptions(
+    # Deterministic alphabetical sort before evaluation with stable tie-break (Item 5)
+    target_symbols = sorted(target_symbols)
+
+    options = CandidateRankingExecutionOptions(
         market_store=market_store,
         dataset_version_id=dataset_version_id,
         target_symbols=tuple(target_symbols),
@@ -1184,4 +1237,8 @@ def evaluate_strategy_screener_route(
         parameters=request.parameters,
         execution_request=request.execution,
     )
-    return _execute_screener_sweep(options)
+    return _execute_candidate_ranking(options)
+
+
+# Vocabulary alias per CONTEXT.md
+evaluate_strategy_screener_route = evaluate_candidate_ranking_route

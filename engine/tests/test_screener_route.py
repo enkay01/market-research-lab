@@ -223,3 +223,145 @@ def test_post_screener_project_not_found(test_client: TestClient) -> None:
         },
     )
     assert response.status_code == 404
+
+
+def test_post_candidate_ranking_route_and_gate_outcomes(test_client: TestClient) -> None:
+    """Canonical /candidate-ranking route returns 5-gate outcome contract."""
+    project_id = test_client.app.state.test_project_id
+    dataset_id = test_client.app.state.test_dataset_id
+
+    response = test_client.post(
+        f"/api/projects/{project_id}/backtests/candidate-ranking",
+        json={
+            "strategy_name": "trend_exhaustion",
+            "dataset_version_id": dataset_id,
+            "symbols": ["AAPL", "MSFT"],
+            "benchmark_symbol": "SPY",
+            "starting_cash": 100000.0,
+            "parameters": {"fast_period": 2, "slow_period": 4},
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["candidates"]) == 2
+    for cand in data["candidates"]:
+        assert "gates_passed" in cand
+        assert cand["gates_total"] == 5
+        assert "gate_summary" in cand
+        assert "gate_outcomes" in cand
+        assert isinstance(cand["gate_outcomes"], dict)
+        assert "benchmark_hurdle" in cand["gate_outcomes"]
+        assert "fee_stress" in cand["gate_outcomes"]
+        assert "sample_size" in cand["gate_outcomes"]
+        assert "probabilistic_sharpe_ratio" in cand["gate_outcomes"]
+        assert "random_timing_luck" in cand["gate_outcomes"]
+
+
+def test_candidate_ranking_validation_empty_strategy_name(test_client: TestClient) -> None:
+    """CORE-003: Empty strategy name is rejected by Pydantic validation with 422."""
+    project_id = test_client.app.state.test_project_id
+    response = test_client.post(
+        f"/api/projects/{project_id}/backtests/candidate-ranking",
+        json={
+            "strategy_name": "",
+            "symbols": ["AAPL"],
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_candidate_ranking_validation_non_positive_cash(test_client: TestClient) -> None:
+    """CORE-003: Non-positive starting cash (<= 0) is rejected with 422."""
+    project_id = test_client.app.state.test_project_id
+    for invalid_cash in (0.0, -1000.0):
+        response = test_client.post(
+            f"/api/projects/{project_id}/backtests/candidate-ranking",
+            json={
+                "strategy_name": "trend_exhaustion",
+                "symbols": ["AAPL"],
+                "starting_cash": invalid_cash,
+            },
+        )
+        assert response.status_code == 422
+
+
+def test_candidate_ranking_validation_date_order(test_client: TestClient) -> None:
+    """CORE-003: start_date > end_date is rejected with 422."""
+    project_id = test_client.app.state.test_project_id
+    response = test_client.post(
+        f"/api/projects/{project_id}/backtests/candidate-ranking",
+        json={
+            "strategy_name": "trend_exhaustion",
+            "symbols": ["AAPL"],
+            "start_date": "2024-02-01",
+            "end_date": "2024-01-01",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_candidate_ranking_validation_invalid_symbols(test_client: TestClient) -> None:
+    """CORE-003: Empty or whitespace symbol is rejected with 422."""
+    project_id = test_client.app.state.test_project_id
+    response = test_client.post(
+        f"/api/projects/{project_id}/backtests/candidate-ranking",
+        json={
+            "strategy_name": "trend_exhaustion",
+            "symbols": ["   "],
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_candidate_ranking_stable_symbol_tie_break(test_client: TestClient) -> None:
+    """Tied candidate performance metrics break ties deterministically by ascending symbol."""
+    from market_research_lab.candidate_ranking import (
+        CandidateRankingSpecification,
+        RankedCandidate,
+        evaluate_candidate_ranking,
+    )
+    from market_research_lab.market_data import DailyBar
+
+    # Create two securities with identical flat prices
+    dates = ["2024-01-02", "2024-01-03", "2024-01-04"]
+    bars: list[DailyBar] = []
+    for sym in ("ZZZ", "AAA"):
+        for d in dates:
+            bars.append(
+                DailyBar(
+                    security_id=sym,
+                    session_date=d,
+                    open=100.0,
+                    high=100.0,
+                    low=100.0,
+                    close=100.0,
+                    volume=1000.0,
+                    source="test",
+                    available_at=f"{d}T21:00:00Z",
+                )
+            )
+    for d in dates:
+        bars.append(
+            DailyBar(
+                security_id="SPY",
+                session_date=d,
+                open=100.0,
+                high=100.0,
+                low=100.0,
+                close=100.0,
+                volume=1000.0,
+                source="test",
+                available_at=f"{d}T21:00:00Z",
+            )
+        )
+
+    spec = CandidateRankingSpecification(
+        strategy_name="trend_exhaustion",
+        universe=("ZZZ", "AAA"),
+        benchmark_security_id="SPY",
+    )
+    result = evaluate_candidate_ranking(spec, bars=bars)
+    # AAA must precede ZZZ due to stable alphabetical tie-break
+    assert result.candidates[0].symbol == "AAA"
+    assert result.candidates[1].symbol == "ZZZ"
