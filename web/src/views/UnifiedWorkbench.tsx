@@ -23,6 +23,7 @@ import { EquityCurveCanvas } from "./EquityCurveCanvas";
 import { SimulationReplayCanvas } from "./SimulationReplayCanvas";
 import {
   api,
+  type CandidateRankingResponse,
   type Project,
   type StrategyVerdictResponse,
 } from "../api/client";
@@ -69,6 +70,70 @@ function HurdleGateCard({ gate }: { gate: HurdleGate }) {
   );
 }
 
+interface StrategyParameterOptions {
+  fastPeriod: string;
+  slowPeriod: string;
+  stopLoss: string;
+  takeProfit: string;
+  maxHold: string;
+}
+
+interface ExecutionAssumptionsOptions {
+  commissionBps: string;
+  slippageBps: string;
+}
+
+type StrategyParametersPayload = {
+  lookback_period: number;
+  top_n: number;
+  weighting: "equal";
+} | {
+  fast_period: number;
+  slow_period: number;
+  period: number;
+  stop_loss: string;
+  take_profit: string;
+  max_hold: string;
+};
+
+function buildStrategyParameters(
+  strategyName: string,
+  options: StrategyParameterOptions,
+): StrategyParametersPayload {
+  if (strategyName === "top_n_momentum") {
+    return {
+      lookback_period: parseInt(options.slowPeriod, 10) || 20,
+      top_n: parseInt(options.fastPeriod, 10) || 10,
+      weighting: "equal",
+    };
+  }
+
+  return {
+    fast_period: parseInt(options.fastPeriod, 10) || 10,
+    slow_period: parseInt(options.slowPeriod, 10) || 50,
+    period: 14,
+    stop_loss: options.stopLoss,
+    take_profit: options.takeProfit,
+    max_hold: options.maxHold,
+  };
+}
+
+function buildExecutionAssumptions(options: ExecutionAssumptionsOptions) {
+  return {
+    schedule: "daily" as const,
+    commission_rate: (parseFloat(options.commissionBps) || 0) / 10000.0,
+    slippage_rate: (parseFloat(options.slippageBps) || 0) / 10000.0,
+    allow_shorting: true,
+    borrow_fee_rate: 0.0,
+    cash_interest_rate: 0.0,
+    unavailable_borrow: [],
+    max_leverage: 1.0,
+    margin_requirement: 1.0,
+    maintenance_margin: 0.25,
+    leverage_mode: "reject" as const,
+  };
+}
+
 interface UnifiedWorkbenchProps {
   project?: Project;
 }
@@ -78,14 +143,14 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<
-    "summary" | "gates" | "replay" | "screener" | "ledger"
+    "summary" | "gates" | "replay" | "ranking" | "ledger"
   >("summary");
 
   // Wizard structured configuration state (Zero free-text fields)
   const [universe, setUniverse] = useState("megacap");
   const [benchmark, setBenchmark] = useState("spy");
   const [cadence, setCadence] = useState("daily");
-  const [strategyModel, setStrategyModel] = useState("trend_exhaustion");
+  const [strategyModel, setStrategyModel] = useState("top_n_momentum");
   const [fastPeriod, setFastPeriod] = useState("10");
   const [slowPeriod, setSlowPeriod] = useState("50");
   const [stopLoss, setStopLoss] = useState("5");
@@ -100,8 +165,12 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
 
   // Live verdict execution result
   const [verdictResult, setVerdictResult] = useState<StrategyVerdictResponse | null>(null);
+  const [selectedSecurity, setSelectedSecurity] = useState<string | null>(null);
+  const [rankingResult, setRankingResult] = useState<CandidateRankingResponse | null>(null);
+  const [isRankingLoading, setIsRankingLoading] = useState(false);
+  const [auditNotification, setAuditNotification] = useState<string | null>(null);
 
-  async function handleRunEvaluation() {
+  async function handleRunEvaluation(overrideSymbol?: string) {
     if (!project?.id) {
       setErrorMessage("Please select or create a project before running the evaluation.");
       return;
@@ -119,40 +188,43 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
     const holdoutRatio =
       holdoutSplit in splitMap ? splitMap[holdoutSplit as keyof typeof splitMap] : 0.25;
 
+    const targetSymbol = overrideSymbol ?? selectedSecurity ?? undefined;
+    const isMarketWideEvaluation = targetSymbol === undefined;
+
     try {
       const response = await api.evaluateVerdict(project.id, {
         strategy_name: strategyModel,
         strategy_revision: "v1",
         universe_preset: universe,
+        symbol: targetSymbol,
+        symbols: targetSymbol ? [targetSymbol] : undefined,
         benchmark_symbol: benchmark.toUpperCase(),
         holdout_ratio: holdoutRatio,
         starting_cash: parseFloat(initialCapital) || 100_000.0,
-        parameters: {
-          fast_period: parseInt(fastPeriod, 10) || 10,
-          slow_period: parseInt(slowPeriod, 10) || 50,
-          period: 14,
-          stop_loss: stopLoss,
-          take_profit: takeProfit,
-          max_hold: maxHold,
-        },
-        execution: {
-          schedule: "daily",
-          commission_rate: (parseFloat(commissionBps) || 0) / 10000.0,
-          slippage_rate: (parseFloat(slippageBps) || 0) / 10000.0,
-          allow_shorting: true,
-          borrow_fee_rate: 0.0,
-          cash_interest_rate: 0.0,
-          unavailable_borrow: [],
-          max_leverage: 1.0,
-          margin_requirement: 1.0,
-          maintenance_margin: 0.25,
-          leverage_mode: "reject",
-        },
+        parameters: buildStrategyParameters(strategyModel, {
+          fastPeriod,
+          slowPeriod,
+          stopLoss,
+          takeProfit,
+          maxHold,
+        }),
+        execution: buildExecutionAssumptions({
+          commissionBps,
+          slippageBps,
+        }),
       });
 
       setVerdictResult(response);
+      if (isMarketWideEvaluation) {
+        setRankingResult(response.candidate_ranking ?? null);
+      }
       setHasExecuted(true);
-      setActiveTab("summary");
+      if (overrideSymbol) {
+        setSelectedSecurity(overrideSymbol);
+        setAuditNotification(
+          `Security ${overrideSymbol} loaded into primary configuration. 5-gate statistical audit completed.`
+        );
+      }
     } catch (err: unknown) {
       setErrorMessage(
         err instanceof Error ? err.message : "Failed to execute strategy verdict."
@@ -160,6 +232,43 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
     } finally {
       setIsLoading(false);
     }
+  }
+
+  async function handleRunCandidateRanking() {
+    if (!project?.id) return;
+    setIsRankingLoading(true);
+    try {
+      const ranking = await api.runCandidateRanking(project.id, {
+        strategy_name: strategyModel,
+        strategy_revision: "v1",
+        universe_preset: universe,
+        benchmark_symbol: benchmark.toUpperCase(),
+        starting_cash: parseFloat(initialCapital) || 100_000.0,
+        parameters: buildStrategyParameters(strategyModel, {
+          fastPeriod,
+          slowPeriod,
+          stopLoss,
+          takeProfit,
+          maxHold,
+        }),
+        execution: buildExecutionAssumptions({
+          commissionBps,
+          slippageBps,
+        }),
+      });
+      setRankingResult(ranking);
+    } catch (err: unknown) {
+      setErrorMessage(
+        err instanceof Error ? err.message : "Failed to load candidate ranking."
+      );
+    } finally {
+      setIsRankingLoading(false);
+    }
+  }
+
+  async function handleSelectSecurity(symbol: string) {
+    setSelectedSecurity(symbol);
+    await handleRunEvaluation(symbol);
   }
 
   // --------------------------------------------------------------------------
@@ -244,13 +353,14 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
                   value={strategyModel}
                   onChange={(val: string) => setStrategyModel(val)}
                   options={[
+                    { value: "top_n_momentum", label: "Top-N Cross-Sectional Momentum" },
                     { value: "trend_exhaustion", label: "Trend Exhaustion + Volatility Sizing" },
                     { value: "ma_crossover", label: "Dual Moving Average Crossover" },
                     { value: "rsi_reversal", label: "RSI Mean Reversion" },
                   ]}
                 />
                 <Selector
-                  label="Fast Lookback"
+                  label={strategyModel === "top_n_momentum" ? "Top N Securities" : "Fast Lookback"}
                   value={fastPeriod}
                   onChange={(val: string) => setFastPeriod(val)}
                   options={[
@@ -260,7 +370,7 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
                   ]}
                 />
                 <Selector
-                  label="Slow Lookback"
+                  label={strategyModel === "top_n_momentum" ? "Momentum Lookback" : "Slow Lookback"}
                   value={slowPeriod}
                   onChange={(val: string) => setSlowPeriod(val)}
                   options={[
@@ -390,7 +500,7 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
                 label={isLoading ? "Executing..." : "▶ Run Backtest & Generate Verdict"}
                 variant="primary"
                 size="md"
-                onClick={handleRunEvaluation}
+                onClick={() => handleRunEvaluation()}
                 isDisabled={isLoading}
               />
             </HStack>
@@ -440,7 +550,7 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
                 {verdictResult.headline_verdict}
               </Text>
               <Text size="sm" type="supporting">
-                Universe: {universe.toUpperCase()} · Benchmark: {benchmark.toUpperCase()} ETF · Evaluated: 5 Hurdle Gates (1, 2, 3, 4, 5)
+                {selectedSecurity ? `Target: ${selectedSecurity} · ` : ""}Universe: {universe.toUpperCase()} · Benchmark: {benchmark.toUpperCase()} ETF · Evaluated: 5 Hurdle Gates (1, 2, 3, 4, 5)
               </Text>
             </VStack>
           </HStack>
@@ -470,7 +580,7 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
           <SegmentedControlItem value="summary" label="1. Verdict &amp; Summary" />
           <SegmentedControlItem value="gates" label="2. Stress &amp; Luck (5 Gates)" />
           <SegmentedControlItem value="replay" label="3. Replay &amp; Trade Actions" />
-          <SegmentedControlItem value="screener" label="4. Universe Screener" />
+          <SegmentedControlItem value="ranking" label="4. Candidate Ranking" />
           <SegmentedControlItem value="ledger" label="5. Ledger Audit" />
         </SegmentedControl>
       </Card>
@@ -798,17 +908,143 @@ export function UnifiedWorkbench({ project }: UnifiedWorkbenchProps) {
         />
       )}
 
-      {/* TABS 4-5: PENDING FUTURE TICKETS (#118-#119) */}
-      {(activeTab === "screener" || activeTab === "ledger") && (
+      {/* TAB 4: CANDIDATE RANKING */}
+      {activeTab === "ranking" && (
+        <VStack gap={4}>
+          {auditNotification && (
+            <Banner
+              status="success"
+              title="Primary Configuration Updated"
+              description={auditNotification}
+            />
+          )}
+
+          {rankingResult ? (
+            <>
+              <Card padding={3}>
+                <VStack gap={2}>
+                  <HStack justify="between" align="center" style={{ flexWrap: "wrap", gap: "12px" }}>
+                    <VStack gap={1}>
+                      <Text weight="bold" size="lg">Candidate Ranking</Text>
+                      <Text size="sm" type="supporting">
+                        {rankingResult.strategy_name} · Benchmark {rankingResult.benchmark_symbol} · Snapshot {rankingResult.rankings[0]?.session_date ?? "Unavailable"}
+                      </Text>
+                    </VStack>
+                    <HStack gap={2} align="center">
+                      <Token label={`${rankingResult.rankings.length} Securities`} color="blue" />
+                      <Button
+                        label={isRankingLoading ? "Loading..." : "↻ Refresh Ranking"}
+                        variant="secondary"
+                        size="sm"
+                        onClick={handleRunCandidateRanking}
+                        isDisabled={isRankingLoading}
+                      />
+                    </HStack>
+                  </HStack>
+                  <Divider />
+                  <Text size="sm" type="supporting">
+                    The table shows the latest cross-sectional decision from the primary backtest. Select a Security to run its five-gate audit.
+                  </Text>
+                </VStack>
+              </Card>
+
+              <VStack gap={3}>
+                <HStack justify="between" align="center" style={{ flexWrap: "wrap", gap: "8px" }}>
+                  <VStack gap={0}>
+                    <Text weight="bold">Latest ranking snapshot</Text>
+                    <Text size="sm" type="supporting">
+                      Scores and target weights come from the same Strategy run as the verdict.
+                    </Text>
+                  </VStack>
+                  {selectedSecurity && <Token label={`Auditing: ${selectedSecurity}`} color="blue" />}
+                </HStack>
+
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHeaderCell style={{ width: "60px" }}>Rank</TableHeaderCell>
+                      <TableHeaderCell>Security</TableHeaderCell>
+                      <TableHeaderCell style={{ textAlign: "end" }}>Score</TableHeaderCell>
+                      <TableHeaderCell style={{ textAlign: "center" }}>Selected</TableHeaderCell>
+                      <TableHeaderCell style={{ textAlign: "end" }}>Target Weight</TableHeaderCell>
+                      <TableHeaderCell>Rationale</TableHeaderCell>
+                      <TableHeaderCell style={{ textAlign: "center" }}>Audit</TableHeaderCell>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rankingResult.rankings.map((record) => {
+                      const isSelected = selectedSecurity === record.security_id;
+                      const scoreLabel = record.score === null || record.score === undefined
+                        ? "Unavailable"
+                        : `${record.score >= 0 ? "+" : ""}${(record.score * 100).toFixed(1)}%`;
+                      return (
+                        <TableRow
+                          key={`${record.session_date}-${record.security_id}`}
+                          onClick={() => handleSelectSecurity(record.security_id)}
+                          style={{
+                            cursor: "pointer",
+                            backgroundColor: isSelected ? "var(--color-background-wash)" : undefined,
+                          }}
+                        >
+                          <TableCell><Text weight="bold">{record.rank === null ? "—" : `#${record.rank}`}</Text></TableCell>
+                          <TableCell><Text weight="bold">{record.security_id}</Text></TableCell>
+                          <TableCell style={{ textAlign: "end" }}>{scoreLabel}</TableCell>
+                          <TableCell style={{ textAlign: "center" }}>
+                            <Token label={record.selected ? "YES" : "NO"} color={record.selected ? "green" : "gray"} />
+                          </TableCell>
+                          <TableCell style={{ textAlign: "end" }}>
+                            {(record.target_weight * 100).toFixed(1)}%
+                          </TableCell>
+                          <TableCell><Text size="sm" type="supporting">{record.rationale}</Text></TableCell>
+                          <TableCell style={{ textAlign: "center" }}>
+                            <Button
+                              label={isSelected ? "Audited" : "Audit"}
+                              variant={isSelected ? "secondary" : "primary"}
+                              size="sm"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleSelectSecurity(record.security_id);
+                              }}
+                            />
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </VStack>
+            </>
+          ) : (
+            <Card padding={4}>
+              <VStack gap={3} align="center" style={{ textAlign: "center", padding: "32px 16px" }}>
+                <Token label="RANKING READY" color="purple" />
+                <Text weight="bold" size="lg">Candidate Ranking</Text>
+                <Text size="sm" type="supporting" style={{ maxWidth: "600px" }}>
+                  Run the cross-sectional Strategy across every eligible Security in the {universe.toUpperCase()} dataset.
+                </Text>
+                <Button
+                  label={isRankingLoading ? "Loading Ranking..." : "Run Candidate Ranking"}
+                  variant="primary"
+                  size="md"
+                  onClick={handleRunCandidateRanking}
+                  isDisabled={isRankingLoading}
+                />
+              </VStack>
+            </Card>
+          )}
+        </VStack>
+      )}
+
+      {/* TAB 5: PENDING FUTURE TICKET (#119) */}
+      {activeTab === "ledger" && (
         <Card padding={4}>
           <VStack gap={3} align="center" style={{ textAlign: "center", padding: "32px 16px" }}>
             <Token label="AVAILABLE IN EPIC PHASE 2" color="purple" />
             <Text weight="bold" size="lg">
-              {activeTab === "screener" && "Market-Wide Diagnostic Universe Screener"}
-              {activeTab === "ledger" && "Daily Mark-to-Market Ledger Audit"}
+              Daily Mark-to-Market Ledger Audit
             </Text>
             <Text size="sm" type="supporting" style={{ maxWidth: "600px" }}>
-              This tab is scheduled for implementation in tickets #118–#119.
+              This tab is scheduled for implementation in ticket #119.
             </Text>
             <Button
               label="Return to Tab 1 (Verdict &amp; Summary)"

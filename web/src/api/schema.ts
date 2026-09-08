@@ -692,6 +692,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/backtests/candidate-ranking": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Evaluate Candidate Ranking Route */
+        post: operations["evaluate_candidate_ranking_route_api_projects__project_id__backtests_candidate_ranking_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/options-backtests": {
         parameters: {
             query?: never;
@@ -1061,6 +1078,61 @@ export interface components {
         BulkDeleteRunsResponse: {
             /** Deleted Ids */
             deleted_ids: string[];
+        };
+        /** CandidateRankingRequest */
+        CandidateRankingRequest: {
+            /** Strategy Name */
+            strategy_name: string;
+            /**
+             * Strategy Revision
+             * @default v1
+             */
+            strategy_revision: string;
+            /** Dataset Version Id */
+            dataset_version_id?: string | null;
+            /**
+             * Universe Preset
+             * @default megacap
+             */
+            universe_preset: string | null;
+            /** Symbol */
+            symbol?: string | null;
+            /** Symbols */
+            symbols?: string[] | null;
+            /**
+             * Benchmark Symbol
+             * @default SPY
+             */
+            benchmark_symbol: string;
+            /** Start Date */
+            start_date?: string | null;
+            /** End Date */
+            end_date?: string | null;
+            /**
+             * Starting Cash
+             * @default 100000
+             */
+            starting_cash: number;
+            /** Parameters */
+            parameters?: {
+                [key: string]: components["schemas"]["JsonValue-Input"];
+            };
+            execution?: components["schemas"]["ExecutionModelAssumptionsRequest"];
+        };
+        /** CandidateRankingResponse */
+        CandidateRankingResponse: {
+            /** Strategy Name */
+            strategy_name: string;
+            /** Strategy Revision */
+            strategy_revision: string;
+            /** Benchmark Symbol */
+            benchmark_symbol: string;
+            /** Session Date */
+            session_date: string;
+            /** Decision Time */
+            decision_time: string;
+            /** Rankings */
+            rankings: components["schemas"]["RankingResponse"][];
         };
         /** CompositeDownloadRequest */
         CompositeDownloadRequest: {
@@ -2347,12 +2419,12 @@ export interface components {
             parameters?: {
                 [key: string]: components["schemas"]["JsonValue-Input"];
             };
+            execution?: components["schemas"]["ExecutionModelAssumptionsRequest"];
             /**
              * Holdout Ratio
              * @default 0.25
              */
             holdout_ratio: number;
-            execution?: components["schemas"]["ExecutionModelAssumptionsRequest"];
         };
         /** StrategyVerdictResponse */
         StrategyVerdictResponse: {
@@ -2377,6 +2449,7 @@ export interface components {
             friction_ladder: components["schemas"]["FrictionTierResponse"][];
             /** Replay Ticks */
             replay_ticks?: components["schemas"]["ReplayTickResponse"][];
+            candidate_ranking?: components["schemas"]["CandidateRankingResponse"] | null;
         };
         /** TradeResponse */
         TradeResponse: {
@@ -3953,6 +4026,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StrategyVerdictResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    evaluate_candidate_ranking_route_api_projects__project_id__backtests_candidate_ranking_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CandidateRankingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidateRankingResponse"];
                 };
             };
             /** @description Validation Error */

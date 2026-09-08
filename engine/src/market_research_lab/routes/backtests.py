@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, Self, Sequence
 from uuid import UUID
 
 from fastapi import (
@@ -16,10 +17,10 @@ from fastapi import (
 from fastapi import (
     Path as FastAPIPath,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..backtest import (
-    BacktestError,
+    BacktestParameterError,
     BacktestSpecification,
     ExecutionModelAssumptions,
     ReplayFillActionType,
@@ -39,6 +40,7 @@ from ..projects import (
     FailedBacktestRunRecord,
     ProjectStore,
 )
+from ..strategies import RankingRecord
 from ..strategy_verdict import (
     StrategyVerdictSpecification,
     evaluate_strategy_verdict,
@@ -649,22 +651,51 @@ def compare_backtests(
     )
 
 
-class StrategyVerdictRequest(BaseModel):
-    strategy_name: str = Field(default="trend_exhaustion", min_length=1, max_length=64)
+class StrategyBacktestRequest(BaseModel):
+    """Shared request boundary for Strategy backtests and rankings."""
+
+    strategy_name: str = Field(min_length=1, max_length=64)
     strategy_revision: str = Field(default="v1", min_length=1, max_length=64)
-    dataset_version_id: str | None = None
-    universe_preset: str | None = Field(default="megacap")
-    symbol: str | None = None
+    dataset_version_id: str | None = Field(default=None, min_length=1, max_length=128)
+    universe_preset: str | None = Field(default=None, min_length=1, max_length=64)
+    symbol: str | None = Field(default=None, max_length=32)
     symbols: list[str] | None = None
-    benchmark_symbol: str = Field(default="SPY", max_length=32)
+    benchmark_symbol: str = Field(default="SPY", min_length=1, max_length=32)
     start_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     end_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     starting_cash: float = Field(default=100000.0, gt=0)
     parameters: dict[str, JsonValue] = Field(default_factory=dict)
-    holdout_ratio: float = Field(default=0.25, ge=0.05, le=0.50)
     execution: ExecutionModelAssumptionsRequest = Field(
         default_factory=ExecutionModelAssumptionsRequest
     )
+
+    @model_validator(mode="after")
+    def validate_request(self) -> Self:
+        if not self.strategy_name.strip():
+            raise ValueError("strategy_name must not be blank.")
+        if not self.strategy_revision.strip():
+            raise ValueError("strategy_revision must not be blank.")
+        if not self.benchmark_symbol.strip():
+            raise ValueError("benchmark_symbol must not be blank.")
+        if self.dataset_version_id is not None and not self.dataset_version_id.strip():
+            raise ValueError("dataset_version_id must not be blank.")
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise ValueError("start_date must be less than or equal to end_date.")
+        if self.symbol is not None and not self.symbol.strip():
+            raise ValueError("symbol must not be blank.")
+        for symbol in self.symbols or ():
+            clean = symbol.strip()
+            if not clean or len(clean) > 32:
+                raise ValueError(
+                    f"Symbol '{symbol}' is invalid (must be 1-32 non-empty characters)."
+                )
+        return self
+
+
+class StrategyVerdictRequest(StrategyBacktestRequest):
+    strategy_name: str = Field(default="trend_exhaustion", min_length=1, max_length=64)
+    universe_preset: str | None = Field(default="megacap", min_length=1, max_length=64)
+    holdout_ratio: float = Field(default=0.25, ge=0.05, le=0.50)
 
 
 class GateResultResponse(BaseModel):
@@ -713,6 +744,234 @@ class VerdictEquityPointResponse(BaseModel):
     is_holdout: bool
 
 
+class CandidateRankingResponse(BaseModel):
+    strategy_name: str
+    strategy_revision: str
+    benchmark_symbol: str
+    session_date: str
+    decision_time: str
+    rankings: list[RankingResponse]
+
+
+class CandidateRankingRequest(StrategyBacktestRequest):
+    universe_preset: str | None = Field(default="megacap", min_length=1, max_length=64)
+
+
+@dataclass(frozen=True)
+class ResolvedStrategyBacktest:
+    """Point-in-time inputs shared by verdict and candidate-ranking requests."""
+
+    dataset_version_id: str
+    target_symbols: tuple[str, ...]
+    benchmark_symbol: str
+    start_date: str
+    end_date: str
+    bars: tuple[DailyBar, ...]
+    corporate_actions: tuple[CorporateAction, ...]
+
+
+def _resolve_daily_dataset_id(
+    market_store: MarketDataStore,
+    requested_dataset_version_id: str | None,
+) -> str:
+    if requested_dataset_version_id:
+        _require_daily_dataset(market_store, requested_dataset_version_id)
+        return requested_dataset_version_id
+
+    versions = [
+        version
+        for version in market_store.list_dataset_versions()
+        if version.dataset_type == DATASET_TYPE_DAILY_BARS and not version.is_corporate_actions
+    ]
+    if not versions:
+        raise BacktestParameterError("No daily market bar datasets found in workspace.")
+    return versions[0].id
+
+
+def _requested_strategy_symbols(request: StrategyBacktestRequest) -> list[str]:
+    if request.symbols:
+        return sorted({symbol.strip().upper() for symbol in request.symbols})
+    if request.symbol:
+        return [request.symbol.strip().upper()]
+    return []
+
+
+def _strategy_corporate_actions(
+    market_store: MarketDataStore,
+    dataset_version_id: str,
+    target_symbols: Sequence[str],
+) -> tuple[CorporateAction, ...]:
+    actions: list[CorporateAction] = []
+    action_dataset_ids = [dataset_version_id]
+    action_dataset_ids.extend(
+        version.id
+        for version in market_store.list_dataset_versions()
+        if version.id != dataset_version_id
+        and (
+            version.dataset_type == DATASET_TYPE_CORPORATE_ACTIONS
+            or version.is_corporate_actions
+        )
+    )
+    for action_dataset_id in action_dataset_ids:
+        for symbol in target_symbols:
+            symbol_actions = market_store.corporate_actions(
+                action_dataset_id,
+                symbol=symbol,
+            )
+            if isinstance(symbol_actions, list):
+                actions.extend(symbol_actions)
+    return tuple(actions)
+
+
+def _resolve_strategy_backtest(
+    market_store: MarketDataStore,
+    request: StrategyBacktestRequest,
+) -> ResolvedStrategyBacktest:
+    """Resolve one complete daily-bar universe without filtering requested symbols."""
+    dataset_version_id = _resolve_daily_dataset_id(market_store, request.dataset_version_id)
+    market_store.ensure_historical_eligibility(dataset_version_id)
+
+    dataset_bars = market_store.history(dataset_version_id)
+    available_symbols = sorted({bar.security_id.strip().upper() for bar in dataset_bars})
+    requested_symbols = _requested_strategy_symbols(request)
+    missing_symbols = sorted(set(requested_symbols).difference(available_symbols))
+    if missing_symbols:
+        raise BacktestParameterError(
+            f"Symbols not found in dataset '{dataset_version_id}': {', '.join(missing_symbols)}."
+        )
+
+    benchmark_symbol = request.benchmark_symbol.strip().upper()
+    benchmark_bars = market_store.history(dataset_version_id, symbol=benchmark_symbol)
+    if not benchmark_bars:
+        raise BacktestParameterError(
+            f"Benchmark symbol '{benchmark_symbol}' has no price history in dataset "
+            f"'{dataset_version_id}'."
+        )
+
+    target_symbols = sorted(
+        set(requested_symbols or available_symbols).difference({benchmark_symbol})
+    )
+    if not target_symbols:
+        raise BacktestParameterError(
+            f"No eligible strategy symbols remain after excluding benchmark '{benchmark_symbol}'."
+        )
+
+    all_bars: list[DailyBar] = []
+    for symbol in target_symbols:
+        symbol_bars = market_store.history(dataset_version_id, symbol=symbol)
+        if not symbol_bars:
+            raise BacktestParameterError(
+                f"No price history found for symbol '{symbol}' in dataset '{dataset_version_id}'."
+            )
+        all_bars.extend(symbol_bars)
+    all_bars.extend(benchmark_bars)
+
+    session_dates = sorted({bar.session_date for bar in all_bars})
+    if not session_dates:
+        raise BacktestParameterError(
+            f"No price history found for the requested universe in dataset '{dataset_version_id}'."
+        )
+
+    return ResolvedStrategyBacktest(
+        dataset_version_id=dataset_version_id,
+        target_symbols=tuple(target_symbols),
+        benchmark_symbol=benchmark_symbol,
+        start_date=request.start_date or session_dates[0],
+        end_date=request.end_date or session_dates[-1],
+        bars=tuple(all_bars),
+        corporate_actions=_strategy_corporate_actions(
+            market_store,
+            dataset_version_id,
+            target_symbols,
+        ),
+    )
+
+
+def _execution_model(request: StrategyBacktestRequest) -> ExecutionModelAssumptions:
+    assumptions = request.execution
+    return ExecutionModelAssumptions(
+        schedule=assumptions.schedule,
+        commission_rate=assumptions.commission_rate,
+        slippage_rate=assumptions.slippage_rate,
+        allow_shorting=assumptions.allow_shorting,
+        borrow_fee_rate=assumptions.borrow_fee_rate,
+        cash_interest_rate=assumptions.cash_interest_rate,
+        unavailable_borrow=tuple(assumptions.unavailable_borrow),
+        max_leverage=assumptions.max_leverage,
+        margin_requirement=assumptions.margin_requirement,
+        maintenance_margin=assumptions.maintenance_margin,
+        leverage_mode=assumptions.leverage_mode,
+    )
+
+
+def _strategy_backtest_specification(
+    request: StrategyBacktestRequest,
+    resolved: ResolvedStrategyBacktest,
+) -> BacktestSpecification:
+    return BacktestSpecification(
+        strategy_name=request.strategy_name,
+        strategy_revision=request.strategy_revision,
+        dataset_version_id=resolved.dataset_version_id,
+        security_id=resolved.target_symbols[0],
+        universe=resolved.target_symbols,
+        start_date=resolved.start_date,
+        end_date=resolved.end_date,
+        starting_cash=request.starting_cash,
+        parameters=request.parameters,
+        execution=_execution_model(request),
+        benchmark_security_id=resolved.benchmark_symbol,
+    )
+
+
+def _candidate_ranking_response(
+    *,
+    strategy_name: str,
+    strategy_revision: str,
+    benchmark_symbol: str,
+    ranking_records: Sequence[RankingRecord],
+) -> CandidateRankingResponse:
+    if not ranking_records:
+        raise BacktestParameterError(
+            f"Strategy '{strategy_name}' does not produce cross-sectional rankings."
+        )
+
+    latest_snapshot = max(
+        (record.session_date, record.decision_time) for record in ranking_records
+    )
+    latest_records = sorted(
+        (
+            record
+            for record in ranking_records
+            if (record.session_date, record.decision_time) == latest_snapshot
+        ),
+        key=lambda record: (
+            record.rank is None,
+            record.rank if record.rank is not None else 0,
+            record.security_id,
+        ),
+    )
+    return CandidateRankingResponse(
+        strategy_name=strategy_name,
+        strategy_revision=strategy_revision,
+        benchmark_symbol=benchmark_symbol,
+        session_date=latest_snapshot[0],
+        decision_time=latest_snapshot[1],
+        rankings=[
+            RankingResponse(
+                session_date=record.session_date,
+                decision_time=record.decision_time,
+                security_id=record.security_id,
+                score=record.score,
+                rank=record.rank,
+                selected=record.selected,
+                target_weight=record.target_weight,
+                rationale=record.rationale,
+            )
+            for record in latest_records
+        ],
+    )
+
+
 class StrategyVerdictResponse(BaseModel):
     overall_passed: bool
     headline_verdict: str
@@ -726,6 +985,7 @@ class StrategyVerdictResponse(BaseModel):
     equity_curve: list[VerdictEquityPointResponse]
     friction_ladder: list[FrictionTierResponse]
     replay_ticks: list[ReplayTickResponse] = Field(default_factory=list)
+    candidate_ranking: CandidateRankingResponse | None = None
 
 
 @router.post(
@@ -741,116 +1001,38 @@ def evaluate_strategy_verdict_route(
 ) -> StrategyVerdictResponse:
     store.get_project(str(project_id))
 
-    # Resolve dataset_version_id
-    dataset_version_id = request.dataset_version_id
-    if not dataset_version_id:
-        versions = [
-            v
-            for v in market_store.list_dataset_versions()
-            if v.dataset_type != DATASET_TYPE_CORPORATE_ACTIONS and not v.is_corporate_actions
-        ]
-        if not versions:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="No daily market bar datasets found in workspace.",
-            )
-        dataset_version_id = versions[0].id
-
-    # Resolve target symbols
-    target_symbols: list[str] = []
-    if request.symbols:
-        target_symbols = [s.strip().upper() for s in request.symbols if s.strip()]
-    elif request.symbol and request.symbol.strip():
-        target_symbols = [request.symbol.strip().upper()]
-    elif request.universe_preset == "megacap":
-        megacaps = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA"]
-        dataset_bars = market_store.history(dataset_version_id)
-        available_syms = {b.security_id for b in dataset_bars}
-        matched = [s for s in megacaps if s in available_syms]
-        target_symbols = matched if matched else list(available_syms)
-    else:
-        dataset_bars = market_store.history(dataset_version_id)
-        target_symbols = list({b.security_id for b in dataset_bars})
-
-    if not target_symbols:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"No eligible symbols resolved for dataset '{dataset_version_id}'.",
-        )
-
-    benchmark_sym = (request.benchmark_symbol or "SPY").strip().upper()
-    bench_bars = market_store.history(dataset_version_id, symbol=benchmark_sym)
-    if not bench_bars:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=(
-                f"Benchmark symbol '{benchmark_sym}' has no price history in dataset "
-                f"'{dataset_version_id}'."
-            ),
-        )
-
-    market_store.ensure_historical_eligibility(dataset_version_id)
-    all_bars: list[DailyBar] = []
-    for sym in target_symbols:
-        bars_sec = market_store.history(dataset_version_id, symbol=sym)
-        all_bars.extend(bars_sec)
-
-    if benchmark_sym not in target_symbols:
-        all_bars.extend(bench_bars)
-
-    if not all_bars:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"No price history found for symbols in dataset '{dataset_version_id}'.",
-        )
-
-    all_corp_actions: list[CorporateAction] = []
-    for sym in target_symbols:
-        acts = market_store.corporate_actions(dataset_version_id, symbol=sym)
-        if isinstance(acts, list):
-            all_corp_actions.extend(acts)
-
-    session_dates = sorted({b.session_date for b in all_bars})
-    start_date = request.start_date or (session_dates[0] if session_dates else "")
-    end_date = request.end_date or (session_dates[-1] if session_dates else "")
+    resolved = _resolve_strategy_backtest(market_store, request)
 
     verdict_spec = StrategyVerdictSpecification(
         strategy_name=request.strategy_name,
         strategy_revision=request.strategy_revision,
-        dataset_version_id=dataset_version_id,
-        universe=tuple(target_symbols),
-        benchmark_security_id=benchmark_sym,
-        start_date=start_date,
-        end_date=end_date,
+        dataset_version_id=resolved.dataset_version_id,
+        universe=resolved.target_symbols,
+        benchmark_security_id=resolved.benchmark_symbol,
+        start_date=resolved.start_date,
+        end_date=resolved.end_date,
         starting_cash=request.starting_cash,
         parameters=request.parameters,
         holdout_ratio=request.holdout_ratio,
-        execution=ExecutionModelAssumptions(
-            schedule=request.execution.schedule,
-            commission_rate=request.execution.commission_rate,
-            slippage_rate=request.execution.slippage_rate,
-            allow_shorting=request.execution.allow_shorting,
-            borrow_fee_rate=request.execution.borrow_fee_rate,
-            cash_interest_rate=request.execution.cash_interest_rate,
-            unavailable_borrow=tuple(request.execution.unavailable_borrow),
-            max_leverage=request.execution.max_leverage,
-            margin_requirement=request.execution.margin_requirement,
-            maintenance_margin=request.execution.maintenance_margin,
-            leverage_mode=request.execution.leverage_mode,
-        ),
+        execution=_execution_model(request),
     )
 
-    try:
-        domain_result = evaluate_strategy_verdict(
-            verdict_spec,
-            bars=all_bars,
-            corporate_actions=all_corp_actions,
+    domain_result = evaluate_strategy_verdict(
+        verdict_spec,
+        bars=resolved.bars,
+        corporate_actions=resolved.corporate_actions,
+    )
+
+    candidate_ranking_response = (
+        _candidate_ranking_response(
+            strategy_name=request.strategy_name,
+            strategy_revision=request.strategy_revision,
+            benchmark_symbol=resolved.benchmark_symbol,
+            ranking_records=domain_result.ranking_records,
         )
-    except BacktestError as error:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=str(error),
-        ) from error
+        if domain_result.ranking_records
+        else None
+    )
 
     return StrategyVerdictResponse(
         overall_passed=domain_result.overall_passed,
@@ -957,4 +1139,31 @@ def evaluate_strategy_verdict_route(
             )
             for tick in domain_result.replay_ticks
         ],
+        candidate_ranking=candidate_ranking_response,
+    )
+
+
+@router.post(
+    "/api/projects/{project_id}/backtests/candidate-ranking",
+    response_model=CandidateRankingResponse,
+    tags=["backtests"],
+)
+def evaluate_candidate_ranking_route(
+    project_id: UUID,
+    request: CandidateRankingRequest,
+    store: ProjectStore = Depends(get_project_store),
+    market_store: MarketDataStore = Depends(get_market_store),
+) -> CandidateRankingResponse:
+    store.get_project(str(project_id))
+    resolved = _resolve_strategy_backtest(market_store, request)
+    result = run_backtest(
+        _strategy_backtest_specification(request, resolved),
+        bars=resolved.bars,
+        corporate_actions=resolved.corporate_actions,
+    )
+    return _candidate_ranking_response(
+        strategy_name=result.specification.strategy_name,
+        strategy_revision=result.specification.strategy_revision,
+        benchmark_symbol=resolved.benchmark_symbol,
+        ranking_records=result.ranking_records,
     )

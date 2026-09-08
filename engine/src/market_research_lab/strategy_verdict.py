@@ -25,6 +25,7 @@ from .backtest import (
 )
 from .json_types import JsonValue
 from .market_data import CorporateAction, DailyBar
+from .strategies import RankingRecord
 
 INFINITE_PROFIT_FACTOR = 100.0
 
@@ -155,6 +156,7 @@ class StrategyVerdictResult:
     rejection_reason: str | None = None
     confidence_score: float | None = None
     replay_ticks: tuple[ReplayTick, ...] = ()
+    ranking_records: tuple[RankingRecord, ...] = ()
 
 
 
@@ -883,6 +885,7 @@ def evaluate_strategy_verdict(
         equity_curve=tuple(verdict_curve),
         friction_ladder=tuple(friction_results),
         replay_ticks=backtest_result.replay_ticks,
+        ranking_records=backtest_result.ranking_records,
     )
 
 

@@ -64,6 +64,8 @@ export type PartitionMetrics = components["schemas"]["PartitionMetricsResponse"]
 export type VerdictEquityPoint = components["schemas"]["VerdictEquityPointResponse"];
 export type FrictionTier = components["schemas"]["FrictionTierResponse"];
 export type ReplayTick = components["schemas"]["ReplayTickResponse"];
+export type CandidateRankingResponse = components["schemas"]["CandidateRankingResponse"];
+export type CandidateRankingRequest = components["schemas"]["CandidateRankingRequest"];
 
 export interface OptionsGreeks {
   delta: number;
@@ -672,6 +674,13 @@ export const api = {
   evaluateVerdict: (projectId: string, request: StrategyVerdictRequest) =>
     dataOrThrow<StrategyVerdictResponse>(
       client.POST("/api/projects/{project_id}/backtests/verdict", {
+        params: { path: { project_id: projectId } },
+        body: request,
+      }),
+    ),
+  runCandidateRanking: (projectId: string, request: CandidateRankingRequest) =>
+    dataOrThrow<CandidateRankingResponse>(
+      client.POST("/api/projects/{project_id}/backtests/candidate-ranking", {
         params: { path: { project_id: projectId } },
         body: request,
       }),
